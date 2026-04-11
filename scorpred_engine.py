@@ -899,8 +899,8 @@ def scorpred_predict(
     injuries_a: list,
     injuries_b: list,
     team_a_is_home: bool,
-    team_a_name: str = "Team A",
-    team_b_name: str = "Team B",
+    team_a_name: str = "Home",
+    team_b_name: str = "Away",
     sport: str = "soccer",
     opp_strengths: dict[str, float] | None = None,
 ) -> dict[str, Any]:
@@ -953,7 +953,7 @@ def scorpred_predict(
             form_a, h2h_form_a, injuries_a, team_a_is_home, opp_strengths, sport
         )
     except Exception as exc:
-        debug_info["fallbacks_used"].append(f"Team A score calculation failed: {exc}")
+        debug_info["fallbacks_used"].append(f"Home score calculation failed: {exc}")
         debug_info["data_quality"] = "degraded"
         score_a = 5.0  # Neutral fallback
         comp_a = _fallback_team_components()
@@ -963,7 +963,7 @@ def scorpred_predict(
             form_b, h2h_form_b, injuries_b, not team_a_is_home, opp_strengths, sport
         )
     except Exception as exc:
-        debug_info["fallbacks_used"].append(f"Team B score calculation failed: {exc}")
+        debug_info["fallbacks_used"].append(f"Away score calculation failed: {exc}")
         debug_info["data_quality"] = "degraded"
         score_b = 5.0  # Neutral fallback
         comp_b = _fallback_team_components()

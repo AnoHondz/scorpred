@@ -866,8 +866,8 @@ def get_h2h(team_a_id, team_b_id, season: int = NBA_SEASON) -> list:
     stats_a   = get_team_season_stats(team_a_id, season) or {}
     stats_b   = get_team_season_stats(team_b_id, season) or {}
     teams_map = _teams_by_id()
-    ta = teams_map.get(team_a_id, {"id": team_a_id, "name": "Team A", "logo": ""})
-    tb = teams_map.get(team_b_id, {"id": team_b_id, "name": "Team B", "logo": ""})
+    ta = teams_map.get(team_a_id, {"id": team_a_id, "name": "Home", "logo": ""})
+    tb = teams_map.get(team_b_id, {"id": team_b_id, "name": "Away", "logo": ""})
 
     win_pct_a = stats_a.get("win_pct", 0.5)
     base_pts  = int((stats_a.get("ppg", 110.0) + stats_b.get("ppg", 110.0)) / 2)

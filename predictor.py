@@ -496,7 +496,7 @@ def predict(
     # Confidence
     best = max(p_a, p_d, p_b)
     confidence = "High" if best > 0.55 else "Medium" if best > 0.42 else "Low"
-    winner_label = "Team A" if p_a == best else ("Draw" if p_d == best else "Team B")
+    winner_label = "Home" if p_a == best else ("Draw" if p_d == best else "Away")
 
     # First goalscorer candidates
     fgs_a = top_scorer_candidates(squad_a or [], injuries_a, lam_a)

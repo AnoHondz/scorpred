@@ -507,12 +507,12 @@ def matchup():
     try:
         fixtures_a = ac.get_team_fixtures(id_a, LEAGUE, SEASON, last=20)
     except Exception as exc:
-        app.logger.error("Team A fixtures fetch error: %s", exc)
+        app.logger.error("Home fixtures fetch error: %s", exc)
 
     try:
         fixtures_b = ac.get_team_fixtures(id_b, LEAGUE, SEASON, last=20)
     except Exception as exc:
-        app.logger.error("Team B fixtures fetch error: %s", exc)
+        app.logger.error("Away fixtures fetch error: %s", exc)
 
     h2h_raw = pred.filter_recent_completed_fixtures(h2h_raw, current_season=SEASON, seasons_back=5)
     fixtures_a = pred.filter_recent_completed_fixtures(fixtures_a, current_season=SEASON)
@@ -521,12 +521,12 @@ def matchup():
     try:
         injuries_a_raw = ac.get_injuries(LEAGUE, SEASON, id_a)
     except Exception as exc:
-        app.logger.error("Team A injuries fetch error: %s", exc)
+        app.logger.error("Home injuries fetch error: %s", exc)
 
     try:
         injuries_b_raw = ac.get_injuries(LEAGUE, SEASON, id_b)
     except Exception as exc:
-        app.logger.error("Team B injuries fetch error: %s", exc)
+        app.logger.error("Away injuries fetch error: %s", exc)
 
     if not h2h_raw and not fixtures_a and not fixtures_b:
         app.logger.warning("Matchup has no historical source data; using fallback neutral values for %s vs %s", team_a["name"], team_b["name"])

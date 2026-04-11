@@ -16,7 +16,7 @@
   <form method="POST" action="/worldcup" id="wcForm">
     <div class="team-pickers" style="margin-bottom:1.25rem;">
       <div class="picker-group">
-        <label class="picker-label">Team A</label>
+        <label class="picker-label">Home</label>
         <select name="team_a" id="wcTeamA" class="player-select" required>
           <option value="">— Select nation —</option>
           {% for t in teams %}
@@ -28,7 +28,7 @@
       <div class="vs-badge">VS</div>
 
       <div class="picker-group">
-        <label class="picker-label">Team B</label>
+        <label class="picker-label">Away</label>
         <select name="team_b" id="wcTeamB" class="player-select" required>
           <option value="">— Select nation —</option>
           {% for t in teams %}

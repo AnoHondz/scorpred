@@ -11,8 +11,8 @@
 
   <div class="nba-hero">
     <div class="nba-hero-icon">🏀</div>
-    <h1>NBA Predictor</h1>
-    <p>Select two teams to analyse the matchup, explore player props, and get AI-driven predictions.</p>
+    <h1>NBA Analysis</h1>
+    <p>Track upcoming games, select a matchup, and unlock full NBA analysis with model-driven insights.</p>
   </div>
 
   {# Data-source banner #}
@@ -71,7 +71,7 @@
   <div class="nba-card glow-card">
     <div class="nba-card-title">🏀 Upcoming NBA Games</div>
     <p style="color:var(--nba-muted); font-size:.9rem; margin:-.3rem 0 1rem;">
-      Pick a game to dive into full analysis, player props, and AI-driven predictions.
+      Select a game to view full analysis, player props, and AI-driven predictions.
     </p>
     {% if upcoming_games %}
     
@@ -197,7 +197,7 @@
     <form method="post" action="{{ url_for('nba.select') }}">
       <div class="nba-select-grid">
         <div>
-          <label class="nba-select-label" for="team_a">Team A (Home)</label>
+          <label class="nba-select-label" for="team_a">Home Team</label>
           <select name="team_a" id="team_a" class="nba-select" required>
             <option value="" disabled selected>Choose a team…</option>
             {% for t in teams %}
@@ -206,7 +206,7 @@
           </select>
         </div>
         <div>
-          <label class="nba-select-label" for="team_b">Team B (Away)</label>
+          <label class="nba-select-label" for="team_b">Away Team</label>
           <select name="team_b" id="team_b" class="nba-select" required>
             <option value="" disabled selected>Choose a team…</option>
             {% for t in teams %}
@@ -220,12 +220,12 @@
       <div id="teamPreview" style="display:none;" class="nba-matchup-header" style="margin-bottom:1.5rem;">
         <div class="nba-team-block" id="previewA">
           <img id="logoA" src="" alt="" class="nba-team-logo team-badge" onerror="this.style.display='none'" />
-          <span class="nba-team-name" id="nameA">Team A</span>
+          <span class="nba-team-name" id="nameA">Home</span>
         </div>
         <div class="nba-vs-badge">VS</div>
         <div class="nba-team-block" id="previewB">
           <img id="logoB" src="" alt="" class="nba-team-logo team-badge" onerror="this.style.display='none'" />
-          <span class="nba-team-name" id="nameB">Team B</span>
+          <span class="nba-team-name" id="nameB">Away</span>
         </div>
       </div>
 
