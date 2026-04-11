@@ -211,14 +211,16 @@ Force a cache refresh on any page by appending `?refresh=1`.
 ## Running Tests
 
 ```bash
-pip install pytest
-pytest tests/ -v
+pip install -r requirements-dev.txt
+pytest -q
 ```
 
 Tests use `unittest.mock` to patch API calls — no real network requests are made.
 
+GitHub Actions runs the same test command on pushes and pull requests.
+
 ```
-53 passed in ~6s
+110 passed in ~7s
 ```
 
 ---
@@ -249,6 +251,7 @@ Tests use `unittest.mock` to patch API calls — no real network requests are ma
 - **Frontend:** Jinja2, Tailwind CSS (CDN), GSAP, Chart.js, Particles.js
 - **Caching:** Filesystem JSON cache (no database required)
 - **Tests:** pytest + unittest.mock
+- **CI:** GitHub Actions
 
 ---
 
