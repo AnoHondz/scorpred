@@ -28,7 +28,13 @@
 
 {% if not fixtures %}
 <div class="card glow-card">
-  <div class="empty-state">No upcoming fixtures found for this competition.</div>
+  {% set empty_badge = "Live Data" %}
+  {% set empty_icon = "📡" %}
+  {% set empty_title = "No Fixtures Available Right Now" %}
+  {% set empty_description = "Live match data is temporarily unavailable or no games are scheduled." %}
+  {% set empty_helper = "Try refreshing or check back shortly." %}
+  {% set empty_action_text = "Retry" %}
+  {% include "components/empty_state_card.html" %}
 </div>
 {% else %}
 

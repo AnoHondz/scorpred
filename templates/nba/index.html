@@ -198,7 +198,13 @@
     {% endfor %}
     
     {% else %}
-    <p style="color:var(--nba-muted); font-size:.9rem; margin:0;">No upcoming NBA games found.</p>
+    {% set empty_badge = "Live Data" %}
+    {% set empty_icon = "📡" %}
+    {% set empty_title = "No Fixtures Available Right Now" %}
+    {% set empty_description = "Live match data is temporarily unavailable or no games are scheduled." %}
+    {% set empty_helper = "Try refreshing or check back shortly." %}
+    {% set empty_action_text = "Retry" %}
+    {% include "components/empty_state_card.html" %}
     {% endif %}
   </div>
 

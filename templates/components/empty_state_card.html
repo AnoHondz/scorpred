@@ -1,0 +1,18 @@
+<div class="empty-state-card">
+  {% if empty_badge %}
+  <div class="empty-state-badge">{{ empty_badge }}</div>
+  {% endif %}
+  <div class="empty-state-icon">{{ empty_icon or 'ℹ️' }}</div>
+  <h3 class="empty-state-title">{{ empty_title }}</h3>
+  <p class="empty-state-description">{{ empty_description }}</p>
+  {% if empty_helper %}
+  <p class="empty-state-helper">{{ empty_helper }}</p>
+  {% endif %}
+  {% if empty_action_text %}
+    {% if empty_action_href %}
+    <a href="{{ empty_action_href }}" class="btn btn-secondary btn-sm">{{ empty_action_text }}</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" onclick="{{ empty_action_onclick or 'window.location.reload();' }}">{{ empty_action_text }}</button>
+    {% endif %}
+  {% endif %}
+</div>

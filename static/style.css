@@ -899,6 +899,58 @@ img { display: inline-block; }
 /* ── Empty state ──────────────────────────────────────────────────────────── */
 .empty-state { color: var(--muted); font-size: .88rem; padding: 1.5rem 0; text-align: center; }
 
+.empty-state-card {
+  background: linear-gradient(180deg, rgba(17,24,39,.7), rgba(15,23,42,.5));
+  border: 1px solid #1F2937;
+  border-radius: 12px;
+  padding: 1.5rem 1.25rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .65rem;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.empty-state-icon {
+  font-size: 1.3rem;
+  opacity: .82;
+}
+
+.empty-state-title {
+  font-size: 1.15rem;
+  font-weight: 650;
+  margin: 0;
+  color: var(--text);
+}
+
+.empty-state-description {
+  margin: 0;
+  color: var(--muted);
+  max-width: 56ch;
+  line-height: 1.5;
+}
+
+.empty-state-helper {
+  margin: -.1rem 0 .2rem;
+  color: #94a3b8;
+  font-size: .8rem;
+}
+
+.empty-state-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(148,163,184,.25);
+  color: #94a3b8;
+  background: rgba(148,163,184,.08);
+  border-radius: 999px;
+  font-size: .72rem;
+  letter-spacing: .2px;
+  font-weight: 600;
+  padding: .15rem .6rem;
+}
+
 /* ── Error page ───────────────────────────────────────────────────────────── */
 .error-page { text-align: center; padding: 4rem 1rem; }
 .error-page h1 { font-size: 1.8rem; margin-bottom: 1rem; }

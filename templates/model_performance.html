@@ -16,12 +16,14 @@
 
 {% if metrics.total_predictions == 0 %}
 <div class="card glow-card" style="padding:1.5rem; text-align:center;">
-  <div style="font-size:1.3rem; margin-bottom:.5rem;">📊</div>
-  <h3 style="margin-bottom:.4rem;">No predictions tracked yet</h3>
-  <p style="color:#8b949e; font-size:.85rem; margin-bottom:1rem;">
-    Predictions are tracked automatically when you generate them. Start with a matchup on the
-    <a href="/">Home</a> page or the <a href="/nba/">NBA</a> section.
-  </p>
+  {% set empty_icon = "📈" %}
+  {% set empty_title = "Performance Tracking Starting" %}
+  {% set empty_description = "We are currently collecting completed match results to evaluate model accuracy." %}
+  {% set empty_helper = "Performance insights will appear once enough matches are finalized." %}
+  {% set empty_action_href = "/" %}
+  {% set empty_action_text = "View Matchups" %}
+  {% include "components/empty_state_card.html" %}
+  <p class="empty-state-helper" style="margin-top:.65rem;">Minimum 10–20 completed matches required for reliable evaluation.</p>
 </div>
 {% else %}
 
@@ -36,6 +38,9 @@
   <div class="card glow-card" style="text-align:center; padding:1.25rem 1rem;">
     <div style="font-size:.72rem; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; margin-bottom:.4rem;">Wins</div>
     <div class="stat-number" style="font-size:2.2rem; font-weight:800; color:#00ff87;">{{ metrics.wins or 0 }}</div>
+    {% if (metrics.finalized_predictions or 0) == 0 %}
+    <div style="font-size:.74rem; color:#8b949e; margin-top:.3rem;">No finalized matches yet</div>
+    {% endif %}
   </div>
 
   <div class="card glow-card" style="text-align:center; padding:1.25rem 1rem;">
@@ -46,6 +51,9 @@
   <div class="card glow-card" style="text-align:center; padding:1.25rem 1rem;">
     <div style="font-size:.72rem; text-transform:uppercase; letter-spacing:.5px; color:#8b949e; margin-bottom:.4rem;">Losses</div>
     <div class="stat-number" style="font-size:2.2rem; font-weight:800; color:#ef4444;">{{ metrics.losses or 0 }}</div>
+    {% if (metrics.finalized_predictions or 0) == 0 %}
+    <div style="font-size:.74rem; color:#8b949e; margin-top:.3rem;">No finalized matches yet</div>
+    {% endif %}
   </div>
 
   <div class="card glow-card gradient-border" style="text-align:center; padding:1.25rem 1rem;">
@@ -59,7 +67,8 @@
         <div class="stat-number" style="font-size:2.2rem; font-weight:800; color:#ef4444;">{{ metrics.overall_accuracy }}%</div>
       {% endif %}
     {% else %}
-      <div style="font-size:.85rem; color:#8b949e; margin-top:.5rem;">Awaiting results…</div>
+      <div style="font-size:.85rem; color:#8b949e; margin-top:.3rem;">Performance Tracking Starting</div>
+      <div style="font-size:.74rem; color:#8b949e; margin-top:.22rem;">No finalized matches yet</div>
     {% endif %}
   </div>
 
@@ -242,14 +251,24 @@
   {% endfor %}
 </div>
 {% elif metrics.finalized_predictions == 0 %}
-<div class="card glow-card" style="padding:1rem 1.25rem; color:#8b949e; font-size:.85rem;">
-  Awaiting finalized predictions — confidence breakdown will appear here once results are resolved.
+<div class="card glow-card" style="padding:1.25rem;">
+  {% set empty_icon = "📊" %}
+  {% set empty_title = "Performance Tracking Starting" %}
+  {% set empty_description = "We are currently collecting completed match results to evaluate model accuracy." %}
+  {% set empty_helper = "Minimum 10–20 completed matches required for reliable evaluation." %}
+  {% include "components/empty_state_card.html" %}
 </div>
 {% endif %}
 
 {# ── Pending Predictions table ─────────────────────────────────────────── #}
 {% if pending_predictions %}
 <div class="section-title">Pending Predictions</div>
+<div class="card glow-card" style="padding:1.15rem; margin-bottom:1rem;">
+  {% set empty_icon = "⏳" %}
+  {% set empty_title = "Predictions Awaiting Results" %}
+  {% set empty_description = "These matches have not finished yet and will be included in performance tracking once results are available." %}
+  {% include "components/empty_state_card.html" %}
+</div>
 <div class="card glow-card" style="padding:0; overflow:hidden; margin-bottom:1.25rem;">
   <table style="width:100%; border-collapse:collapse; font-size:.82rem;">
     <thead>
@@ -281,9 +300,21 @@
           <span style="color:#f59e0b; font-size:.75rem;">Pending</span>
         </td>
       </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endif %}
+
+{% if (metrics.finalized_predictions or 0) == 0 %}
+<div class="card glow-card" style="padding:1.25rem; margin-top:.5rem;">
+  {% set empty_icon = "🧪" %}
+  {% set empty_title = "No Strategy Report Available Yet" %}
+  {% set empty_description = "Run a backtest to evaluate model performance across historical matches." %}
+  {% set empty_helper = "Command hint: run `python model_tracker.py` after updating completed results." %}
+  {% set empty_action_href = url_for('update_prediction_results') %}
+  {% set empty_action_text = "Generate Report" %}
+  {% include "components/empty_state_card.html" %}
 </div>
 {% endif %}
 
