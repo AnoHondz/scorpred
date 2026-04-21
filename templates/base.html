@@ -20,6 +20,18 @@
 {% set match_analysis_href = '/prediction' if session.get('team_a_id') else '/nba/prediction' if session.get('nba_team_a_id') else '/soccer' %}
 {% set match_analysis_active = request.path in ['/matchup', '/prediction'] or request.path.startswith('/nba/matchup') or request.path.startswith('/nba/prediction') %}
 <body class="{% block body_class %}{% endblock %}">
+  <div id="spIntroLoader" class="sp-intro-loader" role="status" aria-live="polite" aria-label="Loading ScorPred">
+    <div class="sp-intro-loader__content">
+      <img
+        src="{{ url_for('static', filename='media/scorpred-loader.gif') }}"
+        alt="ScorPred celebration loader animation"
+        class="sp-intro-loader__media"
+        data-loader-future-format="webm-or-lottie"
+      />
+      <h2 class="sp-intro-loader__brand">ScorPred</h2>
+      <p class="sp-intro-loader__sub">Loading your decision board…</p>
+    </div>
+  </div>
   <div class="sp-shell">
     <aside class="sp-sidebar" id="sidebar">
       <a href="/" class="sp-brand">

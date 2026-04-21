@@ -1,4 +1,39 @@
 /* ── ScorPred — UI Interactions ─────────────────────────────────────────────── */
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const INTRO_LOADER_KEY = 'scorpred_intro_seen_v1';
+
+function initIntroLoader() {
+  const loader = document.getElementById('spIntroLoader');
+  if (!loader) return;
+
+  const hideLoader = () => {
+    loader.classList.add('is-hidden');
+    setTimeout(() => loader.setAttribute('aria-hidden', 'true'), 500);
+  };
+
+  let introSeen = false;
+  try {
+    introSeen = sessionStorage.getItem(INTRO_LOADER_KEY) === '1';
+  } catch (_) {
+    introSeen = false;
+  }
+
+  if (introSeen) {
+    hideLoader();
+    return;
+  }
+
+  const duration = prefersReducedMotion ? 250 : 1800;
+  const onReady = () => {
+    setTimeout(() => {
+      hideLoader();
+      try { sessionStorage.setItem(INTRO_LOADER_KEY, '1'); } catch (_) {}
+    }, duration);
+  };
+
+  if (document.readyState === 'complete') onReady();
+  else window.addEventListener('load', onReady, { once: true });
+}
 
 /* ── Universal tab system ──────────────────────────────────────────────────── */
 document.querySelectorAll('[data-sp-tabs]').forEach(tabGroup => {
@@ -296,3 +331,5 @@ if (chatClear) {
     renderChatSuggestions(defaultChatSuggestions);
   });
 }
+
+initIntroLoader();
