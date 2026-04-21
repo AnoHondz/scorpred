@@ -464,6 +464,10 @@ def _score_to_confidence_level(gap: float, sport: str = "soccer") -> str:
     Medium gap → Medium confidence
     Large gap → High confidence
     """
+    # Confidence mapping:
+    # Convert internal score separation into simple confidence tiers.
+    # Larger separation implies stronger directional signal, while narrow
+    # gaps remain conservative to avoid overstating certainty.
     # Thresholds vary by sport and scale
     if sport == "nba":
         if gap >= 1.5:
@@ -507,6 +511,11 @@ def compute_top_lean(
     ranked = sorted(probs.items(), key=lambda x: x[1], reverse=True)
     top_key, top_val = ranked[0]
 
+    # Draw suppression:
+    # Avoid defaulting to draw when teams are merely close.
+    # Draw is emitted only when draw probability is clearly leading AND
+    # home/away probabilities are tightly balanced.
+    # Otherwise we return the stronger side to keep recommendations actionable.
     # Draw gating: only allow draw as lean under strict conditions
     if top_key == "draw":
         if draw_pct >= 34 and abs(home_pct - away_pct) <= 6:
@@ -527,6 +536,9 @@ def compute_decision_status(home_pct: float, draw_pct: float, away_pct: float) -
     Possible returns: ``"Strong Lean"`` | ``"Lean"`` | ``"Too Close"`` |
     ``"No Edge"``.
     """
+    # Edge logic:
+    # Turn raw 1X2 probabilities into actionable separation categories
+    # that can drive decision labels (BET / CONSIDER / SKIP upstream).
     probs = sorted([home_pct, draw_pct, away_pct], reverse=True)
     top = probs[0]
     second = probs[1]

@@ -44,14 +44,17 @@
 
 <div class="sp-grid sp-grid--cards">
   {% for item in cards_with_data %}
+  {% set action = 'SKIP' if item.predicted_winner|string|lower == 'draw' or item.confidence == 'Low' else ('BET' if item.confidence == 'High' else 'CONSIDER') %}
+  {% set action_note = 'No reliable edge' if action == 'SKIP' else ('Clear statistical advantage' if action == 'BET' else 'Slight edge, moderate confidence') %}
   <article class="sp-panel sp-panel--tight">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:.5rem">
       <div style="font-size:.75rem; color:var(--text-3)">
         {% if item.fixture.fixture.date %}{{ item.fixture.fixture.date[:10] }}{% if item.fixture.fixture.date|length > 10 %} &middot; {{ item.fixture.fixture.date[11:16] }} UTC{% endif %}{% else %}TBD{% endif %}
         {% if item.fixture.league %} &middot; {{ item.fixture.league.name }}{% endif %}
       </div>
-      <span class="sp-badge sp-badge--{{ 'strong' if item.confidence == 'High' else ('caution' if item.confidence == 'Medium' else 'muted') }}">{{ item.confidence }}</span>
+      <span class="sp-action-pill sp-action-pill--{{ action | lower }}">{{ action }}</span>
     </div>
+    <div class="sp-action-subtext">{{ action_note }}</div>
 
     <div style="display:flex; align-items:center; justify-content:center; gap:.6rem; margin-bottom:.5rem">
       <div style="display:flex; align-items:center; gap:.3rem">
@@ -134,7 +137,7 @@
         <span class="sp-badge sp-badge--{{ 'strong' if p.is_correct else 'danger' }}">{% if p.is_correct %}Correct{% else %}Incorrect{% endif %}</span>
       </div>
       <div style="display:flex; gap:.75rem; font-size:.82rem; color:var(--text-2)">
-        <span>Predicted: <strong>{{ p.predicted_winner }}</strong></span>
+        <span>Model call: <strong>{{ p.predicted_winner }}</strong></span>
         <span>Actual: <strong>{{ p.actual_result or '—' }}</strong></span>
         <span class="sp-badge sp-badge--{{ 'strong' if p.confidence == 'High' else ('caution' if p.confidence == 'Medium' else 'muted') }}">{{ p.confidence }}</span>
       </div>

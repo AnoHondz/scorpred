@@ -2,6 +2,50 @@
 
 ScorPred is a Flask app for soccer and NBA predictions, matchup analysis, props context, and result tracking.
 
+## Product Transformation Overview
+
+ScorPred has been transformed from a model-driven prediction dashboard into a **decision-first sports intelligence assistant**.
+
+What changed:
+
+- Shifted focus from **“what the model outputs”** to **“what the user should do next”**
+- Introduced clear user actions: **BET / CONSIDER / SKIP**
+- Prioritized clarity, trust, and usability over raw metric overload
+- Simplified UI hierarchy around: action → confidence → reasoning → reliability
+
+This positioning is intentional for real users and recruiter evaluation: ScorPred is built as a product, not just a model demo.
+
+## Why ScorPred exists
+
+Most prediction tools overwhelm people with noisy probabilities, disconnected stats, and technical jargon.
+ScorPred exists to make sports decisions simpler:
+
+- clear action guidance
+- understandable confidence
+- concise reasoning
+- visible data trust signals
+
+## Why this UI is simple
+
+The interface is intentionally minimal and decision-oriented:
+
+- removed cluttered/competing metric blocks from primary flow
+- reduced conflicting “model lab” framing in user paths
+- emphasized the sequence users need in practice:
+  1. **Action**
+  2. **Confidence**
+  3. **Why this pick**
+  4. **Data reliability**
+
+## First Impression Experience
+
+ScorPred now includes a premium intro loader:
+
+- custom silhouette celebration animation
+- session-based playback (shown once per browser session)
+- dark-theme-aligned styling and glow treatment
+- designed to feel intentional without slowing normal navigation
+
 The app combines live API data with locally trained models. For soccer, the training pipeline builds a leakage-safe feature set from `data/historical_matches.csv` and trains an ensemble model before deploy.
 
 ## What Is In This Repo

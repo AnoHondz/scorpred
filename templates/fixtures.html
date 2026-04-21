@@ -37,6 +37,8 @@
 {% for f in fixtures %}
 {% set p = f.prediction or {} %}
 {% set best = p.best_pick or {} %}
+{% set action = 'SKIP' if (best.prediction or '')|lower == 'draw' or (best.confidence or 'Low') == 'Low' else ('BET' if (best.confidence or '') == 'High' else 'CONSIDER') %}
+{% set action_note = 'No reliable edge' if action == 'SKIP' else ('Clear statistical advantage' if action == 'BET' else 'Slight edge, moderate confidence') %}
 <div class="card glow-card fpred-card">
   <div class="fpred-meta">
     <span>{{ f.fixture.date[:10] }}</span>
@@ -56,7 +58,7 @@
     </div>
     <div class="fpred-centre">
       <span class="fpred-vs">vs</span>
-      <span class="confidence-badge conf-{{ (best.confidence or 'Low') | lower }}">{{ best.confidence or 'Low' }}</span>
+      <span class="sp-action-pill sp-action-pill--{{ action | lower }}">{{ action }}</span>
     </div>
     <div class="fpred-team right">
       <span class="fpred-team-name">{{ f.teams.away.name }}</span>
@@ -66,8 +68,8 @@
 
   <div class="fpred-footer">
     <span class="fpred-winner-label">
-      Predicted:
       <strong class="accent">{{ best.prediction or 'No prediction available' }}</strong>
+      <small class="sp-action-subtext" style="display:block">{{ action_note }}</small>
     </span>
     <form method="POST" action="/select" style="display:inline">
       <input type="hidden" name="league_id" value="{{ f.league.id if f.league and f.league.id else current_league_id }}" />
