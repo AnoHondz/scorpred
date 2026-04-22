@@ -113,6 +113,21 @@ class _DummyLogger:
         return None
 
 
+class _DummyMastermind:
+    def __init__(self):
+        self.calls = 0
+
+    def predict_match(self, context):
+        self.calls += 1
+        return {
+            "ui_prediction": {
+                "confidence": "High",
+                "best_pick": {"prediction": "Team A Win", "team": "A", "confidence": "High", "reasoning": "mastermind"},
+                "win_probabilities": {"a": 64.0, "draw": 20.0, "b": 16.0},
+            }
+        }
+
+
 def test_load_upcoming_fixtures_uses_short_ttl_cache():
     evidence._UPCOMING_FIXTURE_CACHE.clear()
     evidence._TEAM_FORM_CACHE.clear()
@@ -151,6 +166,36 @@ def test_load_upcoming_fixtures_uses_short_ttl_cache():
     assert api.calls["get_team_fixtures"] == 2
     assert api.calls["get_injuries"] == 2
     assert api.calls["get_standings"] == 1
+
+
+def test_load_upcoming_fixtures_uses_mastermind_prediction_when_available():
+    evidence._UPCOMING_FIXTURE_CACHE.clear()
+    evidence._TEAM_FORM_CACHE.clear()
+    evidence._H2H_CACHE.clear()
+    evidence._INJURY_CACHE.clear()
+
+    api = _DummyApi()
+    mastermind = _DummyMastermind()
+
+    fixtures, _, _, _ = evidence.load_upcoming_fixtures(
+        api,
+        _DummyPredictor(),
+        _DummyEngine(),
+        mastermind=mastermind,
+        league=39,
+        season=2026,
+        logger=_DummyLogger(),
+        football_data_source=lambda: "configured",
+        next_n=1,
+        max_deep_predictions=0,
+        include_injuries=False,
+        include_standings=False,
+    )
+
+    assert len(fixtures) == 1
+    assert mastermind.calls == 1
+    assert fixtures[0]["prediction"]["best_pick"]["reasoning"] == "mastermind"
+    assert fixtures[0]["prediction"]["win_probabilities"]["a"] == 64.0
 
 
 def test_load_upcoming_fixtures_can_skip_injuries_and_standings_for_lightweight_views():

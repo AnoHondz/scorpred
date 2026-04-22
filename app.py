@@ -2070,6 +2070,7 @@ def _load_upcoming_fixtures(
         ac,
         pred,
         se,
+        mastermind=sm,
         league=league if league is not None else LEAGUE,
         season=SEASON,
         logger=app.logger,
@@ -3910,7 +3911,7 @@ def soccer():
             "fixtures": (
                 lambda: _load_upcoming_fixtures(
                     next_n=12,
-                    max_deep_predictions=0,
+                    max_deep_predictions=12,
                     league=league_id,
                     include_injuries=False,
                     include_standings=False,
@@ -3962,7 +3963,7 @@ def fixtures():
 
     fixtures_data, load_error, data_source, _ = _load_upcoming_fixtures(
         next_n=12,
-        max_deep_predictions=0,
+        max_deep_predictions=12,
         league=league_id,
         include_injuries=False,
         include_standings=False,
@@ -5080,7 +5081,7 @@ def today_soccer_predictions():
     league_id = _set_active_league(_active_league_id())
     fixtures_with_pred, grouped_fixtures, load_error, data_source = _load_grouped_upcoming_fixtures_all_leagues(
         next_n_per_league=6,
-        max_deep_predictions=1,
+        max_deep_predictions=6,
         include_injuries=False,
         include_standings=False,
     )

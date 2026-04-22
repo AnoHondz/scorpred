@@ -130,17 +130,7 @@ def probability_from_prediction(prediction: dict[str, Any] | None, *, sport: str
         return normalize_percent(explicit)
     probs = _probability_map(prediction, sport=sport)
     if _probabilities_look_placeholder(probs, sport=sport):
-        signal = _evidence_signal(prediction)
-        best_pick = prediction.get("best_pick") if isinstance(prediction.get("best_pick"), dict) else {}
-        raw_conf = str(best_pick.get("confidence") or prediction.get("confidence") or "").strip().lower()
-        base = 55 + signal * 9
-        if raw_conf == "high":
-            base = max(base, 66)
-        elif raw_conf == "medium":
-            base = max(base, 60)
-        elif raw_conf == "low":
-            base = min(max(base, 55), 58)
-        return round(clamp(base, 54, 74), 1)
+        return 0.0
     values = [probs["a"], probs["b"]]
     if sport == "soccer" and probs["draw"]:
         values.append(probs["draw"])

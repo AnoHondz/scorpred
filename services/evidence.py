@@ -144,18 +144,47 @@ def _safe_call(call: Callable[[], Any], *, logger, label: str, default: Any) -> 
         return default
 
 
-def _limited_prediction(engine, *, team_a_name: str, team_b_name: str, opp_strengths: dict, reason: str) -> dict:
-    pred = engine.scorpred_predict(
-        form_a=[],
-        form_b=[],
-        h2h_form_a=[],
-        h2h_form_b=[],
-        injuries_a=[],
-        injuries_b=[],
-        team_a_is_home=True,
+def _predict_soccer(
+    engine,
+    *,
+    mastermind=None,
+    team_a_name: str,
+    team_b_name: str,
+    form_a: list[dict] | None = None,
+    form_b: list[dict] | None = None,
+    h2h_form_a: list[dict] | None = None,
+    h2h_form_b: list[dict] | None = None,
+    injuries_a: list[dict] | None = None,
+    injuries_b: list[dict] | None = None,
+    opp_strengths: dict | None = None,
+) -> dict:
+    context = {
+        "sport": "soccer",
+        "team_a_name": team_a_name,
+        "team_b_name": team_b_name,
+        "team_a_is_home": True,
+        "form_a": form_a or [],
+        "form_b": form_b or [],
+        "h2h_form_a": h2h_form_a or [],
+        "h2h_form_b": h2h_form_b or [],
+        "injuries_a": injuries_a or [],
+        "injuries_b": injuries_b or [],
+        "opp_strengths": opp_strengths or {},
+    }
+    if mastermind is not None and hasattr(mastermind, "predict_match"):
+        result = mastermind.predict_match(context) or {}
+        pred = result.get("ui_prediction") if isinstance(result, dict) else None
+        if isinstance(pred, dict) and pred:
+            return pred
+    return engine.scorpred_predict(**context)
+
+
+def _limited_prediction(engine, *, mastermind=None, team_a_name: str, team_b_name: str, opp_strengths: dict, reason: str) -> dict:
+    pred = _predict_soccer(
+        engine,
+        mastermind=mastermind,
         team_a_name=team_a_name,
         team_b_name=team_b_name,
-        sport="soccer",
         opp_strengths=opp_strengths,
     )
     if isinstance(pred, dict):
@@ -294,6 +323,7 @@ def load_upcoming_fixtures(
     include_standings: bool = True,
     competition: str | None = None,
     days: int | None = None,
+    mastermind=None,
     **legacy_kwargs,
 ) -> tuple[list[dict], str | None, str, str]:
     """Load and score upcoming soccer fixtures with robust fallbacks and diagnostics.
@@ -499,7 +529,7 @@ def load_upcoming_fixtures(
 
     for idx, fixture, home_id, away_id, home_name, away_name, reason in shallow_fixtures:
         prediction = _limited_prediction(
-            engine, team_a_name=home_name, team_b_name=away_name,
+            engine, mastermind=mastermind, team_a_name=home_name, team_b_name=away_name,
             opp_strengths=opp_strengths, reason=reason,
         )
         if reason == "Deep prediction cap reached":
@@ -528,12 +558,18 @@ def load_upcoming_fixtures(
                 logger.warning("[EVIDENCE] prediction_context downgraded fixture_id=%s reason=%s",
                                (fixture.get("fixture") or {}).get("id"), fallback_reason)
 
-            prediction = engine.scorpred_predict(
-                form_a=form_home, form_b=form_away,
-                h2h_form_a=h2h_home, h2h_form_b=h2h_away,
-                injuries_a=injuries_home, injuries_b=injuries_away,
-                team_a_is_home=True, team_a_name=home_name, team_b_name=away_name,
-                sport="soccer", opp_strengths=opp_strengths,
+            prediction = _predict_soccer(
+                engine,
+                mastermind=mastermind,
+                team_a_name=home_name,
+                team_b_name=away_name,
+                form_a=form_home,
+                form_b=form_away,
+                h2h_form_a=h2h_home,
+                h2h_form_b=h2h_away,
+                injuries_a=injuries_home,
+                injuries_b=injuries_away,
+                opp_strengths=opp_strengths,
             )
             if isinstance(prediction, dict):
                 prediction["form_a"] = form_home
@@ -547,7 +583,7 @@ def load_upcoming_fixtures(
             logger.warning("[EVIDENCE] prediction_context failed fixture_id=%s reason=%s",
                            (fixture.get("fixture") or {}).get("id"), exc)
             prediction = _limited_prediction(
-                engine, team_a_name=home_name, team_b_name=away_name,
+                engine, mastermind=mastermind, team_a_name=home_name, team_b_name=away_name,
                 opp_strengths=opp_strengths, reason=f"Prediction context failure: {exc}",
             )
         all_items[idx] = {**fixture, "prediction": prediction}
