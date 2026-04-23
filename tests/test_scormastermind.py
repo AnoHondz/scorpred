@@ -169,6 +169,21 @@ def test_policy_thresholds_can_force_avoid(monkeypatch):
     assert "No strong edge found" in ui["avoid_reasons"]
 
 
+def test_analyze_match_uses_configured_loader_and_returns_canonical_fields(monkeypatch):
+    def _loader(match_id):
+        assert int(match_id) == 123
+        return _context_with_rule_probs(62.0, 18.0, 20.0, data_quality="Strong")
+
+    sm.configure_match_context_loader(_loader)
+    result = sm.analyze_match(123)
+
+    assert result["match_id"] == 123
+    assert isinstance(result["confidence"], float)
+    assert result["action"] in {"BET", "CONSIDER", "SKIP"}
+    assert set(result["probabilities"].keys()) == {"home", "draw", "away"}
+    assert set(result["metric_breakdown"].keys()) == {"home", "away"}
+
+
 # ── Prompt 4: _ml_features non-default values when context is populated ───────
 
 def _form_rows(n: int = 5, result: str = "W", gf: float = 2.0, ga: float = 0.5) -> list[dict]:

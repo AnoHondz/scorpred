@@ -104,6 +104,7 @@ _EMPTY_METRICS = {
     "by_sport": {},
     "recent_predictions": [],
 }
+_SOCCER_MATCH_CONTEXT_CACHE: dict[int, dict[str, Any]] = {}
 
 
 def _runtime_release_tag() -> str:
@@ -2191,6 +2192,88 @@ def _prediction_confidence_rank(item: dict) -> tuple[int, float]:
     return (conf_map.get(conf, 3), -prob_gap)
 
 
+def _soccer_match_context_from_match_id(match_id: Any) -> dict[str, Any]:
+    cached = _SOCCER_MATCH_CONTEXT_CACHE.get(_safe_int(match_id, 0))
+    if cached:
+        return copy.deepcopy(cached)
+    fixture = ac.get_fixture_by_id(_safe_int(match_id, 0)) or {}
+    teams_block = fixture.get("teams") or {}
+    home = teams_block.get("home") or {}
+    away = teams_block.get("away") or {}
+    home_id = _safe_int(home.get("id"), 0)
+    away_id = _safe_int(away.get("id"), 0)
+    if not home_id or not away_id:
+        raise RuntimeError(f"Unable to resolve teams for match_id={match_id}")
+
+    league_block = fixture.get("league") or {}
+    league_id = _coerce_league_id(league_block.get("id") or _active_league_id())
+    fixtures_home = _recent_team_fixtures_all_comps(home_id, league_id, season=SEASON, last=20)
+    fixtures_away = _recent_team_fixtures_all_comps(away_id, league_id, season=SEASON, last=20)
+    h2h_raw = ac.get_h2h(home_id, away_id, last=12)
+    h2h_raw = pred.filter_recent_completed_fixtures(h2h_raw, current_season=SEASON, seasons_back=5)
+    form_a = pred.extract_form(fixtures_home, home_id)[:5]
+    form_b = pred.extract_form(fixtures_away, away_id)[:5]
+    h2h_form_a = pred.extract_form(h2h_raw, home_id)[:5]
+    h2h_form_b = pred.extract_form(h2h_raw, away_id)[:5]
+    injuries_a = _clean_injuries(ac.get_injuries(league_id, SEASON, home_id))
+    injuries_b = _clean_injuries(ac.get_injuries(league_id, SEASON, away_id))
+    standings = ac.get_standings(league_id, SEASON)
+    return {
+        "sport": "soccer",
+        "match_id": _safe_int(match_id, 0),
+        "team_a_name": home.get("name") or "Home",
+        "team_b_name": away.get("name") or "Away",
+        "team_a_is_home": True,
+        "form_a": form_a,
+        "form_b": form_b,
+        "h2h_form_a": h2h_form_a,
+        "h2h_form_b": h2h_form_b,
+        "injuries_a": injuries_a,
+        "injuries_b": injuries_b,
+        "opp_strengths": _build_opp_strengths(standings),
+    }
+
+
+def _cache_soccer_fixture_context(fixture: dict[str, Any]) -> None:
+    fixture_block = fixture.get("fixture") or {}
+    teams_block = fixture.get("teams") or {}
+    home = teams_block.get("home") or {}
+    away = teams_block.get("away") or {}
+    match_id = _safe_int(fixture_block.get("id"), 0)
+    home_id = _safe_int(home.get("id"), 0)
+    away_id = _safe_int(away.get("id"), 0)
+    if not match_id or not home_id or not away_id:
+        return
+    league_id = _coerce_league_id((fixture.get("league") or {}).get("id") or _active_league_id())
+    fixtures_home = _recent_team_fixtures_all_comps(home_id, league_id, season=SEASON, last=20)
+    fixtures_away = _recent_team_fixtures_all_comps(away_id, league_id, season=SEASON, last=20)
+    h2h_raw = ac.get_h2h(home_id, away_id, last=12)
+    h2h_raw = pred.filter_recent_completed_fixtures(h2h_raw, current_season=SEASON, seasons_back=5)
+    _SOCCER_MATCH_CONTEXT_CACHE[match_id] = {
+        "sport": "soccer",
+        "match_id": match_id,
+        "team_a_name": home.get("name") or "Home",
+        "team_b_name": away.get("name") or "Away",
+        "team_a_is_home": True,
+        "form_a": pred.extract_form(fixtures_home, home_id)[:5],
+        "form_b": pred.extract_form(fixtures_away, away_id)[:5],
+        "h2h_form_a": pred.extract_form(h2h_raw, home_id)[:5],
+        "h2h_form_b": pred.extract_form(h2h_raw, away_id)[:5],
+        "injuries_a": _clean_injuries(ac.get_injuries(league_id, SEASON, home_id)),
+        "injuries_b": _clean_injuries(ac.get_injuries(league_id, SEASON, away_id)),
+        "opp_strengths": _build_opp_strengths(ac.get_standings(league_id, SEASON)),
+    }
+
+
+def _canonical_soccer_analysis(match_id: Any) -> dict[str, Any] | None:
+    try:
+        sm.configure_match_context_loader(_soccer_match_context_from_match_id)
+        return sm.analyze_match(_safe_int(match_id, 0))
+    except Exception as exc:
+        app.logger.warning("Canonical soccer analysis failed for match_id=%s: %s", match_id, exc)
+        return None
+
+
 def _soccer_decision_card_from_fixture(fixture: dict[str, Any]) -> dict[str, Any]:
     teams_block = fixture.get("teams") or {}
     home = teams_block.get("home") or {}
@@ -2215,11 +2298,16 @@ def _soccer_decision_card_from_fixture(fixture: dict[str, Any]) -> dict[str, Any
         "venue_name": (fixture_block.get("venue") or {}).get("name") or "",
         "data_source": fixture.get("data_source") or _football_data_source(),
     }
+    _cache_soccer_fixture_context(fixture)
+    analysis = _canonical_soccer_analysis(fixture_block.get("id"))
+    if not analysis:
+        raise RuntimeError("No canonical analysis available")
     card = dui.build_decision_card(
         sport="soccer",
         team_a=home_name,
         team_b=away_name,
-        prediction=fixture.get("prediction") or {},
+        prediction={},
+        analysis=analysis,
         competition=league_block.get("name") or "",
         match_date=fixture_date,
         venue=payload["venue_name"],
@@ -2232,10 +2320,7 @@ def _soccer_decision_card_from_fixture(fixture: dict[str, Any]) -> dict[str, Any
         cta_payload=payload,
     )
     fixture["decision_card"] = card
-    if isinstance(fixture.get("prediction"), dict):
-        fixture["prediction"]["decision_card"] = card
-        fixture["prediction"]["play_type"] = card["action"]
-        fixture["prediction"]["confidence_pct"] = card["confidence_pct"]
+    fixture["analysis_result"] = analysis
     return card
 
 
@@ -4198,27 +4283,33 @@ def matchup():
             "away": odds_result.get("away_odds"),
         }
 
-    mastermind = sm.predict_match(
-        {
-            "sport": "soccer",
-            "team_a_name": team_a["name"],
-            "team_b_name": team_b["name"],
-            "team_a_is_home": True,
-            "form_a": form_a,
-            "form_b": form_b,
-            "h2h_form_a": h2h_form_a,
-            "h2h_form_b": h2h_form_b,
-            "injuries_a": injuries_a_raw,
-            "injuries_b": injuries_b_raw,
-            "opp_strengths": opp_strengths,
-            "team_stats": {
-                "a": split_a,
-                "b": split_b,
-            },
-            **(({"odds": odds_ctx}) if odds_ctx else {}),
-        }
-    )
-    scorpred = mastermind.get("ui_prediction") or {}
+    fixture_id = (selected_fixture or {}).get("fixture_id")
+    analysis_result = _canonical_soccer_analysis(fixture_id) if fixture_id else None
+    if analysis_result:
+        scorpred = analysis_result.get("ui_prediction") or {}
+        mastermind = {"ui_prediction": scorpred}
+    else:
+        mastermind = sm.predict_match(
+            {
+                "sport": "soccer",
+                "team_a_name": team_a["name"],
+                "team_b_name": team_b["name"],
+                "team_a_is_home": True,
+                "form_a": form_a,
+                "form_b": form_b,
+                "h2h_form_a": h2h_form_a,
+                "h2h_form_b": h2h_form_b,
+                "injuries_a": injuries_a_raw,
+                "injuries_b": injuries_b_raw,
+                "opp_strengths": opp_strengths,
+                "team_stats": {
+                    "a": split_a,
+                    "b": split_b,
+                },
+                **(({"odds": odds_ctx}) if odds_ctx else {}),
+            }
+        )
+        scorpred = mastermind.get("ui_prediction") or {}
     scorpred["data_completeness"] = _build_prediction_data_completeness(
         form_a=form_a,
         form_b=form_b,
@@ -4238,6 +4329,7 @@ def matchup():
         team_a=team_a["name"],
         team_b=team_b["name"],
         prediction=scorpred,
+        analysis=analysis_result,
         competition=(selected_fixture or {}).get("league_name") or (LEAGUE_BY_ID.get(league_id, {}) or {}).get("name", ""),
         match_date=(selected_fixture or {}).get("date") or "",
         venue=(selected_fixture or {}).get("venue_name") or "",
@@ -4744,7 +4836,13 @@ def prediction():
             "odds": _odds,
         }
     )
-    prediction = mastermind.get("ui_prediction") or {}
+    fixture_id = (selected_fixture or {}).get("fixture_id")
+    analysis_result = _canonical_soccer_analysis(fixture_id) if fixture_id else None
+    if analysis_result:
+        prediction = analysis_result.get("ui_prediction") or {}
+        mastermind = {"ui_prediction": prediction}
+    else:
+        prediction = mastermind.get("ui_prediction") or {}
     prediction["data_completeness"] = _build_prediction_data_completeness(
         form_a=form_a,
         form_b=form_b,
@@ -4764,6 +4862,7 @@ def prediction():
         team_a=team_a["name"],
         team_b=team_b["name"],
         prediction=prediction,
+        analysis=analysis_result,
         competition=(selected_fixture or {}).get("league_name") or (LEAGUE_BY_ID.get(league_id, {}) or {}).get("name", ""),
         match_date=(selected_fixture or {}).get("date") or "",
         venue=(selected_fixture or {}).get("venue_name") or "",
@@ -5092,10 +5191,9 @@ def today_soccer_predictions():
             home_team = teams_block.get("home", {})
             away_team = teams_block.get("away", {})
             league_block = fixture.get("league", {})
-            prediction = fixture.get("prediction", {})
-            best_pick = prediction.get("best_pick", {})
-            probs = prediction.get("win_probabilities", {})
             card = _soccer_decision_card_from_fixture(fixture)
+            analysis = fixture.get("analysis_result") or {}
+            probs = analysis.get("probabilities") if isinstance(analysis.get("probabilities"), dict) else {}
 
             return {
                 "fixture": fixture,
@@ -5103,14 +5201,14 @@ def today_soccer_predictions():
                 "home_team": home_team,
                 "away_team": away_team,
                 "league": league_block,
-                "predicted_winner": best_pick.get("prediction", "â€”"),
-                "confidence": best_pick.get("confidence", "Low"),
-                "prob_home": probs.get("a", 50),
-                "prob_draw": probs.get("draw", 0),
-                "prob_away": probs.get("b", 50),
-                "reasoning": best_pick.get("reasoning", ""),
-                "score_gap": prediction.get("score_gap"),
-                "has_data": bool(prediction.get("form_a") and prediction.get("form_b")),
+                "predicted_winner": analysis.get("recommended_side", "—"),
+                "confidence": analysis.get("confidence", 0),
+                "prob_home": probs.get("home"),
+                "prob_draw": probs.get("draw"),
+                "prob_away": probs.get("away"),
+                "reasoning": analysis.get("reason", ""),
+                "score_gap": None,
+                "has_data": analysis.get("data_quality") not in {"unknown", "limited"},
             }
         except Exception as e:
             app.logger.warning("Error preparing fixture prediction: %s", e)

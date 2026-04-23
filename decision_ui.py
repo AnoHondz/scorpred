@@ -567,6 +567,7 @@ def build_decision_card(
     team_a: str,
     team_b: str,
     prediction: dict[str, Any] | None,
+    analysis: dict[str, Any] | None = None,
     competition: str = "",
     match_date: str = "",
     venue: str = "",
@@ -580,7 +581,67 @@ def build_decision_card(
     league_logo: str = "",
     form_strip: list[Any] | None = None,
 ) -> dict[str, Any]:
-
+    if isinstance(analysis, dict) and analysis:
+        probs = analysis.get("probabilities") if isinstance(analysis.get("probabilities"), dict) else {}
+        confidence_pct = int(round(clamp(safe_float(analysis.get("confidence"), 0.0), 0, 100)))
+        action_label = str(analysis.get("action") or "SKIP").upper()
+        if action_label not in ACTION_CLASS:
+            action_label = "SKIP"
+        side = str(analysis.get("recommended_side") or "No Pick")
+        metric_breakdown = analysis.get("metric_breakdown") if isinstance(analysis.get("metric_breakdown"), dict) else {}
+        reason = str(analysis.get("reason") or "").strip()
+        quality = str(analysis.get("data_quality") or "").strip().lower()
+        badge = data_badge({"state": quality}, has_prediction=True)
+        comparison = []
+        home_metrics = metric_breakdown.get("home") if isinstance(metric_breakdown.get("home"), dict) else {}
+        away_metrics = metric_breakdown.get("away") if isinstance(metric_breakdown.get("away"), dict) else {}
+        for label, key in (("Form", "form"), ("Attack", "attack"), ("Defense", "defense"), ("Venue/context", "venue")):
+            comparison.append({"label": label, "a": home_metrics.get(key), "b": away_metrics.get(key)})
+        card = {
+            "sport": sport,
+            "matchup": f"{team_a} vs {team_b}",
+            "team_a": team_a,
+            "team_b": team_b,
+            "team_a_logo": team_a_logo or "",
+            "team_b_logo": team_b_logo or "",
+            "team_a_initials": initials(team_a),
+            "team_b_initials": initials(team_b),
+            "league_logo": league_logo or "",
+            "competition": competition,
+            "match_date": match_date,
+            "venue": venue,
+            "action_label": action_label,
+            "action_class": ACTION_CLASS[action_label],
+            "recommended_side": side,
+            "strength_tier": action_label,
+            "strength_class": ACTION_CLASS[action_label],
+            "confidence_pct": confidence_pct,
+            "raw_confidence_pct": confidence_pct,
+            "summary_reason": reason,
+            "support_note": support_text or "",
+            "why_win_points": [],
+            "why_lose_points": [],
+            "key_swing_factor": "",
+            "data_confidence": badge,
+            "probability_rows": [
+                {"label": team_a, "value": probs.get("home"), "key": "a", "selected": side == team_a},
+                {"label": "Draw", "value": probs.get("draw"), "key": "draw", "selected": str(side).lower() == "draw"},
+                {"label": team_b, "value": probs.get("away"), "key": "b", "selected": side == team_b},
+            ],
+            "comparison_metrics": comparison,
+            "form_strip": form_strip or [],
+            "draw_risk": False,
+            "opportunity_rank": None,
+            "cta_url": cta_url,
+            "cta_label": cta_label,
+            "cta_method": cta_method.lower() if cta_method else "get",
+            "cta_payload": cta_payload or {},
+            "confidence_tier": internal_confidence_tier(confidence_pct),
+            "action": action_label,
+            "play_type": action_label,
+            "recommended_pick": side,
+        }
+        return card
     has_prediction = isinstance(prediction, dict) and bool(prediction)
     prediction = prediction if isinstance(prediction, dict) else {}
     best_pick = prediction.get("best_pick") if isinstance(prediction.get("best_pick"), dict) else {}

@@ -26,6 +26,7 @@ import scorpred_engine as se
 
 _ML_REPORT_PATH = ml_report_path()
 _WALK_FORWARD_REPORT_PATH = walk_forward_report_path()
+_MATCH_CONTEXT_LOADER = None
 
 
 # ── Blend weights (shared via prediction_policy) ──────────────────────────────
@@ -84,6 +85,65 @@ def _confidence_label(confidence: float) -> str:
     if confidence >= 0.51:
         return "Medium"
     return "Low"
+
+
+def configure_match_context_loader(loader) -> None:
+    """Register a callable that returns a full match context for a match_id."""
+    global _MATCH_CONTEXT_LOADER
+    _MATCH_CONTEXT_LOADER = loader
+
+
+def _metric_breakdown_from_ui_prediction(ui_prediction: dict[str, Any]) -> dict[str, dict[str, float | None]]:
+    comp_a = ui_prediction.get("components_a") if isinstance(ui_prediction.get("components_a"), dict) else {}
+    comp_b = ui_prediction.get("components_b") if isinstance(ui_prediction.get("components_b"), dict) else {}
+    return {
+        "home": {
+            "form": _safe_float(comp_a.get("form"), None),
+            "attack": _safe_float(comp_a.get("attack"), None),
+            "defense": _safe_float(comp_a.get("defense"), None),
+            "venue": _safe_float(comp_a.get("venue_context"), None),
+        },
+        "away": {
+            "form": _safe_float(comp_b.get("form"), None),
+            "attack": _safe_float(comp_b.get("attack"), None),
+            "defense": _safe_float(comp_b.get("defense"), None),
+            "venue": _safe_float(comp_b.get("venue_context"), None),
+        },
+    }
+
+
+def analyze_match(match_id: Any) -> dict[str, Any]:
+    """Canonical soccer analysis entrypoint used by all rendered soccer cards."""
+    if _MATCH_CONTEXT_LOADER is None:
+        raise RuntimeError("match context loader is not configured")
+    context = _MATCH_CONTEXT_LOADER(match_id)
+    outcome = predict_match(context or {})
+    ui_prediction = outcome.get("ui_prediction") if isinstance(outcome, dict) else {}
+    if not isinstance(ui_prediction, dict):
+        ui_prediction = {}
+
+    play_type = str(ui_prediction.get("play_type") or "").upper()
+    action = "BET" if play_type == "BET" else "CONSIDER" if play_type == "LEAN" else "SKIP"
+    best_pick = ui_prediction.get("best_pick") if isinstance(ui_prediction.get("best_pick"), dict) else {}
+    probabilities = ui_prediction.get("win_probabilities") if isinstance(ui_prediction.get("win_probabilities"), dict) else {}
+    result = {
+        "match_id": int(match_id or 0),
+        "team_a_name": context.get("team_a_name") or "Home",
+        "team_b_name": context.get("team_b_name") or "Away",
+        "action": action,
+        "recommended_side": best_pick.get("prediction") or ui_prediction.get("recommended_play") or "No Pick",
+        "confidence": round(_safe_float(ui_prediction.get("confidence_pct"), 0.0), 1),
+        "probabilities": {
+            "home": _safe_float(probabilities.get("a"), None),
+            "draw": _safe_float(probabilities.get("draw"), None),
+            "away": _safe_float(probabilities.get("b"), None),
+        },
+        "reason": str(best_pick.get("reasoning") or ui_prediction.get("decision_summary") or "").strip(),
+        "data_quality": str(ui_prediction.get("data_quality") or "unknown"),
+        "metric_breakdown": _metric_breakdown_from_ui_prediction(ui_prediction),
+        "ui_prediction": ui_prediction,
+    }
+    return result
 
 
 def _is_weak_data_quality(data_quality: str) -> bool:
