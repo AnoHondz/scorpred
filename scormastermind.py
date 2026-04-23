@@ -112,11 +112,34 @@ def _metric_breakdown_from_ui_prediction(ui_prediction: dict[str, Any]) -> dict[
     }
 
 
+def _empty_metric_breakdown() -> dict[str, dict[str, None]]:
+    return {
+        "home": {"form": None, "attack": None, "defense": None, "venue": None},
+        "away": {"form": None, "attack": None, "defense": None, "venue": None},
+    }
+
+
 def analyze_match(match_id: Any) -> dict[str, Any]:
     """Canonical soccer analysis entrypoint used by all rendered soccer cards."""
     if _MATCH_CONTEXT_LOADER is None:
         raise RuntimeError("match context loader is not configured")
     context = _MATCH_CONTEXT_LOADER(match_id)
+    form_a = context.get("form_a") if isinstance(context, dict) else []
+    form_b = context.get("form_b") if isinstance(context, dict) else []
+    if len(form_a or []) < 3 or len(form_b or []) < 3:
+        return {
+            "match_id": int(match_id or 0),
+            "team_a_name": (context or {}).get("team_a_name") or "Home",
+            "team_b_name": (context or {}).get("team_b_name") or "Away",
+            "action": "SKIP",
+            "recommended_side": "No Pick",
+            "confidence": 0.0,
+            "probabilities": {"home": None, "draw": None, "away": None},
+            "reason": "Insufficient recent match data for a reliable analysis.",
+            "data_quality": "limited",
+            "metric_breakdown": _empty_metric_breakdown(),
+            "ui_prediction": {},
+        }
     outcome = predict_match(context or {})
     ui_prediction = outcome.get("ui_prediction") if isinstance(outcome, dict) else {}
     if not isinstance(ui_prediction, dict):
@@ -140,7 +163,7 @@ def analyze_match(match_id: Any) -> dict[str, Any]:
         },
         "reason": str(best_pick.get("reasoning") or ui_prediction.get("decision_summary") or "").strip(),
         "data_quality": str(ui_prediction.get("data_quality") or "unknown"),
-        "metric_breakdown": _metric_breakdown_from_ui_prediction(ui_prediction),
+        "metric_breakdown": _metric_breakdown_from_ui_prediction(ui_prediction) if ui_prediction else _empty_metric_breakdown(),
         "ui_prediction": ui_prediction,
     }
     return result

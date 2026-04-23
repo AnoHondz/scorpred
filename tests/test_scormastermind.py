@@ -184,6 +184,23 @@ def test_analyze_match_uses_configured_loader_and_returns_canonical_fields(monke
     assert set(result["metric_breakdown"].keys()) == {"home", "away"}
 
 
+def test_analyze_match_returns_skip_when_form_data_is_insufficient():
+    sm.configure_match_context_loader(
+        lambda _match_id: {
+            "sport": "soccer",
+            "team_a_name": "AFC Bournemouth",
+            "team_b_name": "Leeds United",
+            "form_a": [],
+            "form_b": [{"result": "W"}],
+        }
+    )
+    result = sm.analyze_match(999)
+    assert result["action"] == "SKIP"
+    assert result["confidence"] == 0.0
+    assert result["probabilities"] == {"home": None, "draw": None, "away": None}
+    assert result["reason"]
+
+
 # ── Prompt 4: _ml_features non-default values when context is populated ───────
 
 def _form_rows(n: int = 5, result: str = "W", gf: float = 2.0, ga: float = 0.5) -> list[dict]:
