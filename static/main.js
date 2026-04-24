@@ -97,6 +97,17 @@ if (typeof gsap !== 'undefined') {
 
 }
 
+function createSafeObserver(callback, options) {
+  if (typeof window === 'undefined' || typeof window.IntersectionObserver === 'undefined') {
+    return {
+      observe: () => {},
+      unobserve: () => {},
+      disconnect: () => {},
+    };
+  }
+  return new IntersectionObserver(callback, options);
+}
+
 /* ── Animated stat counters ────────────────────────────────────────────────── */
 function animateCounter(el) {
   const target = parseFloat(el.dataset.target);
@@ -115,7 +126,7 @@ function animateCounter(el) {
   }, 16);
 }
 
-const counterObserver = new IntersectionObserver((entries) => {
+const counterObserver = createSafeObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       animateCounter(entry.target);
@@ -129,7 +140,7 @@ document.querySelectorAll('.stat-number[data-target]').forEach(el => {
 });
 
 /* ── Probability bars: animate fill on scroll into view ─────────────────────── */
-const barObserver = new IntersectionObserver((entries) => {
+const barObserver = createSafeObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       const fill = entry.target.querySelector('.prob-bar-fill');
@@ -147,7 +158,7 @@ document.querySelectorAll('.prob-bar').forEach(bar => {
   barObserver.observe(bar);
 });
 
-const decisionBarObserver = new IntersectionObserver((entries) => {
+const decisionBarObserver = createSafeObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       entry.target.querySelectorAll('.sp-confidence__fill').forEach(fill => {
@@ -166,7 +177,7 @@ document.querySelectorAll('.sp-confidence').forEach(bar => {
 });
 
 /* Also animate existing win-fill bars (prediction page) */
-const winFillObserver = new IntersectionObserver((entries) => {
+const winFillObserver = createSafeObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       entry.target.querySelectorAll('.win-fill, .fpred-prob-fill').forEach(fill => {
@@ -213,13 +224,23 @@ if (navToggle && sidebar) {
     navToggle.setAttribute('aria-expanded', 'false');
   };
 
-  navToggle.addEventListener('click', () => {
+  navToggle.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
     sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
   });
   overlay.addEventListener('click', closeSidebar);
+  sidebar.querySelectorAll('a').forEach(link => {
+    link.addEventListener('click', closeSidebar);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeSidebar();
+    }
+  });
   /* Close sidebar on outside click (mobile) */
   document.addEventListener('click', e => {
-    if (sidebar.classList.contains('open') && !sidebar.contains(e.target) && e.target !== navToggle) {
+    if (sidebar.classList.contains('open') && !sidebar.contains(e.target) && !navToggle.contains(e.target)) {
       closeSidebar();
     }
   });

@@ -357,6 +357,8 @@ h3 { font-size: 1.05rem; }
   display: none;
   background: none; border: none; color: var(--text);
   font-size: 1.3rem; cursor: pointer; padding: .3rem;
+  position: relative;
+  z-index: 360;
 }
 .sp-topbar__auth {
   display: flex;
@@ -1738,6 +1740,15 @@ h3 { font-size: 1.05rem; }
   }
   .sp-main { margin-left: 0 !important; }
   .sp-mobile-toggle { display: block; }
+  .sp-topbar__right {
+    min-width: 0;
+    gap: .35rem;
+  }
+  .sp-topbar__pills {
+    max-width: 40vw;
+    overflow: hidden;
+    white-space: nowrap;
+  }
   .sp-container {
     margin: 0;
     max-width: none;
@@ -1761,6 +1772,24 @@ h3 { font-size: 1.05rem; }
 }
 
 @media (max-width: 640px) {
+  .sp-topbar {
+    gap: .4rem;
+  }
+  .sp-topbar__title {
+    font-size: .84rem;
+  }
+  .sp-topbar__pills {
+    display: none;
+  }
+  .sp-topbar__auth .sp-auth-link {
+    font-size: .72rem;
+    padding: .2rem .45rem;
+  }
+  .sp-topbar__notify,
+  .sp-topbar__avatar {
+    width: 30px;
+    height: 30px;
+  }
   .sp-intro-loader { padding: 1rem; }
   .sp-intro-loader__media-wrap {
     width: min(92vw, 430px);

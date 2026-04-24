@@ -128,6 +128,15 @@ def test_smoke_routes(client, path, expected_status, needle):
     assert "jinja2.exceptions" not in text
 
 
+@pytest.mark.parametrize("path", ["/", "/soccer", "/fixtures", "/insights", "/watchlist"])
+def test_mobile_navigation_controls_render(client, path):
+    response = client.get(path, follow_redirects=True)
+    assert response.status_code == 200
+    text = response.get_data(as_text=True)
+    assert 'id="navToggle"' in text
+    assert 'id="sidebar"' in text
+
+
 def test_system_intelligence_route_smoke(client):
     payload = {
         "model_metrics": {"trust_score": 68, "calibration_score": 65, "win_rate": 55},
