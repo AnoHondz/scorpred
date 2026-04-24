@@ -6,28 +6,81 @@ from typing import Any
 
 @dataclass(slots=True)
 class DecisionEngine:
-    """Centralized intelligence layer that builds canonical match decisions."""
+    """Centralized intelligence layer that builds canonical match decisions.
+
+    Implements quant-style edge / expected value / risk scoring. Odds are never
+    invented: when decimal odds for the recommended side are missing, the
+    edge_score and expected_value fields are returned as ``None`` and the
+    decision falls back to confidence + data quality.
+    """
 
     def build_decision(self, match_data: dict[str, Any]) -> dict[str, Any]:
         probabilities = self._extract_probabilities(match_data)
         side = self._pick_side(match_data, probabilities)
         confidence = self._confidence(match_data, probabilities, side)
-        implied = self._implied_probability(match_data, side)
-        edge_score = round((confidence / 100.0 - implied) * 100, 2)
-        expected_value = round((confidence / 100.0 - implied) * 100, 2)
         data_quality = self._data_quality(match_data)
-        risk_level = self._risk_level(confidence, data_quality, probabilities)
-        action = self._action(confidence, edge_score, risk_level)
-        reasoning = self._reasoning(match_data, side, confidence, data_quality)
+        data_label = self._data_quality_label(data_quality, match_data)
+        decimal_odds = self._side_decimal_odds(match_data, side)
+
+        model_prob = max(0.0, min(1.0, confidence / 100.0))
+
+        if decimal_odds is not None:
+            implied_probability = round(1.0 / decimal_odds, 4)
+            edge_score = round(model_prob - implied_probability, 4)
+            expected_value = round(
+                (model_prob * (decimal_odds - 1.0)) - (1.0 - model_prob), 4
+            )
+        else:
+            implied_probability = None
+            edge_score = None
+            expected_value = None
+
+        metric_breakdown = match_data.get("metric_breakdown")
+        match_status = str(match_data.get("status") or "").strip().lower()
+
+        risk_score = self._risk_score(
+            confidence=confidence,
+            data_label=data_label,
+            edge_score=edge_score,
+            metric_breakdown=metric_breakdown,
+            match_status=match_status,
+        )
+        risk_level = self._risk_level(risk_score)
+        action = self._action(
+            confidence=confidence,
+            edge_score=edge_score,
+            expected_value=expected_value,
+            data_label=data_label,
+        )
+        decision_grade = self._decision_grade(
+            action=action,
+            edge_score=edge_score,
+            expected_value=expected_value,
+            risk_level=risk_level,
+        )
+        reasoning = self._reasoning(
+            match_data=match_data,
+            side=side,
+            confidence=confidence,
+            data_label=data_label,
+            edge_score=edge_score,
+            metric_breakdown=metric_breakdown,
+            decimal_odds=decimal_odds,
+            risk_level=risk_level,
+        )
 
         return {
             "side": side,
             "action": action,
             "confidence": confidence,
+            "model_probability": round(model_prob, 4),
             "probabilities": probabilities,
+            "implied_probability": implied_probability,
             "edge_score": edge_score,
-            "risk_level": risk_level,
             "expected_value": expected_value,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "decision_grade": decision_grade,
             "data_quality": data_quality,
             "reasoning": reasoning,
         }
@@ -71,23 +124,39 @@ class DecisionEngine:
             side_key = "draw"
         return int(max(0, min(100, round(probabilities.get(side_key, max(probabilities.values()))))))
 
-    def _implied_probability(self, match_data: dict[str, Any], side: str) -> float:
-        odds = match_data.get("odds") or {}
+    def _side_decimal_odds(self, match_data: dict[str, Any], side: str) -> float | None:
+        explicit = match_data.get("decimal_odds")
+        if explicit is not None:
+            try:
+                value = float(explicit)
+                if value > 1.0:
+                    return value
+            except (TypeError, ValueError):
+                pass
+
+        odds = match_data.get("odds")
         if not isinstance(odds, dict):
-            return max(0.01, min(0.99, float(match_data.get("implied_probability") or 0.5)))
+            return None
+
         side_key = "home"
         if side.lower() == "draw":
             side_key = "draw"
         elif side == match_data.get("away_name") or side.lower().startswith("away"):
             side_key = "away"
-        odd = odds.get(side_key)
+
+        candidate = odds.get(side_key)
+        if candidate is None and side_key == "home":
+            candidate = odds.get("a")
+        if candidate is None and side_key == "away":
+            candidate = odds.get("b")
+
         try:
-            odd_f = float(odd)
-            if odd_f > 1.0:
-                return max(0.01, min(0.99, 1.0 / odd_f))
+            value = float(candidate)
+            if value > 1.0:
+                return value
         except (TypeError, ValueError):
-            pass
-        return max(0.01, min(0.99, float(match_data.get("implied_probability") or 0.5)))
+            return None
+        return None
 
     def _data_quality(self, match_data: dict[str, Any]) -> int:
         raw = match_data.get("data_quality")
@@ -100,24 +169,116 @@ class DecisionEngine:
             return 45
         return 65
 
-    def _risk_level(self, confidence: int, data_quality: int, probabilities: dict[str, float]) -> str:
-        spread = max(probabilities.values()) - min(probabilities.values())
-        if data_quality < 50 or confidence < 52 or spread < 8:
-            return "HIGH"
-        if confidence >= 65 and data_quality >= 70 and spread >= 15:
-            return "LOW"
-        return "MEDIUM"
+    @staticmethod
+    def _data_quality_label(score: int, match_data: dict[str, Any]) -> str:
+        raw = match_data.get("data_quality")
+        if isinstance(raw, str):
+            normalized = raw.strip().lower()
+            if "strong" in normalized:
+                return "Strong Data"
+            if "partial" in normalized or "moderate" in normalized or "mixed" in normalized:
+                return "Partial Data"
+            if "limited" in normalized or "weak" in normalized or "low" in normalized:
+                return "Limited Data"
+        if score >= 75:
+            return "Strong Data"
+        if score >= 55:
+            return "Partial Data"
+        return "Limited Data"
 
-    def _action(self, confidence: int, edge_score: float, risk_level: str) -> str:
-        if confidence >= 64 and edge_score >= 2 and risk_level != "HIGH":
+    def _risk_score(
+        self,
+        *,
+        confidence: int,
+        data_label: str,
+        edge_score: float | None,
+        metric_breakdown: Any,
+        match_status: str,
+    ) -> int:
+        risk = 100 - int(confidence)
+        if data_label != "Strong Data":
+            risk += 10
+        if edge_score is not None and edge_score < 0.05:
+            risk += 10
+        if metric_breakdown in (None, "Unavailable") or (
+            isinstance(metric_breakdown, dict) and not metric_breakdown
+        ):
+            risk += 10
+        if match_status in {"live", "", "unknown"}:
+            risk += 10
+        return max(0, min(100, risk))
+
+    @staticmethod
+    def _risk_level(risk_score: int) -> str:
+        if risk_score <= 30:
+            return "LOW"
+        if risk_score <= 55:
+            return "MEDIUM"
+        return "HIGH"
+
+    @staticmethod
+    def _action(
+        *,
+        confidence: int,
+        edge_score: float | None,
+        expected_value: float | None,
+        data_label: str,
+    ) -> str:
+        if edge_score is not None and expected_value is not None:
+            if edge_score >= 0.08 and expected_value >= 0.05 and confidence >= 65:
+                return "BET"
+            if edge_score >= 0.03 and confidence >= 55:
+                return "CONSIDER"
+            return "SKIP"
+        if confidence >= 65 and data_label in {"Strong Data", "Partial Data"}:
             return "BET"
-        if confidence >= 54 and edge_score >= -1:
+        if confidence >= 55:
             return "CONSIDER"
         return "SKIP"
 
-    def _reasoning(self, match_data: dict[str, Any], side: str, confidence: int, data_quality: int) -> dict[str, list[str]]:
-        strengths = []
-        risks = []
+    @staticmethod
+    def _decision_grade(
+        *,
+        action: str,
+        edge_score: float | None,
+        expected_value: float | None,
+        risk_level: str,
+    ) -> str:
+        if (
+            expected_value is not None
+            and edge_score is not None
+            and expected_value >= 0.15
+            and edge_score >= 0.10
+            and risk_level == "LOW"
+        ):
+            return "A+"
+        if (
+            expected_value is not None
+            and edge_score is not None
+            and expected_value >= 0.10
+            and edge_score >= 0.08
+        ):
+            return "A"
+        if action == "BET":
+            return "B"
+        if action == "CONSIDER":
+            return "C"
+        return "D"
+
+    def _reasoning(
+        self,
+        *,
+        match_data: dict[str, Any],
+        side: str,
+        confidence: int,
+        data_label: str,
+        edge_score: float | None,
+        metric_breakdown: Any,
+        decimal_odds: float | None,
+        risk_level: str,
+    ) -> dict[str, list[str]]:
+        strengths: list[str] = []
+        risks: list[str] = []
 
         for item in (match_data.get("strengths") or []):
             text = str(item).strip()
@@ -127,6 +288,26 @@ class DecisionEngine:
             text = str(item).strip()
             if text:
                 risks.append(text)
+
+        if edge_score is not None and edge_score > 0:
+            strengths.append(f"Positive edge of {edge_score * 100:.1f}% vs market price")
+        if confidence >= 65:
+            strengths.append(f"Strong model confidence ({confidence}%) on {side}")
+        if data_label == "Strong Data":
+            strengths.append("Strong data quality supports the read")
+        if isinstance(metric_breakdown, dict) and metric_breakdown:
+            strengths.append("Favorable metric breakdown")
+
+        if decimal_odds is None:
+            risks.append("No market odds available — value cannot be priced")
+        if data_label != "Strong Data":
+            risks.append(f"Limited data quality ({data_label})")
+        if risk_level == "HIGH":
+            risks.append("High overall risk score on this fixture")
+        if metric_breakdown in (None, "Unavailable") or (
+            isinstance(metric_breakdown, dict) and not metric_breakdown
+        ):
+            risks.append("Metric breakdown unavailable")
 
         if not strengths:
             strengths = [
@@ -139,10 +320,17 @@ class DecisionEngine:
                 "Late squad news may change expected outcome",
             ]
 
-        if data_quality < 55:
-            risks.append("Data quality is limited for this fixture")
-
         return {
-            "strengths": strengths[:3],
-            "risks": risks[:3],
+            "strengths": _dedupe(strengths)[:4],
+            "risks": _dedupe(risks)[:4],
         }
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
