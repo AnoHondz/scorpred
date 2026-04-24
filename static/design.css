@@ -3074,6 +3074,7 @@ h3 { font-size: 1.05rem; }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  overflow-x: auto;
   box-shadow: var(--shadow);
 }
 .sp-match-table__header {
@@ -3176,9 +3177,10 @@ h3 { font-size: 1.05rem; }
   font-size: .82rem;
   font-weight: 600;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
 }
 
 /* AI Pick cell */

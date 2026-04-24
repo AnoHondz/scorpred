@@ -51,6 +51,8 @@ from services import bets_service
 from services import cache_service
 from services import prediction_service
 from services import validators
+from services.decision_engine import DecisionEngine
+from services.match_brain import MatchBrain
 from db_models import db
 
 try:
@@ -120,6 +122,8 @@ _local_fixture_cache = TTLCache(maxsize=50, ttl=120)
 _local_league_cache = TTLCache(maxsize=20, ttl=300)
 _API_CIRCUIT: dict[str, dict[str, Any]] = {}
 _RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
+_DECISION_ENGINE = DecisionEngine()
+_MATCH_BRAIN: MatchBrain | None = None
 
 
 def _runtime_release_tag() -> str:
@@ -2255,37 +2259,35 @@ def load_fixtures_cached(league_id: int):
 
 
 def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
-    teams_block = fixture.get("teams") or {}
-    home = teams_block.get("home") or {}
-    away = teams_block.get("away") or {}
-    home_name = home.get("name")
-    away_name = away.get("name")
-    if not home_name or not away_name:
+    if _MATCH_BRAIN is None:
         return None
-    prediction, _ = _live_prediction_payload(
-        sport="soccer",
-        team_a=home_name,
-        team_b=away_name,
-        date_key=(fixture.get("fixture") or {}).get("date") or "",
-        league_key=str((fixture.get("fixture") or {}).get("id") or ""),
-        data_tier="partial",
-    )
-    best_pick = prediction.get("best_pick") or {}
-    probs = prediction.get("win_probabilities") or {}
+    canonical = _MATCH_BRAIN.canonical_from_fixture(fixture)
+    if not canonical:
+        return None
+    pred_block = canonical.get("prediction") or {}
     return {
-        "match_id": str((fixture.get("fixture") or {}).get("id") or ""),
-        "matchup": f"{home_name} vs {away_name}",
-        "confidence": prediction.get("confidence_pct"),
+        "match_id": canonical.get("match_id", ""),
+        "matchup": canonical.get("matchup", ""),
+        "league": canonical.get("league", ""),
+        "kickoff": canonical.get("kickoff", ""),
+        "status": canonical.get("status", "scheduled"),
+        "prediction": pred_block,
+        # Backwards-compatible keys consumed by decision_ui templates.
+        "confidence": pred_block.get("confidence", 0),
         "probabilities": {
-            "a": probs.get("a"),
-            "draw": probs.get("draw"),
-            "b": probs.get("b"),
+            "a": (pred_block.get("probabilities") or {}).get("home"),
+            "draw": (pred_block.get("probabilities") or {}).get("draw"),
+            "b": (pred_block.get("probabilities") or {}).get("away"),
         },
-        "action": "BET" if (prediction.get("confidence_pct") or 0) >= 60 else "CONSIDER",
-        "recommended_side": best_pick.get("prediction"),
-        "reason": best_pick.get("reasoning"),
-        "data_quality": ((prediction.get("data_completeness") or {}).get("tier") or "partial"),
-        "metric_breakdown": prediction.get("metric_breakdown"),
+        "action": pred_block.get("action", "SKIP"),
+        "recommended_side": pred_block.get("side"),
+        "reason": " | ".join((pred_block.get("reasoning") or {}).get("strengths", [])),
+        "data_quality": pred_block.get("data_quality"),
+        "metric_breakdown": {
+            "edge_score": pred_block.get("edge_score"),
+            "risk_level": pred_block.get("risk_level"),
+            "expected_value": pred_block.get("expected_value"),
+        },
     }
 
 
@@ -2497,20 +2499,9 @@ def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[s
             {"label": team_b, "value": probs.get("b"), "selected": card.get("recommended_side") == team_b},
         ]
         card["data_confidence"] = {"state": dq_state, "label": dq_text}
-        card["cta_url"] = "/select"
-        card["cta_method"] = "post"
-        card["cta_payload"] = {
-            "team_a": home.get("id") or "",
-            "team_b": away.get("id") or "",
-            "team_a_name": team_a,
-            "team_b_name": team_b,
-            "team_a_logo": home.get("logo") or "",
-            "team_b_logo": away.get("logo") or "",
-            "fixture_id": fixture_id,
-            "fixture_date": fixture_block.get("date") or "",
-            "league_id": league_block.get("id") or _active_league_id(),
-            "league_name": league_block.get("name") or "",
-        }
+        card["cta_url"] = f"/prediction?match_id={fixture_id}"
+        card["cta_method"] = "get"
+        card["cta_payload"] = {"match_id": fixture_id}
     return card
 
 
@@ -2524,6 +2515,20 @@ def _soccer_cards_from_fixtures(fixtures: list[dict[str, Any]]) -> list[dict[str
         except Exception as exc:
             app.logger.debug("Decision card build failed for soccer fixture: %s", exc)
     return cards
+
+
+def _fixture_by_id(match_id: str) -> dict[str, Any] | None:
+    return _FIXTURE_INDEX.get(str(match_id))
+
+
+_MATCH_BRAIN = MatchBrain(
+    load_fixtures=load_fixtures_cached,
+    get_fixture_by_id=_fixture_by_id,
+    decision_engine=_DECISION_ENGINE,
+    tracker_save=mt.save_prediction,
+    tracker_recent=mt.get_recent_predictions,
+    refresh_results=ru.update_pending_predictions,
+)
 
 
 prediction_service.configure(
@@ -4133,7 +4138,32 @@ def _chat_reply(message: str, history: list[dict] | None = None, chat_context: d
 def insights():
     _refresh_tracking_results_if_due()
     league_id = _set_active_league(_active_league_id())
-    cards, *_ = prediction_service.get_fixture_cards(league_id)
+    if _MATCH_BRAIN is not None:
+        insights_payload = _MATCH_BRAIN.get_insights(league_id)
+        cards = []
+        for item in insights_payload.get("top_opportunities", []):
+            pred_block = item.get("prediction") or {}
+            probs = pred_block.get("probabilities") or {}
+            analysis = {
+                "match_id": item.get("match_id"),
+                "matchup": item.get("matchup"),
+                "confidence": pred_block.get("confidence"),
+                "probabilities": {"a": probs.get("home"), "draw": probs.get("draw"), "b": probs.get("away")},
+                "action": pred_block.get("action"),
+                "recommended_side": pred_block.get("side"),
+                "reason": " | ".join((pred_block.get("reasoning") or {}).get("strengths", [])),
+                "data_quality": pred_block.get("data_quality"),
+                "metric_breakdown": {
+                    "edge_score": pred_block.get("edge_score"),
+                    "risk_level": pred_block.get("risk_level"),
+                    "expected_value": pred_block.get("expected_value"),
+                },
+            }
+            card = dui.build_decision_card(analysis=analysis)
+            if card:
+                cards.append(card)
+    else:
+        cards, *_ = prediction_service.get_fixture_cards(league_id)
     all_cards = [_with_insight_metadata(card) for card in cards]
     home_context = {"all_cards": all_cards}
     sport_filter = (request.args.get("sport") or "all").strip().lower()
@@ -4938,6 +4968,56 @@ def prediction():
     if retry_after:
         return _error_response(429, f"Rate limit exceeded. Retry in {retry_after}s.")
     _set_data_refresh()
+    match_id = (request.args.get("match_id") or "").strip()
+    if match_id and _MATCH_BRAIN is not None:
+        canonical = _MATCH_BRAIN.get_match_analysis(match_id)
+        if not canonical:
+            return _selection_error_redirect("soccer", "Match Analysis could not be loaded for the selected match.")
+        prediction_block = canonical.get("prediction") or {}
+        probs = prediction_block.get("probabilities") or {}
+        home_team = ((canonical.get("teams") or {}).get("home") or {})
+        away_team = ((canonical.get("teams") or {}).get("away") or {})
+        scorpred = {
+            "confidence_pct": prediction_block.get("confidence", 0),
+            "play_type": prediction_block.get("action", "SKIP"),
+            "win_probabilities": {
+                "a": probs.get("home"),
+                "draw": probs.get("draw"),
+                "b": probs.get("away"),
+            },
+            "best_pick": {
+                "prediction": prediction_block.get("side"),
+                "reasoning": " | ".join((prediction_block.get("reasoning") or {}).get("strengths", [])),
+            },
+            "decision_card": dui.build_decision_card(
+                analysis={
+                    "match_id": canonical.get("match_id"),
+                    "matchup": canonical.get("matchup"),
+                    "confidence": prediction_block.get("confidence"),
+                    "probabilities": {"a": probs.get("home"), "draw": probs.get("draw"), "b": probs.get("away")},
+                    "action": prediction_block.get("action"),
+                    "recommended_side": prediction_block.get("side"),
+                    "reason": " | ".join((prediction_block.get("reasoning") or {}).get("strengths", [])),
+                    "data_quality": prediction_block.get("data_quality"),
+                    "metric_breakdown": {
+                        "edge_score": prediction_block.get("edge_score"),
+                        "risk_level": prediction_block.get("risk_level"),
+                        "expected_value": prediction_block.get("expected_value"),
+                    },
+                }
+            ),
+        }
+        return render_template(
+            "prediction.html",
+            **_page_context(
+                team_a=home_team,
+                team_b=away_team,
+                prediction={"ui_prediction": scorpred},
+                scorpred=scorpred,
+                selected_fixture={"fixture_id": canonical.get("match_id"), "date": canonical.get("kickoff")},
+                **_league_context(_active_league_id()),
+            ),
+        )
     team_a, team_b = _require_teams()
     if not team_a:
         return _selection_error_redirect("soccer", "Match Analysis could not be opened because no soccer fixture is selected.")
@@ -5776,7 +5856,7 @@ def football_prefetch_competition_api():
 @app.route("/my-bets", methods=["GET"])
 def my_bets():
     _refresh_tracking_results_if_due()
-    tracked = mt.get_recent_predictions(limit=300)
+    tracked = _MATCH_BRAIN.refresh_tracked_matches() if _MATCH_BRAIN is not None else mt.get_recent_predictions(limit=300)
 
     status_filter = (request.args.get("status") or "all").strip().lower()
     if status_filter not in {"all", "open", "settled"}:
@@ -5968,7 +6048,7 @@ def performance():
         "roi": "N/A",
         "win_rate": win_rate,
         "total_profit": "N/A",
-        "record": f"{won_count}W - {lost_count}L - {open_count}O",
+        "record": f"{won_count}W-{lost_count}L-{max(0, settled_count - won_count - lost_count)}P",
         "avg_odds": "N/A",
         "won_count": won_count,
         "lost_count": lost_count,
@@ -5995,19 +6075,33 @@ def performance():
 @app.route("/alerts", methods=["GET"])
 def alerts():
     league_id = _active_league_id()
-    cards = prediction_service.get_top_opportunities(league_id) or []
-    active_alerts = []
-    for card in cards:
-        active_alerts.append(
+    if _MATCH_BRAIN is not None:
+        canonical_alerts = _MATCH_BRAIN.get_alerts(league_id)
+        active_alerts = [
             {
-                "level": "high" if str(card.get("action") or "").upper() == "BET" else "info",
-                "type": "Opportunity",
-                "title": card.get("matchup") or "Unavailable",
-                "description": f"Pick: {card.get('recommended_side') or 'Unavailable'} · Confidence: {int(_safe_float(card.get('confidence_pct'), 0))}%",
+                "level": "high" if row.get("type") == "high_confidence_opportunity" else "info",
+                "type": row.get("type", "Alert").replace("_", " ").title(),
+                "title": row.get("title") or "Alert",
+                "description": row.get("description") or "",
                 "time": "Live",
-                "match_url": "/soccer",
+                "match_url": f"/prediction?match_id={row.get('match_id')}" if row.get("match_id") else "/soccer",
             }
-        )
+            for row in canonical_alerts
+        ]
+    else:
+        cards = prediction_service.get_top_opportunities(league_id) or []
+        active_alerts = []
+        for card in cards:
+            active_alerts.append(
+                {
+                    "level": "high" if str(card.get("action") or "").upper() == "BET" else "info",
+                    "type": "Opportunity",
+                    "title": card.get("matchup") or "Unavailable",
+                    "description": f"Pick: {card.get('recommended_side') or 'Unavailable'} · Confidence: {int(_safe_float(card.get('confidence_pct'), 0))}%",
+                    "time": "Live",
+                    "match_url": "/soccer",
+                }
+            )
     ctx = _page_context()
     ctx.update({"active_alerts": active_alerts, "alert_count": len(active_alerts)})
     return render_template("alerts.html", **ctx)
