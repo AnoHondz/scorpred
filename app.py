@@ -49,6 +49,8 @@ from security import check_chat_rate_limit, configure_security, sanitize_error
 from services import analysis_assistant as assistant_services
 from services import bets_service
 from services import cache_service
+from services import calibration_service
+from services import model_trust_service
 from services import prediction_service
 from services import validators
 from services.decision_engine import DecisionEngine
@@ -239,6 +241,8 @@ def inject_auth_context():
     return {
         "current_user": user_auth.current_user(),
         "is_guest": user_auth.current_user() is None,
+        "format_percent_decimal": format_percent_decimal,
+        "format_confidence": format_confidence,
     }
 
 
@@ -513,6 +517,36 @@ def _safe_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def format_percent_decimal(value: float | None, *, plus: bool = True, empty: str = "N/A") -> str:
+    if value is None:
+        return empty
+    try:
+        number = float(value) * 100.0
+    except (TypeError, ValueError):
+        return empty
+    sign = "+" if plus and number > 0 else ""
+    return f"{sign}{number:.1f}%"
+
+
+def format_confidence(value: float | int | None, *, empty: str = "N/A") -> str:
+    if value is None:
+        return empty
+    try:
+        number = int(round(float(value)))
+    except (TypeError, ValueError):
+        return empty
+    return f"{max(0, min(100, number))}%"
+
+
+def _data_quality_label(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return "Strong Data" if float(value) >= 75 else "Limited Data"
+    text = str(value or "").strip()
+    if not text:
+        return "Limited Data"
+    return text
 
 
 _TRACKING_REFRESH_LAST_RUN: datetime | None = None
@@ -2265,6 +2299,7 @@ def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
     if not canonical:
         return None
     pred_block = canonical.get("prediction") or {}
+    metric_breakdown = canonical.get("metric_breakdown") or {}
     return {
         "match_id": canonical.get("match_id", ""),
         "matchup": canonical.get("matchup", ""),
@@ -2272,22 +2307,32 @@ def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
         "kickoff": canonical.get("kickoff", ""),
         "status": canonical.get("status", "scheduled"),
         "prediction": pred_block,
-        # Backwards-compatible keys consumed by decision_ui templates.
-        "confidence": pred_block.get("confidence", 0),
+        "recommended_side": canonical.get("recommended_side"),
+        "action": canonical.get("action", "SKIP"),
+        "confidence": canonical.get("confidence", 0),
         "probabilities": {
-            "a": (pred_block.get("probabilities") or {}).get("home"),
-            "draw": (pred_block.get("probabilities") or {}).get("draw"),
-            "b": (pred_block.get("probabilities") or {}).get("away"),
+            "a": (canonical.get("probabilities") or {}).get("home"),
+            "draw": (canonical.get("probabilities") or {}).get("draw"),
+            "b": (canonical.get("probabilities") or {}).get("away"),
         },
-        "action": pred_block.get("action", "SKIP"),
-        "recommended_side": pred_block.get("side"),
-        "reason": " | ".join((pred_block.get("reasoning") or {}).get("strengths", [])),
-        "data_quality": pred_block.get("data_quality"),
+        "data_quality": _data_quality_label(canonical.get("data_quality")),
+        "reason": canonical.get("reason") or "Decision generated from available model evidence.",
         "metric_breakdown": {
-            "edge_score": pred_block.get("edge_score"),
-            "risk_level": pred_block.get("risk_level"),
-            "expected_value": pred_block.get("expected_value"),
+            "model_probability": metric_breakdown.get("model_probability"),
+            "implied_probability": metric_breakdown.get("implied_probability"),
+            "edge_score": metric_breakdown.get("edge_score"),
+            "expected_value": metric_breakdown.get("expected_value"),
+            "risk_score": metric_breakdown.get("risk_score"),
+            "risk_level": metric_breakdown.get("risk_level"),
+            "decision_grade": metric_breakdown.get("decision_grade"),
         },
+        "model_probability": metric_breakdown.get("model_probability"),
+        "implied_probability": metric_breakdown.get("implied_probability"),
+        "edge_score": metric_breakdown.get("edge_score"),
+        "expected_value": metric_breakdown.get("expected_value"),
+        "risk_score": metric_breakdown.get("risk_score"),
+        "risk_level": metric_breakdown.get("risk_level"),
+        "decision_grade": metric_breakdown.get("decision_grade"),
     }
 
 
@@ -2309,22 +2354,50 @@ def _analysis_from_prediction_payload(
     probs = prediction.get("win_probabilities") or {}
     best_pick = prediction.get("best_pick") or {}
     data_block = prediction.get("data_completeness") if isinstance(prediction.get("data_completeness"), dict) else {}
-    tier = str(data_block.get("tier") or "").lower()
-    data_quality = "Strong Data" if tier == "strong" else "Limited Data"
+    decision = _DECISION_ENGINE.build_decision(
+        {
+            "home_name": (matchup.split(" vs ")[0] if " vs " in matchup else "Home"),
+            "away_name": (matchup.split(" vs ")[1] if " vs " in matchup else "Away"),
+            "probabilities": {
+                "home": probs.get("a") if probs.get("a") is not None else prediction.get("prob_a"),
+                "draw": probs.get("draw") if probs.get("draw") is not None else prediction.get("prob_draw"),
+                "away": probs.get("b") if probs.get("b") is not None else prediction.get("prob_b"),
+            },
+            "confidence": prediction.get("confidence_pct") or 0,
+            "recommended_side": best_pick.get("prediction") or best_pick.get("team"),
+            "data_completeness": data_block,
+            "odds": prediction.get("odds"),
+        }
+    )
     return {
         "match_id": match_id,
         "matchup": matchup,
-        "confidence": prediction.get("confidence_pct") or 0,
+        "confidence": decision.get("confidence") or 0,
         "probabilities": {
-            "a": probs.get("a") if probs.get("a") is not None else prediction.get("prob_a"),
-            "draw": probs.get("draw") if probs.get("draw") is not None else prediction.get("prob_draw"),
-            "b": probs.get("b") if probs.get("b") is not None else prediction.get("prob_b"),
+            "a": (decision.get("probabilities") or {}).get("home"),
+            "draw": (decision.get("probabilities") or {}).get("draw"),
+            "b": (decision.get("probabilities") or {}).get("away"),
         },
-        "action": prediction.get("play_type") or "CONSIDER",
-        "recommended_side": best_pick.get("prediction") or best_pick.get("team"),
-        "reason": best_pick.get("reasoning") or prediction.get("decision_summary"),
-        "data_quality": data_quality,
-        "metric_breakdown": prediction.get("metric_breakdown"),
+        "action": decision.get("action") or "CONSIDER",
+        "recommended_side": decision.get("side") or best_pick.get("prediction") or best_pick.get("team"),
+        "reason": " | ".join((decision.get("reasoning") or {}).get("strengths", [])) or best_pick.get("reasoning") or prediction.get("decision_summary"),
+        "data_quality": _data_quality_label(decision.get("data_quality")),
+        "metric_breakdown": {
+            "model_probability": decision.get("model_probability"),
+            "implied_probability": decision.get("implied_probability"),
+            "edge_score": decision.get("edge_score"),
+            "expected_value": decision.get("expected_value"),
+            "risk_score": decision.get("risk_score"),
+            "risk_level": decision.get("risk_level"),
+            "decision_grade": decision.get("decision_grade"),
+        },
+        "model_probability": decision.get("model_probability"),
+        "implied_probability": decision.get("implied_probability"),
+        "edge_score": decision.get("edge_score"),
+        "expected_value": decision.get("expected_value"),
+        "risk_score": decision.get("risk_score"),
+        "risk_level": decision.get("risk_level"),
+        "decision_grade": decision.get("decision_grade"),
     }
 
 
@@ -5931,6 +6004,10 @@ def add_bet():
         data = validators.validate_bet_payload(data)
     except validators.ValidationError as exc:
         return {"status": "error", "error": str(exc)}, 400
+    if _MATCH_BRAIN is not None:
+        canonical = _MATCH_BRAIN.get_match_analysis(data.get("match_id"))
+        if canonical:
+            _MATCH_BRAIN.track_match(canonical)
     try:
         created = bets_service.create_bet(data)
     except bets_service.BetValidationError as exc:
@@ -6043,6 +6120,25 @@ def performance():
         profit_trend_values.append(cumulative)
 
     win_rate = "N/A" if settled_count == 0 else f"{win_rate_value:.1f}%"
+    calibration = calibration_service.get_calibration(completed_window)
+    recent_evaluated = completed_window[:30]
+    recent_accuracy = None
+    if recent_evaluated:
+        recent_accuracy = sum(1 for row in recent_evaluated if row.get("is_correct") is True) / len(recent_evaluated)
+    dq_values = []
+    for row in completed_window:
+        factors = row.get("model_factors") if isinstance(row.get("model_factors"), dict) else {}
+        snapshot = factors.get("canonical_snapshot") if isinstance(factors, dict) else {}
+        dq = (snapshot or {}).get("data_quality")
+        if isinstance(dq, (int, float)):
+            dq_values.append(float(dq))
+    average_data_quality = (sum(dq_values) / len(dq_values)) if dq_values else None
+    trust = model_trust_service.compute_trust_score(
+        calibration_score=calibration.get("calibration_score"),
+        recent_accuracy=recent_accuracy,
+        average_data_quality=average_data_quality,
+        sample_size=len(completed_window),
+    )
     ctx = _page_context()
     ctx.update({
         "roi": "N/A",
@@ -6059,6 +6155,12 @@ def performance():
         "profit_trend_labels": profit_trend_labels,
         "profit_trend_values": profit_trend_values,
         "results_rows": scoreboard_rows,
+        "calibration_rows": calibration.get("rows") or [],
+        "calibration_error": calibration.get("calibration_error"),
+        "calibration_score": calibration.get("calibration_score"),
+        "trust_score": trust.get("trust_score"),
+        "trust_label": trust.get("label"),
+        "evaluated_sample_size": len(completed_window),
         "window": window,
         "window_counts": {
             "today": len([r for r in completed + pending if _in_window(_as_dt(r)) and (_as_dt(r) and (_as_dt(r).date() - base_date).days == 0)]),

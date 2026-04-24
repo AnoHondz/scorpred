@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from services.decision_engine import DecisionEngine
@@ -18,6 +18,7 @@ class MatchBrain:
     tracker_recent: Callable[[int], list[dict[str, Any]]] | None = None
     refresh_results: Callable[[], Any] | None = None
     _fixture_index: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _analysis_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     _status_memory: dict[str, str] = field(default_factory=dict)
 
     def get_match_status(self, fixture: dict[str, Any]) -> str:
@@ -82,12 +83,36 @@ class MatchBrain:
         kickoff = (fixture.get("fixture") or {}).get("date") or ""
         status = self.get_match_status(fixture)
         league = (fixture.get("league") or {}).get("name") or "Soccer"
+        reason = " | ".join((decision.get("reasoning") or {}).get("strengths", []))
+        breakdown = {
+            "model_probability": decision.get("model_probability"),
+            "implied_probability": decision.get("implied_probability"),
+            "edge_score": decision.get("edge_score"),
+            "expected_value": decision.get("expected_value"),
+            "risk_score": decision.get("risk_score"),
+            "risk_level": decision.get("risk_level"),
+            "decision_grade": decision.get("decision_grade"),
+        }
         canonical = {
             "match_id": str(fixture_id),
             "matchup": f"{home_name} vs {away_name}",
             "league": league,
             "kickoff": kickoff,
             "status": status,
+            "recommended_side": decision.get("side"),
+            "action": decision.get("action"),
+            "confidence": decision.get("confidence"),
+            "probabilities": decision.get("probabilities"),
+            "data_quality": decision.get("data_quality"),
+            "reason": reason,
+            "metric_breakdown": breakdown,
+            "model_probability": breakdown.get("model_probability"),
+            "implied_probability": breakdown.get("implied_probability"),
+            "edge_score": breakdown.get("edge_score"),
+            "expected_value": breakdown.get("expected_value"),
+            "risk_score": breakdown.get("risk_score"),
+            "risk_level": breakdown.get("risk_level"),
+            "decision_grade": breakdown.get("decision_grade"),
             "prediction": decision,
             "teams": {
                 "home": home,
@@ -99,10 +124,17 @@ class MatchBrain:
 
     def get_match_analysis(self, match_id: str | int) -> dict[str, Any] | None:
         match_key = str(match_id)
+        cached = self._analysis_cache.get(match_key)
+        if cached is not None:
+            return cached
         fixture = self._fixture_index.get(match_key) or self.get_fixture_by_id(match_key)
         if not fixture:
             return None
-        return self.canonical_from_fixture(fixture)
+        canonical = self.canonical_from_fixture(fixture)
+        if canonical and self._validate_canonical(canonical):
+            self._analysis_cache[match_key] = canonical
+            return canonical
+        return None
 
     def get_insights(self, league_id: int) -> dict[str, Any]:
         fixtures, *_ = self.load_fixtures(league_id)
@@ -111,8 +143,8 @@ class MatchBrain:
         opportunities = sorted(
             canonical,
             key=lambda row: (
-                -int((row["prediction"] or {}).get("confidence") or 0),
-                -float((row["prediction"] or {}).get("edge_score") or 0),
+                -self._priority_score(row),
+                -(row.get("confidence") or 0),
             ),
         )
         high_conf = [row for row in opportunities if int((row["prediction"] or {}).get("confidence") or 0) >= 64]
@@ -129,6 +161,32 @@ class MatchBrain:
         home = teams.get("home") or {}
         away = teams.get("away") or {}
         probs = prediction.get("probabilities") or {}
+        snapshot = {
+            "canonical_snapshot": {
+                "match_id": canonical_match.get("match_id"),
+                "matchup": canonical_match.get("matchup"),
+                "sport": "soccer",
+                "league": canonical_match.get("league"),
+                "kickoff": canonical_match.get("kickoff"),
+                "status": canonical_match.get("status"),
+                "recommended_side": canonical_match.get("recommended_side"),
+                "action": canonical_match.get("action"),
+                "confidence": canonical_match.get("confidence"),
+                "probabilities": canonical_match.get("probabilities"),
+                "data_quality": canonical_match.get("data_quality"),
+                "reason": canonical_match.get("reason"),
+                "model_probability": (canonical_match.get("metric_breakdown") or {}).get("model_probability"),
+                "implied_probability": (canonical_match.get("metric_breakdown") or {}).get("implied_probability"),
+                "edge_score": (canonical_match.get("metric_breakdown") or {}).get("edge_score"),
+                "expected_value": (canonical_match.get("metric_breakdown") or {}).get("expected_value"),
+                "risk_score": (canonical_match.get("metric_breakdown") or {}).get("risk_score"),
+                "risk_level": (canonical_match.get("metric_breakdown") or {}).get("risk_level"),
+                "decision_grade": (canonical_match.get("metric_breakdown") or {}).get("decision_grade"),
+                "tracked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "result": None,
+                "evaluation_status": "OPEN",
+            }
+        }
         return self.tracker_save(
             sport="soccer",
             team_a=home.get("name") or "Home",
@@ -145,6 +203,7 @@ class MatchBrain:
             team_b_id=away.get("id"),
             league_name=canonical_match.get("league"),
             fixture_id=canonical_match.get("match_id"),
+            model_factors=snapshot,
         )
 
     def refresh_tracked_matches(self) -> list[dict[str, Any]]:
@@ -206,6 +265,42 @@ class MatchBrain:
                 )
             self._status_memory[canonical["match_id"]] = current
         return alerts[:20]
+
+    @staticmethod
+    def _priority_score(row: dict[str, Any]) -> float:
+        confidence = float(row.get("confidence") or 0.0)
+        data_quality = float(row.get("data_quality") or 0.0)
+        metric = row.get("metric_breakdown") or {}
+        edge_score = metric.get("edge_score")
+        expected_value = metric.get("expected_value")
+        if edge_score is None or expected_value is None:
+            return confidence * 0.75 + data_quality * 0.25
+        return confidence * 0.45 + float(edge_score) * 100 * 0.30 + float(expected_value) * 100 * 0.15 + data_quality * 0.10
+
+    @staticmethod
+    def _validate_canonical(payload: dict[str, Any]) -> bool:
+        required = {
+            "match_id",
+            "matchup",
+            "league",
+            "kickoff",
+            "status",
+            "recommended_side",
+            "action",
+            "confidence",
+            "probabilities",
+            "data_quality",
+            "reason",
+            "metric_breakdown",
+            "model_probability",
+            "implied_probability",
+            "edge_score",
+            "expected_value",
+            "risk_score",
+            "risk_level",
+            "decision_grade",
+        }
+        return all(key in payload for key in required)
 
     @staticmethod
     def _parse_kickoff(value: Any) -> datetime | None:

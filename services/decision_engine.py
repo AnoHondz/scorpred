@@ -12,12 +12,15 @@ class DecisionEngine:
         probabilities = self._extract_probabilities(match_data)
         side = self._pick_side(match_data, probabilities)
         confidence = self._confidence(match_data, probabilities, side)
+        model_probability = round(max(0.0, min(1.0, confidence / 100.0)), 4)
         implied = self._implied_probability(match_data, side)
-        edge_score = round((confidence / 100.0 - implied) * 100, 2)
-        expected_value = round((confidence / 100.0 - implied) * 100, 2)
+        edge_score = None if implied is None else round(model_probability - implied, 4)
+        expected_value = None if implied is None else round(model_probability - implied, 4)
         data_quality = self._data_quality(match_data)
-        risk_level = self._risk_level(confidence, data_quality, probabilities)
-        action = self._action(confidence, edge_score, risk_level)
+        risk_score = self._risk_score(confidence, data_quality, probabilities)
+        risk_level = self._risk_level(risk_score)
+        action = self._action(confidence, edge_score, risk_level, implied is None, data_quality)
+        decision_grade = self._decision_grade(confidence, risk_score, edge_score, data_quality)
         reasoning = self._reasoning(match_data, side, confidence, data_quality)
 
         return {
@@ -25,9 +28,13 @@ class DecisionEngine:
             "action": action,
             "confidence": confidence,
             "probabilities": probabilities,
+            "model_probability": model_probability,
+            "implied_probability": implied,
             "edge_score": edge_score,
             "risk_level": risk_level,
+            "risk_score": risk_score,
             "expected_value": expected_value,
+            "decision_grade": decision_grade,
             "data_quality": data_quality,
             "reasoning": reasoning,
         }
@@ -44,11 +51,7 @@ class DecisionEngine:
         if abs(total - 100.0) > 0.01:
             scale = 100.0 / total
             home, draw, away = home * scale, draw * scale, away * scale
-        return {
-            "home": round(home, 1),
-            "draw": round(draw, 1),
-            "away": round(away, 1),
-        }
+        return {"home": round(home, 1), "draw": round(draw, 1), "away": round(away, 1)}
 
     def _pick_side(self, match_data: dict[str, Any], probabilities: dict[str, float]) -> str:
         explicit = str(match_data.get("recommended_side") or match_data.get("side") or "").strip()
@@ -71,10 +74,13 @@ class DecisionEngine:
             side_key = "draw"
         return int(max(0, min(100, round(probabilities.get(side_key, max(probabilities.values()))))))
 
-    def _implied_probability(self, match_data: dict[str, Any], side: str) -> float:
+    def _implied_probability(self, match_data: dict[str, Any], side: str) -> float | None:
         odds = match_data.get("odds") or {}
         if not isinstance(odds, dict):
-            return max(0.01, min(0.99, float(match_data.get("implied_probability") or 0.5)))
+            raw = match_data.get("implied_probability")
+            if raw in (None, ""):
+                return None
+            return max(0.01, min(0.99, float(raw)))
         side_key = "home"
         if side.lower() == "draw":
             side_key = "draw"
@@ -87,7 +93,10 @@ class DecisionEngine:
                 return max(0.01, min(0.99, 1.0 / odd_f))
         except (TypeError, ValueError):
             pass
-        return max(0.01, min(0.99, float(match_data.get("implied_probability") or 0.5)))
+        raw = match_data.get("implied_probability")
+        if raw in (None, ""):
+            return None
+        return max(0.01, min(0.99, float(raw)))
 
     def _data_quality(self, match_data: dict[str, Any]) -> int:
         raw = match_data.get("data_quality")
@@ -100,20 +109,57 @@ class DecisionEngine:
             return 45
         return 65
 
-    def _risk_level(self, confidence: int, data_quality: int, probabilities: dict[str, float]) -> str:
+    def _risk_score(self, confidence: int, data_quality: int, probabilities: dict[str, float]) -> float:
         spread = max(probabilities.values()) - min(probabilities.values())
-        if data_quality < 50 or confidence < 52 or spread < 8:
-            return "HIGH"
-        if confidence >= 65 and data_quality >= 70 and spread >= 15:
-            return "LOW"
-        return "MEDIUM"
+        confidence_penalty = max(0.0, (65 - confidence) / 100.0)
+        quality_penalty = max(0.0, (70 - data_quality) / 100.0)
+        variance_penalty = max(0.0, (15 - spread) / 100.0)
+        return round(min(1.0, confidence_penalty + quality_penalty + variance_penalty), 4)
 
-    def _action(self, confidence: int, edge_score: float, risk_level: str) -> str:
-        if confidence >= 64 and edge_score >= 2 and risk_level != "HIGH":
+    def _risk_level(self, risk_score: float) -> str:
+        if risk_score >= 0.45:
+            return "HIGH"
+        if risk_score >= 0.2:
+            return "MEDIUM"
+        return "LOW"
+
+    def _action(
+        self,
+        confidence: int,
+        edge_score: float | None,
+        risk_level: str,
+        missing_market: bool,
+        data_quality: int,
+    ) -> str:
+        if missing_market:
+            if confidence >= 66 and data_quality >= 70 and risk_level != "HIGH":
+                return "BET"
+            if confidence >= 55:
+                return "CONSIDER"
+            return "SKIP"
+        if confidence >= 64 and (edge_score or 0.0) >= 0.02 and risk_level != "HIGH":
             return "BET"
-        if confidence >= 54 and edge_score >= -1:
+        if confidence >= 54 and (edge_score or 0.0) >= -0.01:
             return "CONSIDER"
         return "SKIP"
+
+    def _decision_grade(
+        self,
+        confidence: int,
+        risk_score: float,
+        edge_score: float | None,
+        data_quality: int,
+    ) -> str:
+        quality = confidence * 0.5 + data_quality * 0.3 + (1 - risk_score) * 100 * 0.2
+        if edge_score is not None:
+            quality += edge_score * 100 * 0.2
+        if quality >= 82:
+            return "A"
+        if quality >= 72:
+            return "B"
+        if quality >= 60:
+            return "C"
+        return "D"
 
     def _reasoning(self, match_data: dict[str, Any], side: str, confidence: int, data_quality: int) -> dict[str, list[str]]:
         strengths = []
