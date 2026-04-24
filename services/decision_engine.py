@@ -20,6 +20,7 @@ class DecisionEngine:
         risk_score = self._risk_score(confidence, data_quality, probabilities)
         risk_level = self._risk_level(risk_score)
         action = self._action(confidence, edge_score, risk_level, implied is None, data_quality)
+        action = self._apply_trust_guard(action, match_data.get("trust_score"))
         decision_grade = self._decision_grade(confidence, risk_score, edge_score, data_quality)
         reasoning = self._reasoning(match_data, side, confidence, data_quality)
 
@@ -160,6 +161,22 @@ class DecisionEngine:
         if quality >= 60:
             return "C"
         return "D"
+
+    @staticmethod
+    def _apply_trust_guard(action: str, trust_score: Any) -> str:
+        if trust_score is None:
+            return action
+        try:
+            value = float(trust_score)
+        except (TypeError, ValueError):
+            return action
+        if value >= 55:
+            return action
+        if action == "BET":
+            return "CONSIDER"
+        if action == "CONSIDER":
+            return "SKIP"
+        return action
 
     def _reasoning(self, match_data: dict[str, Any], side: str, confidence: int, data_quality: int) -> dict[str, list[str]]:
         strengths = []

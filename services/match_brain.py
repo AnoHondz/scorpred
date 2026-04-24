@@ -8,6 +8,7 @@ import logging
 import threading
 from typing import Any, Callable
 
+from services.calibration_engine import CalibrationEngine
 from services.decision_engine import DecisionEngine
 
 
@@ -35,6 +36,7 @@ class MatchBrain:
     _error_count: int = 0
     _api_status: str = "ok"
     _log: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+    _calibration_engine: CalibrationEngine = field(default_factory=CalibrationEngine)
 
     def get_match_status(self, fixture: dict[str, Any]) -> str:
         status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
@@ -77,6 +79,10 @@ class MatchBrain:
         raw_probs = (fixture.get("prediction") or {}).get("win_probabilities") or {}
         best_pick = (fixture.get("prediction") or {}).get("best_pick") or {}
         model_conf = (fixture.get("prediction") or {}).get("confidence_pct")
+        model_metrics = self.get_model_metrics()
+        trust_score = model_metrics.get("trust_score")
+        if isinstance(model_metrics.get("calibration_score"), str):
+            trust_score = None
 
         decision = self.decision_engine.build_decision(
             {
@@ -93,6 +99,7 @@ class MatchBrain:
                 "strengths": [best_pick.get("reasoning")] if best_pick.get("reasoning") else [],
                 "risks": [],
                 "odds": (fixture.get("prediction") or {}).get("odds") or {},
+                "trust_score": trust_score,
             }
         )
 
@@ -218,6 +225,18 @@ class MatchBrain:
                 "evaluation_status": "OPEN",
             }
         }
+        snapshot["evaluation"] = self._calibration_engine.build_snapshot(
+            {
+                "match_id": canonical_match.get("match_id"),
+                "recommended_side": canonical_match.get("recommended_side"),
+                "confidence": canonical_match.get("confidence"),
+                "probabilities": canonical_match.get("probabilities"),
+                "edge_score": canonical_match.get("edge_score"),
+                "expected_value": canonical_match.get("expected_value"),
+                "data_quality": canonical_match.get("data_quality"),
+                "tracked_at": snapshot["canonical_snapshot"]["tracked_at"],
+            }
+        )
         saved_id = self.tracker_save(
             sport="soccer",
             team_a=home.get("name") or "Home",
@@ -346,6 +365,10 @@ class MatchBrain:
             "calibration_status": "ready" if len(evaluated) >= 2 else "insufficient_data",
             "error_count": self._error_count,
         }
+
+    def get_model_metrics(self) -> dict[str, Any]:
+        rows = self.safe_fetch_results()
+        return self._calibration_engine.get_model_metrics(rows)
 
     @staticmethod
     def _priority_score(row: dict[str, Any]) -> float:

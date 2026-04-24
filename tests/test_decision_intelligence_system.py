@@ -5,6 +5,7 @@ from unittest.mock import patch
 import app as flask_app_module
 import model_tracker as mt
 from services import calibration_service, model_trust_service
+from services.calibration_engine import CalibrationEngine
 from services.decision_engine import DecisionEngine
 from services.match_brain import MatchBrain
 
@@ -397,3 +398,73 @@ def test_refresh_cycle_guard_prevents_duplicate_evaluation_calls():
     brain.refresh_cycle(39, min_interval_seconds=120)
     brain.refresh_cycle(39, min_interval_seconds=120)
     assert calls["refresh"] == 1
+
+
+def test_calibration_engine_snapshot_and_completed_evaluation():
+    engine = CalibrationEngine(min_samples=2)
+    snapshot = engine.build_snapshot(
+        {
+            "match_id": "11",
+            "recommended_side": "Arsenal",
+            "confidence": 78,
+            "probabilities": {"home": 0.5, "draw": 0.25, "away": 0.25},
+            "edge_score": 0.12,
+            "expected_value": 0.1,
+            "data_quality": 80,
+            "tracked_at": "2026-04-24T10:00:00Z",
+        }
+    )
+    assert snapshot["match_id"] == "11"
+    assert snapshot["predicted_side"] == "Arsenal"
+
+    evaluated = engine.evaluate_completed({"confidence": 78, "actual_result": "H", "is_correct": True})
+    assert evaluated["confidence_bucket"] == "70-80"
+
+
+def test_calibration_engine_bucket_breakdown_and_trust_penalty():
+    engine = CalibrationEngine(min_samples=2)
+    rows = [
+        {"status": "completed", "confidence": 75, "is_correct": True},
+        {"status": "completed", "confidence": 75, "is_correct": False},
+        {"status": "completed", "confidence": 55, "is_correct": False},
+    ]
+    metrics = engine.get_model_metrics(rows)
+    assert metrics["bucket_breakdown"]["70-80"]["sample_size"] == 2
+    assert isinstance(metrics["trust_score"], float)
+
+    low_sample_metrics = CalibrationEngine(min_samples=20).get_model_metrics(rows)
+    assert low_sample_metrics["calibration_score"] == "insufficient data"
+    assert low_sample_metrics["trust_score"] < metrics["trust_score"]
+
+
+def test_decision_engine_respects_trust_score_downgrade():
+    decision = DecisionEngine().build_decision(
+        {
+            "home_name": "Arsenal",
+            "away_name": "Chelsea",
+            "probabilities": {"home": 70, "draw": 15, "away": 15},
+            "confidence": 80,
+            "odds": {"home": 1.9},
+            "trust_score": 40,
+            "data_completeness": {"tier": "strong"},
+        }
+    )
+    assert decision["action"] in {"CONSIDER", "SKIP"}
+
+
+def test_matchbrain_model_metrics_available():
+    rows = [
+        {"status": "completed", "confidence": 75, "is_correct": True},
+        {"status": "completed", "confidence": 65, "is_correct": False},
+        {"status": "pending", "confidence": 70, "is_correct": None},
+    ]
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: None,
+        decision_engine=DecisionEngine(),
+        tracker_recent=lambda _limit: rows,
+    )
+    metrics = brain.get_model_metrics()
+    assert metrics["total_predictions"] == 3
+    assert metrics["completed_predictions"] == 2
+    assert "bucket_breakdown" in metrics
