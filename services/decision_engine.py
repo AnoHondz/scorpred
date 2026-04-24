@@ -19,7 +19,7 @@ class DecisionEngine:
         model_probability = round(max(0.0, min(1.0, confidence / 100.0)), 4)
         implied = self._implied_probability(match_data, side)
         edge_score = None if implied is None else round(model_probability - implied, 4)
-        expected_value = None if implied is None else round(model_probability - implied, 4)
+        expected_value = None if edge_score is None else round(edge_score * 100.0, 4)
         data_quality = self._data_quality(match_data)
         risk_score = self._risk_score(confidence, data_quality, probabilities)
         risk_level = self._risk_level(risk_score)
@@ -362,5 +362,7 @@ class DecisionEngine:
                 return "SKIP"
             return "CONSIDER"
         if action == "CONSIDER":
-            return "SKIP"
-        return "SKIP"
+            if severity == "HIGH":
+                return "SKIP"
+            return "CONSIDER"
+        return action
