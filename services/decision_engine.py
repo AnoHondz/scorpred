@@ -52,11 +52,18 @@ class DecisionEngine:
             expected_value=expected_value,
             data_label=data_label,
         )
+        action = self._apply_risk_downgrade(action, risk_score)
         decision_grade = self._decision_grade(
             action=action,
             edge_score=edge_score,
             expected_value=expected_value,
             risk_level=risk_level,
+        )
+        priority_score = self._priority_score(
+            edge_score=edge_score,
+            expected_value=expected_value,
+            data_quality=data_quality,
+            confidence=confidence,
         )
         reasoning = self._reasoning(
             match_data=match_data,
@@ -81,6 +88,7 @@ class DecisionEngine:
             "risk_score": risk_score,
             "risk_level": risk_level,
             "decision_grade": decision_grade,
+            "priority_score": priority_score,
             "data_quality": data_quality,
             "reasoning": reasoning,
         }
@@ -235,6 +243,36 @@ class DecisionEngine:
         if confidence >= 55:
             return "CONSIDER"
         return "SKIP"
+
+    @staticmethod
+    def _apply_risk_downgrade(action: str, risk_score: int) -> str:
+        if risk_score > 70:
+            if action == "BET":
+                return "CONSIDER"
+            if action == "CONSIDER":
+                return "SKIP"
+        return action
+
+    @staticmethod
+    def _priority_score(
+        *,
+        edge_score: float | None,
+        expected_value: float | None,
+        data_quality: int,
+        confidence: int,
+    ) -> float:
+        # 0..1 composite ranking used by MatchBrain to rank opportunities.
+        edge_component = max(0.0, edge_score or 0.0)
+        ev_component = max(0.0, expected_value or 0.0)
+        dq_component = max(0.0, min(1.0, (data_quality or 0) / 100.0))
+        # When odds are missing, lean on confidence so the lineup still ranks
+        # sensibly without inventing EV.
+        if edge_score is None and expected_value is None:
+            conf_component = max(0.0, min(1.0, (confidence or 0) / 100.0))
+            return round(conf_component * 0.7 + dq_component * 0.3, 4)
+        return round(
+            edge_component * 0.5 + ev_component * 0.3 + dq_component * 0.2, 4
+        )
 
     @staticmethod
     def _decision_grade(
