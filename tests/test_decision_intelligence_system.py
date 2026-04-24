@@ -230,6 +230,23 @@ def test_model_trust_requires_minimum_sample():
     assert trust["label"] == "Insufficient Data"
 
 
+def test_model_trust_normalizes_fractional_and_percent_inputs():
+    fractional = model_trust_service.compute_trust_score(
+        calibration_score=0.78,
+        recent_accuracy=0.61,
+        average_data_quality=82,
+        sample_size=24,
+    )
+    percent = model_trust_service.compute_trust_score(
+        calibration_score=78,
+        recent_accuracy=61,
+        average_data_quality=82,
+        sample_size=24,
+    )
+    assert fractional["trust_score"] == percent["trust_score"]
+    assert fractional["label"] == percent["label"]
+
+
 def test_routes_do_not_recompute_action_outside_decision_engine():
     payload = {
         "win_probabilities": {"a": 55, "draw": 20, "b": 25},

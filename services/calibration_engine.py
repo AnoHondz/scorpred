@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from services import model_trust_service
 
 _BUCKETS: list[tuple[int, int, str]] = [
     (50, 60, "50-60"),
@@ -90,7 +91,11 @@ class CalibrationEngine:
 
     @staticmethod
     def _trust_score(calibration_score: float | None, win_rate: float | None, sample_size: int) -> float:
-        cal = float(calibration_score or 0.0)
-        wr = float(win_rate or 0.0)
-        sample_component = min(100.0, (sample_size / 100.0) * 100.0)
-        return round(cal * 0.50 + wr * 0.30 + sample_component * 0.20, 2)
+        value = model_trust_service.compute_trust_value(
+            calibration_score=calibration_score,
+            recent_accuracy=win_rate,
+            average_data_quality=None,
+            sample_size=sample_size,
+            min_samples=0,
+        )
+        return round(float(value or 0.0), 2)
