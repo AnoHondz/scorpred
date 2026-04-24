@@ -12,6 +12,28 @@ _BUCKETS: list[tuple[int, int, str]] = [
     (90, 101, "90-100"),
 ]
 
+_CONFIDENCE_LABEL_TO_PCT: dict[str, int] = {
+    "low": 55,
+    "medium": 68,
+    "high": 80,
+}
+
+
+def _confidence_to_pct(value: Any, default: int = 50) -> int:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(round(max(0.0, min(100.0, float(value)))))
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in _CONFIDENCE_LABEL_TO_PCT:
+        return _CONFIDENCE_LABEL_TO_PCT[text]
+    try:
+        return int(round(max(0.0, min(100.0, float(text)))))
+    except (TypeError, ValueError):
+        return default
+
 
 @dataclass(slots=True)
 class CalibrationEngine:
@@ -22,7 +44,7 @@ class CalibrationEngine:
         return {
             "match_id": str(decision.get("match_id") or ""),
             "predicted_side": decision.get("recommended_side") or decision.get("side"),
-            "confidence": int(round(float(decision.get("confidence") or 50))),
+            "confidence": _confidence_to_pct(decision.get("confidence"), default=50),
             "probabilities": {
                 "home": probs.get("home"),
                 "draw": probs.get("draw"),
@@ -35,7 +57,7 @@ class CalibrationEngine:
         }
 
     def evaluate_completed(self, row: dict[str, Any]) -> dict[str, Any]:
-        confidence = int(round(float(row.get("confidence") or 50)))
+        confidence = _confidence_to_pct(row.get("confidence"), default=50)
         return {
             "actual_result": row.get("actual_result"),
             "is_correct": row.get("is_correct"),
@@ -52,10 +74,10 @@ class CalibrationEngine:
         buckets: dict[str, dict[str, float | int | None]] = {label: {"sample_size": 0, "predicted": None, "actual": None, "error": None} for *_rng, label in _BUCKETS}
         errors = []
         for low, high, label in _BUCKETS:
-            members = [r for r in completed if low <= int(round(float(r.get("confidence") or 0))) < high]
+            members = [r for r in completed if low <= _confidence_to_pct(r.get("confidence"), default=0) < high]
             if not members:
                 continue
-            predicted = sum(float(r.get("confidence") or 0) for r in members) / len(members)
+            predicted = sum(_confidence_to_pct(r.get("confidence"), default=0) for r in members) / len(members)
             actual = sum(1 for r in members if r.get("is_correct") is True) / len(members) * 100.0
             err = abs(predicted - actual)
             errors.append(err)

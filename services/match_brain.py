@@ -14,6 +14,25 @@ from services.drift_engine import DriftEngine
 from services.feature_attribution_engine import FeatureAttributionEngine
 
 
+_CONFIDENCE_LABEL_TO_PCT: dict[str, int] = {"low": 55, "medium": 68, "high": 80}
+
+
+def _confidence_to_pct(value: Any, default: int = 0) -> int:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(round(max(0.0, min(100.0, float(value)))))
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in _CONFIDENCE_LABEL_TO_PCT:
+        return _CONFIDENCE_LABEL_TO_PCT[text]
+    try:
+        return int(round(max(0.0, min(100.0, float(text)))))
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(slots=True)
 class MatchBrain:
     """Orchestrates fixture ingestion, canonical decisions, tracking, and insights."""
@@ -346,7 +365,7 @@ class MatchBrain:
             if not canonical:
                 continue
             prediction = canonical.get("prediction") or {}
-            confidence = int(prediction.get("confidence") or 0)
+            confidence = _confidence_to_pct(prediction.get("confidence"), default=0)
             if confidence >= 70 and prediction.get("action") == "BET":
                 alerts.append(
                     {
@@ -387,7 +406,12 @@ class MatchBrain:
 
     def get_model_metrics(self) -> dict[str, Any]:
         rows = self.safe_fetch_results()
-        metrics = self._calibration_engine.get_model_metrics(rows)
+        normalized_rows: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["confidence"] = _confidence_to_pct(item.get("confidence"), default=0)
+            normalized_rows.append(item)
+        metrics = self._calibration_engine.get_model_metrics(normalized_rows)
         calib = metrics.get("bucket_breakdown") or {}
         errors = [float(v.get("error")) for v in calib.values() if v.get("error") is not None]
         metrics["calibration_error"] = round(sum(errors) / len(errors), 2) if errors else None

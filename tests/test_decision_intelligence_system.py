@@ -660,3 +660,40 @@ def test_matchbrain_feature_attribution_exposed():
     )
     data = brain.get_feature_attribution()
     assert "top_positive_signals" in data
+
+
+def test_calibration_engine_handles_text_confidence_levels():
+    engine = CalibrationEngine(min_samples=1)
+    rows = [
+        {"status": "completed", "confidence": "Low", "is_correct": False},
+        {"status": "completed", "confidence": "High", "is_correct": True},
+    ]
+    metrics = engine.get_model_metrics(rows)
+    assert metrics["completed_predictions"] == 2
+    assert metrics["win_rate"] == 50.0
+
+
+def test_calibration_service_ignores_non_numeric_confidence_values():
+    from services.calibration_service import get_calibration
+
+    rows = [
+        {"status": "completed", "confidence": "Low", "is_correct": True, "overall_result": "won"},
+        {"status": "completed", "confidence": 80, "is_correct": False, "overall_result": "lost"},
+    ]
+    calibration = get_calibration(rows)
+    assert calibration["sample_size"] == 2
+
+
+def test_matchbrain_model_metrics_handles_text_confidence_rows():
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: None,
+        decision_engine=DecisionEngine(),
+        tracker_recent=lambda _limit: [
+            {"status": "completed", "confidence": "Low", "is_correct": False},
+            {"status": "completed", "confidence": "High", "is_correct": True},
+        ],
+    )
+    metrics = brain.get_model_metrics()
+    assert metrics["completed_predictions"] == 2
+    assert metrics["win_rate"] == 50.0

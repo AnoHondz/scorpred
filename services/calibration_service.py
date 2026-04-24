@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from utils.parsing import safe_float
+
 _BUCKETS = [
     (0, 40, "0-39"),
     (40, 60, "40-59"),
@@ -20,10 +22,10 @@ def get_calibration(evaluated_rows: list[dict[str, Any]]) -> dict[str, Any]:
     total_error = 0.0
     total_samples = 0
     for low, high, label in _BUCKETS:
-        members = [r for r in rows if low <= float(r.get("confidence", 0)) < high]
+        members = [r for r in rows if low <= safe_float(r.get("confidence"), 0.0) < high]
         if not members:
             continue
-        avg_conf = sum(float(r.get("confidence", 0)) for r in members) / len(members)
+        avg_conf = sum(safe_float(r.get("confidence"), 0.0) for r in members) / len(members)
         actual = sum(1 for r in members if r.get("is_correct") is True) / len(members) * 100
         error = abs(avg_conf - actual)
         total_error += error * len(members)
