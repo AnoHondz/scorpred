@@ -511,6 +511,38 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
+_TRACKING_REFRESH_LAST_RUN: datetime | None = None
+
+
+def _prediction_confidence_pct(row: dict[str, Any]) -> int:
+    explicit = row.get("confidence_pct")
+    if explicit not in (None, ""):
+        return int(round(_safe_float(explicit, 0)))
+    probs = [row.get("prob_a"), row.get("prob_b"), row.get("prob_draw")]
+    numeric = []
+    for value in probs:
+        if isinstance(value, (int, float)):
+            parsed = float(value)
+            numeric.append(parsed * 100 if 0 <= parsed <= 1 else parsed)
+    if numeric:
+        return int(round(max(0.0, min(100.0, max(numeric)))))
+    tier = str(row.get("confidence") or "").lower()
+    mapped = {"high": 72, "medium": 61, "low": 52}
+    return mapped.get(tier, 55)
+
+
+def _refresh_tracking_results_if_due(min_interval_seconds: int = 300) -> None:
+    global _TRACKING_REFRESH_LAST_RUN
+    now = datetime.now(timezone.utc)
+    if _TRACKING_REFRESH_LAST_RUN and (now - _TRACKING_REFRESH_LAST_RUN).total_seconds() < min_interval_seconds:
+        return
+    try:
+        ru.update_pending_predictions()
+    except Exception:
+        app.logger.debug("Tracking auto-refresh skipped due to provider error.", exc_info=True)
+    _TRACKING_REFRESH_LAST_RUN = now
+
+
 def _normalize_probs(values: dict[str, Any] | None) -> dict[str, float]:
     raw = values if isinstance(values, dict) else {}
     a = max(_safe_float(raw.get("a"), 0.0), 0.0)
@@ -4099,6 +4131,7 @@ def _chat_reply(message: str, history: list[dict] | None = None, chat_context: d
 
 @app.route("/insights")
 def insights():
+    _refresh_tracking_results_if_due()
     league_id = _set_active_league(_active_league_id())
     cards, *_ = prediction_service.get_fixture_cards(league_id)
     all_cards = [_with_insight_metadata(card) for card in cards]
@@ -4186,6 +4219,7 @@ def api_results_live():
 
 @app.route("/", methods=["GET"])
 def index():
+    _refresh_tracking_results_if_due()
     home_context = _build_home_dashboard_context()
     home_context["now"] = datetime.now()
     return render_template("home.html", **_page_context(**home_context))
@@ -4195,6 +4229,7 @@ def index():
 def soccer():
     _logger.debug("Route /soccer hit")
     _set_data_refresh()
+    _refresh_tracking_results_if_due()
     league_id = _set_active_league(_active_league_id())
     teams = []
     teams = _safe_external_call(lambda: ac.get_teams(league_id, SEASON), label="soccer-teams-fetch") or []
@@ -4292,7 +4327,7 @@ def select_game():
         )
 
     _store_selected_teams(team_a, team_b, fixture_context)
-    return redirect(url_for("prediction"))
+    return redirect("/prediction")
 
 
 @app.route("/matchup", methods=["GET"])
@@ -4896,8 +4931,8 @@ def player_stats_api():
         return jsonify({"error": sanitize_error(exc), "data_source": _football_data_source(), "last_updated": _now_stamp()}), 500
 
 
-@app.route("/prediction")
 @app.route("/match-analysis")
+@app.route("/prediction")
 def prediction():
     retry_after = _check_rate_limit("prediction", limit=60, window_seconds=60)
     if retry_after:
@@ -5740,26 +5775,70 @@ def football_prefetch_competition_api():
 
 @app.route("/my-bets", methods=["GET"])
 def my_bets():
-    raw_bets = bets_service.list_bets()
-    bets = []
-    for row in raw_bets:
-        bets.append(
+    _refresh_tracking_results_if_due()
+    tracked = mt.get_recent_predictions(limit=300)
+
+    status_filter = (request.args.get("status") or "all").strip().lower()
+    if status_filter not in {"all", "open", "settled"}:
+        status_filter = "all"
+
+    def _row_result_label(item: dict[str, Any]) -> tuple[str, str]:
+        if str(item.get("status") or "").lower() != "completed":
+            return "Open", "push"
+        if item.get("is_correct") is True:
+            return "Correct", "won"
+        if item.get("is_correct") is False:
+            return "Incorrect", "lost"
+        return "Settled", "push"
+
+    tracked_rows = []
+    for item in tracked:
+        result_label, result_class = _row_result_label(item)
+        is_open = str(item.get("status") or "").lower() != "completed"
+        if status_filter == "open" and not is_open:
+            continue
+        if status_filter == "settled" and is_open:
+            continue
+        final_score = item.get("final_score") if isinstance(item.get("final_score"), dict) else {}
+        score_label = "—"
+        if "a" in final_score and "b" in final_score:
+            score_label = f"{final_score.get('a', 0)}-{final_score.get('b', 0)}"
+        tracked_rows.append(
             {
-                "id": row.get("id"),
-                "match_id": row.get("match_id"),
-                "date": _format_prediction_date(row.get("created_at")),
-                "match": row.get("matchup") or "Unavailable",
-                "pick": row.get("recommended_side") or "Unavailable",
-                "pick_type": row.get("action") or "Unavailable",
-                "odds": "Unavailable",
-                "stake": "Unavailable",
-                "result_label": "Open",
-                "result_class": "push",
-                "profit": None,
-                "confidence": int(round(_safe_float(row.get("confidence"), 0))) if row.get("confidence") is not None else None,
+                "id": item.get("id"),
+                "sport": str(item.get("sport") or "soccer").upper(),
+                "date": _format_prediction_date(item.get("game_date") or item.get("date") or item.get("created_at")),
+                "match": f"{item.get('team_a') or 'Team A'} vs {item.get('team_b') or 'Team B'}",
+                "pick": item.get("predicted_pick_label") or item.get("predicted_winner") or "Unavailable",
+                "pick_type": item.get("action") or item.get("confidence") or "Tracked",
+                "score": score_label,
+                "result_label": result_label,
+                "result_class": result_class,
+                "confidence": _prediction_confidence_pct(item),
             }
         )
-    return render_template("my_bets.html", bets=bets, **_page_context())
+
+    settled = [row for row in tracked if str(row.get("status") or "").lower() == "completed" and row.get("is_correct") is not None]
+    won_count = sum(1 for row in settled if row.get("is_correct") is True)
+    lost_count = sum(1 for row in settled if row.get("is_correct") is False)
+    pushed_count = max(0, len(tracked) - len(settled))
+    settled_count = len(settled)
+    win_rate = round((won_count / settled_count) * 100, 1) if settled_count else 0.0
+    lost_rate = round((lost_count / settled_count) * 100, 1) if settled_count else 0.0
+
+    return render_template(
+        "my_bets.html",
+        bets=tracked_rows,
+        won_count=won_count,
+        lost_count=lost_count,
+        pushed_count=pushed_count,
+        win_rate=win_rate,
+        lost_rate=lost_rate,
+        roi="N/A",
+        total_profit="N/A",
+        total_stake="N/A",
+        **_page_context(),
+    )
 
 
 @app.route("/add-bet", methods=["POST"])
@@ -5795,31 +5874,120 @@ def delete_bet(bet_id: int):
 
 @app.route("/performance", methods=["GET"])
 def performance():
-    bets = bets_service.list_bets()
-    total_bets = len(bets)
-    settled_count = 0
-    won_count = 0
-    lost_count = 0
-    pushed_count = total_bets  # no settlement model persisted yet
-    win_rate = "Unavailable" if settled_count == 0 else f"{(won_count/settled_count)*100:.1f}%"
-    roi = "Unavailable"
-    record = f"{won_count}W - {lost_count}L - {pushed_count}P"
+    _refresh_tracking_results_if_due()
+    window = (request.args.get("window") or "all").strip().lower()
+    supported_windows = {"today", "tomorrow", "yesterday", "week", "month", "all"}
+    if window not in supported_windows:
+        window = "all"
 
+    now_utc = datetime.now(timezone.utc)
+    base_date = now_utc.date()
+    completed = mt.get_completed_predictions(limit=2000)
+    pending = mt.get_pending_predictions(limit=2000)
+
+    def _as_dt(row: dict[str, Any]) -> datetime | None:
+        raw = str(row.get("game_date") or row.get("date") or row.get("created_at") or "").strip()
+        if not raw:
+            return None
+        text = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            return None
+
+    def _in_window(row_dt: datetime | None) -> bool:
+        if row_dt is None:
+            return window == "all"
+        delta_days = (row_dt.date() - base_date).days
+        if window == "today":
+            return delta_days == 0
+        if window == "tomorrow":
+            return delta_days == 1
+        if window == "yesterday":
+            return delta_days == -1
+        if window == "week":
+            return row_dt.date() >= base_date - timedelta(days=7)
+        if window == "month":
+            return row_dt.date() >= base_date - timedelta(days=30)
+        return True
+
+    completed_window = [row for row in completed if _in_window(_as_dt(row))]
+    pending_window = [row for row in pending if _in_window(_as_dt(row))]
+
+    won_count = sum(1 for row in completed_window if row.get("is_correct") is True)
+    lost_count = sum(1 for row in completed_window if row.get("is_correct") is False)
+    settled_count = len(completed_window)
+    open_count = len(pending_window)
+    total_tracked = settled_count + open_count
+    win_rate_value = round((won_count / settled_count) * 100, 1) if settled_count else 0.0
+
+    scoreboard_rows = []
+    for row in sorted(completed_window + pending_window, key=lambda item: _as_dt(item) or now_utc, reverse=True)[:30]:
+        score = row.get("final_score") if isinstance(row.get("final_score"), dict) else {}
+        score_label = "Scheduled"
+        if score and "a" in score and "b" in score:
+            score_label = f"{score.get('a', 0)}-{score.get('b', 0)}"
+        status = "Open"
+        status_class = "push"
+        if str(row.get("status") or "").lower() == "completed":
+            if row.get("is_correct") is True:
+                status, status_class = "Correct", "won"
+            elif row.get("is_correct") is False:
+                status, status_class = "Incorrect", "lost"
+            else:
+                status = "Settled"
+        scoreboard_rows.append(
+            {
+                "date": _format_prediction_date(row.get("game_date") or row.get("date") or row.get("created_at")),
+                "match": f"{row.get('team_a') or 'Team A'} vs {row.get('team_b') or 'Team B'}",
+                "sport": str(row.get("sport") or "soccer").upper(),
+                "pick": row.get("predicted_pick_label") or row.get("predicted_winner") or "Unavailable",
+                "score": score_label,
+                "status": status,
+                "status_class": status_class,
+                "confidence": _prediction_confidence_pct(row),
+            }
+        )
+
+    trend_source = sorted(completed_window, key=lambda item: _as_dt(item) or now_utc)
+    cumulative = 0
+    profit_trend_labels = []
+    profit_trend_values = []
+    for row in trend_source[-12:]:
+        cumulative += 1 if row.get("is_correct") is True else -1
+        label_dt = _as_dt(row) or now_utc
+        profit_trend_labels.append(label_dt.strftime("%b %d"))
+        profit_trend_values.append(cumulative)
+
+    win_rate = "N/A" if settled_count == 0 else f"{win_rate_value:.1f}%"
     ctx = _page_context()
     ctx.update({
-        "roi": roi,
+        "roi": "N/A",
         "win_rate": win_rate,
-        "total_profit": "Unavailable",
-        "record": record,
-        "avg_odds": "Unavailable",
+        "total_profit": "N/A",
+        "record": f"{won_count}W - {lost_count}L - {open_count}O",
+        "avg_odds": "N/A",
         "won_count": won_count,
         "lost_count": lost_count,
-        "pushed_count": pushed_count,
-        "total_bets": total_bets,
+        "pushed_count": open_count,
+        "total_bets": total_tracked,
         "has_settled_results": settled_count > 0,
         "league_breakdown": [],
-        "profit_trend_labels": [],
-        "profit_trend_values": [],
+        "profit_trend_labels": profit_trend_labels,
+        "profit_trend_values": profit_trend_values,
+        "results_rows": scoreboard_rows,
+        "window": window,
+        "window_counts": {
+            "today": len([r for r in completed + pending if _in_window(_as_dt(r)) and (_as_dt(r) and (_as_dt(r).date() - base_date).days == 0)]),
+            "tomorrow": len([r for r in completed + pending if _as_dt(r) and (_as_dt(r).date() - base_date).days == 1]),
+            "yesterday": len([r for r in completed + pending if _as_dt(r) and (_as_dt(r).date() - base_date).days == -1]),
+            "week": len([r for r in completed + pending if _as_dt(r) and _as_dt(r).date() >= base_date - timedelta(days=7)]),
+            "month": len([r for r in completed + pending if _as_dt(r) and _as_dt(r).date() >= base_date - timedelta(days=30)]),
+            "all": len(completed + pending),
+        },
     })
     return render_template("performance.html", **ctx)
 
@@ -5847,9 +6015,70 @@ def alerts():
 
 @app.route("/watchlist", methods=["GET"])
 def watchlist():
+    watched_names = session.get("watchlist_teams") if isinstance(session.get("watchlist_teams"), list) else []
+    watched_names = [str(team).strip() for team in watched_names if str(team).strip()]
+    watched_set = {team.lower() for team in watched_names}
+
+    league_id = _active_league_id()
+    _, fixtures, _, _, _ = prediction_service.get_fixture_cards(league_id)
+    upcoming_matches = []
+    for fixture in fixtures or []:
+        teams_block = fixture.get("teams") or {}
+        home = (teams_block.get("home") or {}).get("name") or ""
+        away = (teams_block.get("away") or {}).get("name") or ""
+        if not home or not away:
+            continue
+        if home.lower() not in watched_set and away.lower() not in watched_set:
+            continue
+        upcoming_matches.append(
+            {
+                "matchup": f"{home} vs {away}",
+                "date": _format_prediction_date(((fixture.get("fixture") or {}).get("date") or "")),
+                "league": ((fixture.get("league") or {}).get("name") or f"League {league_id}"),
+            }
+        )
+    upcoming_matches = sorted(upcoming_matches, key=lambda row: row.get("date", ""))[:40]
+    watched_teams = []
+    for team_name in watched_names:
+        next_match = next((m["matchup"] for m in upcoming_matches if team_name.lower() in m["matchup"].lower()), "No upcoming match")
+        watched_teams.append(
+            {
+                "name": team_name,
+                "logo": "",
+                "league": "Tracked",
+                "next_match": next_match,
+                "recent_form": [],
+                "form_pct": None,
+            }
+        )
     ctx = _page_context()
-    ctx.update({"watched_teams": []})
+    ctx.update({"watched_teams": watched_teams, "watchlist_matches": upcoming_matches})
     return render_template("watchlist.html", **ctx)
+
+
+@app.route("/watchlist/team", methods=["POST"])
+def watchlist_team_add():
+    retry_after = _check_rate_limit("watchlist-team", limit=60, window_seconds=60)
+    if retry_after:
+        return {"status": "error", "message": "rate limit exceeded", "retry_after": retry_after}, 429
+    team = str(request.form.get("team") or request.args.get("team") or "").strip()
+    if not team:
+        return redirect(request.referrer or url_for("watchlist"))
+    watched = session.get("watchlist_teams") if isinstance(session.get("watchlist_teams"), list) else []
+    normalized = {str(name).strip().lower() for name in watched}
+    if team.lower() not in normalized:
+        watched.append(team)
+    session["watchlist_teams"] = watched
+    return redirect(request.referrer or url_for("watchlist"))
+
+
+@app.route("/watchlist/team/remove", methods=["POST"])
+def watchlist_team_remove():
+    team = str(request.form.get("team") or request.args.get("team") or "").strip().lower()
+    watched = session.get("watchlist_teams") if isinstance(session.get("watchlist_teams"), list) else []
+    watched = [name for name in watched if str(name).strip().lower() != team]
+    session["watchlist_teams"] = watched
+    return redirect(request.referrer or url_for("watchlist"))
 
 
 @app.route("/settings", methods=["GET"])
