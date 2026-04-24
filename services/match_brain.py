@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import hashlib
+import json
+import logging
+import threading
 from typing import Any, Callable
 
 from services.decision_engine import DecisionEngine
@@ -19,7 +23,18 @@ class MatchBrain:
     refresh_results: Callable[[], Any] | None = None
     _fixture_index: dict[str, dict[str, Any]] = field(default_factory=dict)
     _analysis_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    _analysis_checksum: dict[str, str] = field(default_factory=dict)
     _status_memory: dict[str, str] = field(default_factory=dict)
+    _last_successful_fixtures: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    _last_successful_results: list[dict[str, Any]] = field(default_factory=list)
+    _active_computations: set[str] = field(default_factory=set)
+    _tracked_match_ids: set[str] = field(default_factory=set)
+    _refresh_lock: threading.Lock = field(default_factory=threading.Lock)
+    _last_refresh_at: datetime | None = None
+    _last_fetch_at: datetime | None = None
+    _error_count: int = 0
+    _api_status: str = "ok"
+    _log: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
 
     def get_match_status(self, fixture: dict[str, Any]) -> str:
         status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
@@ -77,6 +92,7 @@ class MatchBrain:
                 "data_completeness": (fixture.get("prediction") or {}).get("data_completeness") or {"tier": "partial"},
                 "strengths": [best_pick.get("reasoning")] if best_pick.get("reasoning") else [],
                 "risks": [],
+                "odds": (fixture.get("prediction") or {}).get("odds") or {},
             }
         )
 
@@ -114,48 +130,63 @@ class MatchBrain:
             "risk_level": breakdown.get("risk_level"),
             "decision_grade": breakdown.get("decision_grade"),
             "prediction": decision,
-            "teams": {
-                "home": home,
-                "away": away,
-            },
+            "teams": {"home": home, "away": away},
             "date_bucket": self.get_date_bucket(fixture),
         }
-        return canonical
+        return self._validate_canonical_decision(canonical)
 
     def get_match_analysis(self, match_id: str | int) -> dict[str, Any] | None:
         match_key = str(match_id)
+        if not match_key:
+            return self._safe_unavailable(match_id)
         cached = self._analysis_cache.get(match_key)
         if cached is not None:
             return cached
-        fixture = self._fixture_index.get(match_key) or self.get_fixture_by_id(match_key)
-        if not fixture:
-            return None
-        canonical = self.canonical_from_fixture(fixture)
-        if canonical and self._validate_canonical(canonical):
+        if match_key in self._active_computations:
+            return cached or self._safe_unavailable(match_id)
+
+        self._active_computations.add(match_key)
+        try:
+            fixture = self._fixture_index.get(match_key) or self.get_fixture_by_id(match_key)
+            if not fixture:
+                return self._safe_unavailable(match_id)
+            canonical = self.canonical_from_fixture(fixture)
+            if not canonical:
+                return self._safe_unavailable(match_id)
+            checksum = self._checksum(canonical)
+            existing_checksum = self._analysis_checksum.get(match_key)
+            if existing_checksum and existing_checksum != checksum:
+                self._log.error("canonical_mismatch match_id=%s", match_key)
+                return self._analysis_cache.get(match_key, canonical)
             self._analysis_cache[match_key] = canonical
+            self._analysis_checksum[match_key] = checksum
             return canonical
-        return None
+        finally:
+            self._active_computations.discard(match_key)
 
     def get_insights(self, league_id: int) -> dict[str, Any]:
-        fixtures, *_ = self.load_fixtures(league_id)
+        fixtures = self.safe_fetch_fixtures(league_id)
         canonical = [self.canonical_from_fixture(f) for f in fixtures or []]
         canonical = [row for row in canonical if row]
-        opportunities = sorted(
-            canonical,
-            key=lambda row: (
-                -self._priority_score(row),
-                -(row.get("confidence") or 0),
-            ),
-        )
+        opportunities = sorted(canonical, key=lambda row: (-self._priority_score(row), -(row.get("confidence") or 0)))
         high_conf = [row for row in opportunities if int((row["prediction"] or {}).get("confidence") or 0) >= 64]
-        return {
-            "top_opportunities": opportunities[:6],
-            "high_confidence": high_conf[:6],
-        }
+        return {"top_opportunities": opportunities[:6], "high_confidence": high_conf[:6]}
 
     def track_match(self, canonical_match: dict[str, Any]) -> str:
         if not self.tracker_save:
             return ""
+        match_id = str(canonical_match.get("match_id") or "").strip()
+        if not match_id:
+            return ""
+        if match_id in self._tracked_match_ids:
+            return ""
+        if self.tracker_recent:
+            existing = self.tracker_recent(500) or []
+            duplicate = next((row for row in existing if str(row.get("fixture_id") or "") == match_id), None)
+            if duplicate:
+                self._tracked_match_ids.add(match_id)
+                return str(duplicate.get("id") or "")
+
         prediction = canonical_match.get("prediction") or {}
         teams = canonical_match.get("teams") or {}
         home = teams.get("home") or {}
@@ -187,16 +218,12 @@ class MatchBrain:
                 "evaluation_status": "OPEN",
             }
         }
-        return self.tracker_save(
+        saved_id = self.tracker_save(
             sport="soccer",
             team_a=home.get("name") or "Home",
             team_b=away.get("name") or "Away",
             predicted_winner=prediction.get("side") or home.get("name") or "Home",
-            win_probs={
-                "a": probs.get("home") or 0,
-                "draw": probs.get("draw") or 0,
-                "b": probs.get("away") or 0,
-            },
+            win_probs={"a": probs.get("home") or 0, "draw": probs.get("draw") or 0, "b": probs.get("away") or 0},
             confidence="High" if (prediction.get("confidence") or 0) >= 66 else "Medium" if (prediction.get("confidence") or 0) >= 55 else "Low",
             game_date=(canonical_match.get("kickoff") or "")[:10],
             team_a_id=home.get("id"),
@@ -205,22 +232,67 @@ class MatchBrain:
             fixture_id=canonical_match.get("match_id"),
             model_factors=snapshot,
         )
+        if saved_id:
+            self._tracked_match_ids.add(match_id)
+        return saved_id
 
     def refresh_tracked_matches(self) -> list[dict[str, Any]]:
         if self.refresh_results:
             try:
                 self.refresh_results()
             except Exception:
-                pass
+                self._error_count += 1
         if not self.tracker_recent:
             return []
         tracked = self.tracker_recent(300) or []
         rows: list[dict[str, Any]] = []
         for row in tracked:
             fixture_id = str(row.get("fixture_id") or "")
-            status = "completed" if str(row.get("status") or "").lower() == "completed" else "open"
-            rows.append({**row, "match_id": fixture_id, "tracking_status": status})
+            if fixture_id:
+                self._tracked_match_ids.add(fixture_id)
+            repaired_status = self._repair_tracking_state(row, fixture_id)
+            rows.append({**row, "match_id": fixture_id, "tracking_status": repaired_status})
         return rows
+
+    def safe_fetch_fixtures(self, league_id: int) -> list[dict[str, Any]]:
+        try:
+            fixtures, *_ = self.load_fixtures(league_id)
+            if fixtures:
+                self._last_successful_fixtures[league_id] = fixtures
+                self._last_fetch_at = datetime.now(timezone.utc)
+                self._api_status = "ok"
+            else:
+                self._api_status = "degraded"
+            return fixtures or self._last_successful_fixtures.get(league_id, [])
+        except Exception:
+            self._error_count += 1
+            self._api_status = "degraded"
+            return self._last_successful_fixtures.get(league_id, [])
+
+    def safe_fetch_results(self) -> list[dict[str, Any]]:
+        if not self.tracker_recent:
+            return self._last_successful_results
+        try:
+            results = self.tracker_recent(300) or []
+            if results:
+                self._last_successful_results = results
+            return results or self._last_successful_results
+        except Exception:
+            self._error_count += 1
+            return self._last_successful_results
+
+    def refresh_cycle(self, league_id: int, min_interval_seconds: int = 60) -> None:
+        now = datetime.now(timezone.utc)
+        if self._last_refresh_at and (now - self._last_refresh_at).total_seconds() < min_interval_seconds:
+            return
+        with self._refresh_lock:
+            now = datetime.now(timezone.utc)
+            if self._last_refresh_at and (now - self._last_refresh_at).total_seconds() < min_interval_seconds:
+                return
+            self.safe_fetch_fixtures(league_id)
+            self.refresh_tracked_matches()
+            self._last_successful_results = self.safe_fetch_results()
+            self._last_refresh_at = now
 
     def get_performance_snapshot(self, completed: list[dict[str, Any]]) -> dict[str, Any]:
         wins = sum(1 for row in completed if row.get("is_correct") is True)
@@ -229,14 +301,10 @@ class MatchBrain:
         if not completed:
             return {"win_rate": "N/A", "roi": "N/A", "record": "0W-0L-0P"}
         win_rate = round((wins / len(completed)) * 100, 1)
-        return {
-            "win_rate": f"{win_rate:.1f}%",
-            "roi": "N/A",
-            "record": f"{wins}W-{losses}L-{pushes}P",
-        }
+        return {"win_rate": f"{win_rate:.1f}%", "roi": "N/A", "record": f"{wins}W-{losses}L-{pushes}P"}
 
     def get_alerts(self, league_id: int) -> list[dict[str, Any]]:
-        fixtures, *_ = self.load_fixtures(league_id)
+        fixtures = self.safe_fetch_fixtures(league_id)
         alerts: list[dict[str, Any]] = []
         for canonical in [self.canonical_from_fixture(item) for item in fixtures or []]:
             if not canonical:
@@ -266,6 +334,19 @@ class MatchBrain:
             self._status_memory[canonical["match_id"]] = current
         return alerts[:20]
 
+    def get_system_health(self) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        freshness = int((now - self._last_fetch_at).total_seconds()) if self._last_fetch_at else None
+        evaluated = [r for r in self.safe_fetch_results() if str(r.get("status") or "").lower() == "completed"]
+        return {
+            "api_status": self._api_status,
+            "data_freshness": freshness,
+            "tracked_count": len(self._tracked_match_ids),
+            "evaluated_count": len(evaluated),
+            "calibration_status": "ready" if len(evaluated) >= 2 else "insufficient_data",
+            "error_count": self._error_count,
+        }
+
     @staticmethod
     def _priority_score(row: dict[str, Any]) -> float:
         confidence = float(row.get("confidence") or 0.0)
@@ -277,30 +358,103 @@ class MatchBrain:
             return confidence * 0.75 + data_quality * 0.25
         return confidence * 0.45 + float(edge_score) * 100 * 0.30 + float(expected_value) * 100 * 0.15 + data_quality * 0.10
 
+    def _validate_canonical_decision(self, decision: dict[str, Any]) -> dict[str, Any]:
+        sanitized = dict(decision)
+        if not sanitized.get("match_id"):
+            self._log.error("invalid_decision_missing_match_id")
+            sanitized["status"] = "unavailable"
+            sanitized["reason"] = "Data not ready"
+        confidence = float(sanitized.get("confidence") or 50.0)
+        sanitized["confidence"] = int(max(0.0, min(100.0, confidence)))
+        probs = dict(sanitized.get("probabilities") or {})
+        home = max(float(probs.get("home") or 0.0), 0.0)
+        draw = max(float(probs.get("draw") or 0.0), 0.0)
+        away = max(float(probs.get("away") or 0.0), 0.0)
+        total = home + draw + away
+        if total <= 0:
+            home = draw = away = 1 / 3
+        else:
+            home, draw, away = home / total, draw / total, away / total
+        sanitized["probabilities"] = {"home": round(home, 4), "draw": round(draw, 4), "away": round(away, 4)}
+
+        edge = sanitized.get("edge_score")
+        if edge is not None:
+            try:
+                sanitized["edge_score"] = max(-1.0, min(1.0, float(edge)))
+            except (TypeError, ValueError):
+                sanitized["edge_score"] = None
+
+        expected_value = sanitized.get("expected_value")
+        if expected_value is not None:
+            try:
+                sanitized["expected_value"] = float(expected_value)
+            except (TypeError, ValueError):
+                sanitized["expected_value"] = None
+
+        action = str(sanitized.get("action") or "").upper()
+        if action not in {"BET", "CONSIDER", "SKIP"}:
+            sanitized["action"] = "SKIP"
+
+        if not str(sanitized.get("reason") or "").strip():
+            sanitized["reason"] = "insufficient data"
+
+        return sanitized
+
+    def _repair_tracking_state(self, row: dict[str, Any], fixture_id: str) -> str:
+        status = str(row.get("status") or "").lower()
+        if not fixture_id:
+            return "unknown"
+        fixture = self._fixture_index.get(fixture_id)
+        if fixture is None:
+            return "unknown"
+        kickoff = self._parse_kickoff((fixture.get("fixture") or {}).get("date"))
+        if status == "completed" and row.get("final_score") is None:
+            return "completed"
+        if status in {"pending", "open"} and kickoff and kickoff <= datetime.now(timezone.utc):
+            live_status = self.get_match_status(fixture)
+            if live_status == "live":
+                return "live"
+        return "completed" if status == "completed" else "open"
+
     @staticmethod
-    def _validate_canonical(payload: dict[str, Any]) -> bool:
-        required = {
-            "match_id",
-            "matchup",
-            "league",
-            "kickoff",
-            "status",
-            "recommended_side",
-            "action",
-            "confidence",
-            "probabilities",
-            "data_quality",
-            "reason",
-            "metric_breakdown",
-            "model_probability",
-            "implied_probability",
-            "edge_score",
-            "expected_value",
-            "risk_score",
-            "risk_level",
-            "decision_grade",
+    def _checksum(payload: dict[str, Any]) -> str:
+        raw = json.dumps(payload, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _safe_unavailable(match_id: str | int) -> dict[str, Any]:
+        return {
+            "match_id": str(match_id or ""),
+            "matchup": "Unavailable",
+            "league": "Unknown",
+            "kickoff": "",
+            "status": "unavailable",
+            "recommended_side": "Unavailable",
+            "action": "SKIP",
+            "confidence": 50,
+            "probabilities": {"home": 0.3333, "draw": 0.3333, "away": 0.3333},
+            "data_quality": 0,
+            "reason": "Data not ready",
+            "metric_breakdown": {
+                "model_probability": 0.5,
+                "implied_probability": None,
+                "edge_score": None,
+                "expected_value": None,
+                "risk_score": 1.0,
+                "risk_level": "HIGH",
+                "decision_grade": "D",
+            },
+            "model_probability": 0.5,
+            "implied_probability": None,
+            "edge_score": None,
+            "expected_value": None,
+            "risk_score": 1.0,
+            "risk_level": "HIGH",
+            "decision_grade": "D",
+            "prediction": {},
+            "teams": {"home": {}, "away": {}},
+            "date_bucket": "upcoming",
         }
-        return all(key in payload for key in required)
 
     @staticmethod
     def _parse_kickoff(value: Any) -> datetime | None:

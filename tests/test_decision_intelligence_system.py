@@ -300,3 +300,100 @@ def test_soccer_card_and_match_analysis_share_quant_fields():
     assert analysis["edge_score"] == 0.14
     assert analysis["expected_value"] == 0.14
     assert card["action"] == analysis["action"]
+
+
+def test_api_timeout_uses_last_known_good_data():
+    fixture = _fixture()
+    calls = {"n": 0}
+
+    def loader(_league):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [fixture], None, "configured", ""
+        raise TimeoutError("provider timeout")
+
+    brain = MatchBrain(
+        load_fixtures=loader,
+        get_fixture_by_id=lambda _mid: fixture,
+        decision_engine=DecisionEngine(),
+    )
+    first = brain.safe_fetch_fixtures(39)
+    second = brain.safe_fetch_fixtures(39)
+    assert first
+    assert second == first
+
+
+def test_missing_probabilities_fallback_to_neutral_distribution():
+    broken = _fixture()
+    broken["prediction"]["win_probabilities"] = {}
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([broken], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: broken,
+        decision_engine=DecisionEngine(),
+    )
+    analysis = brain.get_match_analysis("101")
+    probs = analysis["probabilities"]
+    assert round(probs["home"] + probs["draw"] + probs["away"], 4) == 1.0
+
+
+def test_duplicate_tracking_blocked(tmp_path, monkeypatch):
+    tracking_file = tmp_path / "tracking.json"
+    monkeypatch.setattr(mt, "_TRACKING_FILE", str(tracking_file))
+    fixture = _fixture()
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([fixture], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: fixture,
+        decision_engine=DecisionEngine(),
+        tracker_save=mt.save_prediction,
+        tracker_recent=mt.get_recent_predictions,
+    )
+    canonical = brain.get_match_analysis("101")
+    first = brain.track_match(canonical)
+    second = brain.track_match(canonical)
+    assert first
+    assert second == ""
+
+
+def test_inconsistent_decision_output_keeps_first_valid_cache():
+    fixture = _fixture()
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([fixture], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: fixture,
+        decision_engine=DecisionEngine(),
+    )
+    first = brain.get_match_analysis("101")
+    brain._analysis_cache["101"] = first
+    brain._analysis_checksum["101"] = "fixed"
+    with patch.object(MatchBrain, "_checksum", return_value="different"):
+        second = brain.get_match_analysis("101")
+    assert second == first
+
+
+def test_invalid_match_id_returns_safe_unavailable_payload():
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: None,
+        decision_engine=DecisionEngine(),
+    )
+    payload = brain.get_match_analysis("")
+    assert payload["status"] == "unavailable"
+    assert payload["reason"] == "Data not ready"
+
+
+def test_refresh_cycle_guard_prevents_duplicate_evaluation_calls():
+    fixture = _fixture()
+    calls = {"refresh": 0}
+
+    def refresh():
+        calls["refresh"] += 1
+
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([fixture], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: fixture,
+        decision_engine=DecisionEngine(),
+        tracker_recent=lambda _limit: [],
+        refresh_results=refresh,
+    )
+    brain.refresh_cycle(39, min_interval_seconds=120)
+    brain.refresh_cycle(39, min_interval_seconds=120)
+    assert calls["refresh"] == 1

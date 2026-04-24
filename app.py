@@ -574,10 +574,16 @@ def _refresh_tracking_results_if_due(min_interval_seconds: int = 300) -> None:
     now = datetime.now(timezone.utc)
     if _TRACKING_REFRESH_LAST_RUN and (now - _TRACKING_REFRESH_LAST_RUN).total_seconds() < min_interval_seconds:
         return
-    try:
-        ru.update_pending_predictions()
-    except Exception:
-        app.logger.debug("Tracking auto-refresh skipped due to provider error.", exc_info=True)
+    if _MATCH_BRAIN is not None:
+        try:
+            _MATCH_BRAIN.refresh_cycle(_active_league_id(), min_interval_seconds=min_interval_seconds)
+        except Exception:
+            app.logger.debug("MatchBrain refresh_cycle skipped due to provider error.", exc_info=True)
+    else:
+        try:
+            ru.update_pending_predictions()
+        except Exception:
+            app.logger.debug("Tracking auto-refresh skipped due to provider error.", exc_info=True)
     _TRACKING_REFRESH_LAST_RUN = now
 
 
