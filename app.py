@@ -5025,21 +5025,6 @@ def player_analyze():
     )
 
 
-@app.route("/api/player-stats")
-def player_stats_api():
-    _set_data_refresh()
-    pid = request.args.get("id", type=int)
-    league_id = request.args.get("league", default=LEAGUE, type=int)
-    season = request.args.get("season", default=SEASON, type=int)
-    if not pid:
-        return jsonify({"error": "missing id"}), 400
-    try:
-        data = ac.get_player_stats(pid, league_id, season) or []
-        return jsonify(data)
-    except Exception as exc:
-        return jsonify({"error": sanitize_error(exc), "data_source": _football_data_source(), "last_updated": _now_stamp()}), 500
-
-
 @app.route("/match-analysis")
 @app.route("/prediction")
 def prediction():
@@ -5261,11 +5246,6 @@ def prediction():
             **_league_context(league_id),
         ),
     )
-
-
-@app.route("/match-analysis")
-def match_analysis():
-    return redirect(url_for("prediction"))
 
 
 @app.route("/players", methods=["GET"])
