@@ -468,3 +468,42 @@ def test_matchbrain_model_metrics_available():
     assert metrics["total_predictions"] == 3
     assert metrics["completed_predictions"] == 2
     assert "bucket_breakdown" in metrics
+
+
+def test_system_intelligence_structure_and_health_failure_signal():
+    rows = [
+        {"status": "completed", "confidence": 75, "is_correct": True, "model_factors": {"canonical_snapshot": {"action": "BET", "confidence": 75}}},
+        {"status": "completed", "confidence": 65, "is_correct": False, "model_factors": {"canonical_snapshot": {"action": "CONSIDER", "confidence": 65}}},
+    ]
+    brain = MatchBrain(
+        load_fixtures=lambda _league: ([], None, "configured", ""),
+        get_fixture_by_id=lambda _mid: None,
+        decision_engine=DecisionEngine(),
+        tracker_recent=lambda _limit: rows,
+    )
+    brain._api_status = "degraded"
+    payload = brain.get_system_intelligence()
+    assert "model_metrics" in payload
+    assert "calibration" in payload
+    assert "system_health" in payload
+    assert payload["system_health"]["degraded_mode"] is True
+    assert "decision_quality" in payload
+
+
+def test_system_intelligence_route_renders():
+    canonical_payload = {
+        "model_metrics": {"trust_score": 70, "calibration_score": 68, "win_rate": 55, "total_predictions": 10, "completed_predictions": 6},
+        "calibration": {"buckets": [{"range": "70-80", "sample_size": 2, "predicted": 75, "actual": 60, "error": 15}]},
+        "system_health": {"api_status": "ok", "last_refresh_time": None, "data_freshness": 10, "error_count": 0, "degraded_mode": False},
+        "decision_quality": {"bet_count": 1, "consider_count": 2, "skip_count": 3, "high_confidence_accuracy": 50},
+        "safeguards": {"fallback_data_used": False, "stale_data_served": False, "trust_downgraded": False},
+    }
+    with patch.object(flask_app_module, "_MATCH_BRAIN") as brain:
+        brain.get_system_intelligence.return_value = canonical_payload
+        brain.refresh_cycle.return_value = None
+        flask_app_module.app.config["TESTING"] = True
+        with flask_app_module.app.test_client() as c:
+            rv = c.get("/system-intelligence")
+    assert rv.status_code == 200
+    assert b"System Intelligence" in rv.data
+    assert b"Calibration" in rv.data

@@ -6215,6 +6215,15 @@ def alerts():
     return render_template("alerts.html", **ctx)
 
 
+@app.route("/system-intelligence", methods=["GET"])
+def system_intelligence():
+    if _MATCH_BRAIN is None:
+        return render_template("system_intelligence.html", intelligence={}, **_page_context())
+    _MATCH_BRAIN.refresh_cycle(_active_league_id(), min_interval_seconds=60)
+    intelligence = _MATCH_BRAIN.get_system_intelligence()
+    return render_template("system_intelligence.html", intelligence=intelligence, **_page_context())
+
+
 @app.route("/watchlist", methods=["GET"])
 def watchlist():
     watched_names = session.get("watchlist_teams") if isinstance(session.get("watchlist_teams"), list) else []

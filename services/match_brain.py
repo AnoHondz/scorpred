@@ -359,16 +359,82 @@ class MatchBrain:
         evaluated = [r for r in self.safe_fetch_results() if str(r.get("status") or "").lower() == "completed"]
         return {
             "api_status": self._api_status,
+            "last_refresh_time": self._last_refresh_at.isoformat().replace("+00:00", "Z") if self._last_refresh_at else None,
             "data_freshness": freshness,
             "tracked_count": len(self._tracked_match_ids),
             "evaluated_count": len(evaluated),
             "calibration_status": "ready" if len(evaluated) >= 2 else "insufficient_data",
             "error_count": self._error_count,
+            "degraded_mode": self._api_status != "ok",
         }
 
     def get_model_metrics(self) -> dict[str, Any]:
         rows = self.safe_fetch_results()
         return self._calibration_engine.get_model_metrics(rows)
+
+    def get_system_intelligence(self) -> dict[str, Any]:
+        model_metrics = self.get_model_metrics()
+        health = self.get_system_health()
+        rows = self.safe_fetch_results()
+
+        bet_count = 0
+        consider_count = 0
+        skip_count = 0
+        high_conf_completed = []
+        for row in rows:
+            snapshot = ((row.get("model_factors") or {}).get("canonical_snapshot") or {})
+            action = str(snapshot.get("action") or "").upper()
+            if action == "BET":
+                bet_count += 1
+            elif action == "CONSIDER":
+                consider_count += 1
+            elif action == "SKIP":
+                skip_count += 1
+            if str(row.get("status") or "").lower() == "completed" and row.get("is_correct") is not None:
+                conf = float(snapshot.get("confidence") or row.get("confidence") or 0)
+                if conf >= 70:
+                    high_conf_completed.append(bool(row.get("is_correct")))
+
+        high_confidence_accuracy = None
+        if high_conf_completed:
+            high_confidence_accuracy = round((sum(1 for ok in high_conf_completed if ok) / len(high_conf_completed)) * 100, 2)
+
+        buckets = []
+        for label, values in (model_metrics.get("bucket_breakdown") or {}).items():
+            buckets.append(
+                {
+                    "range": label,
+                    "sample_size": values.get("sample_size"),
+                    "predicted": values.get("predicted"),
+                    "actual": values.get("actual"),
+                    "error": values.get("error"),
+                }
+            )
+
+        safeguards = {
+            "fallback_data_used": health.get("degraded_mode", False),
+            "stale_data_served": bool((health.get("data_freshness") or 0) > 900),
+            "trust_downgraded": bool((model_metrics.get("trust_score") or 0) < 55),
+        }
+
+        return {
+            "model_metrics": {
+                "trust_score": model_metrics.get("trust_score"),
+                "calibration_score": model_metrics.get("calibration_score"),
+                "win_rate": model_metrics.get("win_rate"),
+                "total_predictions": model_metrics.get("total_predictions"),
+                "completed_predictions": model_metrics.get("completed_predictions"),
+            },
+            "calibration": {"buckets": buckets},
+            "system_health": health,
+            "decision_quality": {
+                "bet_count": bet_count,
+                "consider_count": consider_count,
+                "skip_count": skip_count,
+                "high_confidence_accuracy": high_confidence_accuracy,
+            },
+            "safeguards": safeguards,
+        }
 
     @staticmethod
     def _priority_score(row: dict[str, Any]) -> float:
