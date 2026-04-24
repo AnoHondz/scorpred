@@ -41,7 +41,7 @@ jobs:
         run: ruff check . --select E,W,F --ignore E501 --output-format=github
 
       - name: Auto-resolve app.py conflicts (if markers exist)
-        run: grep -q '^<<<<<<< ' app.py && python scripts/resolve_app_conflict.py app.py || true
+        run: grep -q '^<<<<<<< ' app.py && python scripts/resolve_app_conflict.py app.py --strategy=ours || true
 
       - name: Run tests
         run: pytest tests -q --tb=short

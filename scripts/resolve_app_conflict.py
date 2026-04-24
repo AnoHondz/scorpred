@@ -1,9 +1,11 @@
-"""Auto-resolve git conflict markers in app.py by combining both sides.
+"""Auto-resolve git conflict markers in app.py.
 
 Usage:
     python scripts/resolve_app_conflict.py [path]
 
 Default path is ./app.py.
+Default strategy is "ours" (keep the first side of each conflict block), which
+matches GitHub conflict blocks where the current PR branch appears first.
 """
 from __future__ import annotations
 
@@ -23,7 +25,7 @@ def _dedupe_preserve(lines: list[str]) -> list[str]:
     return output
 
 
-def resolve_conflicts(text: str) -> tuple[str, int]:
+def resolve_conflicts(text: str, strategy: str = "ours") -> tuple[str, int]:
     lines = text.splitlines(keepends=True)
     out: list[str] = []
     i = 0
@@ -53,14 +55,28 @@ def resolve_conflicts(text: str) -> tuple[str, int]:
         if i < len(lines) and lines[i].startswith(">>>>>>> "):
             i += 1
 
-        merged = _dedupe_preserve(ours + theirs)
+        if strategy == "theirs":
+            merged = theirs or ours
+        elif strategy == "union":
+            merged = _dedupe_preserve(ours + theirs)
+        else:
+            merged = ours or theirs
         out.extend(merged)
 
     return "".join(out), conflicts
 
 
 def main() -> int:
-    target = Path(sys.argv[1] if len(sys.argv) > 1 else "app.py")
+    args = [arg for arg in sys.argv[1:] if arg]
+    strategy = "ours"
+    if "--strategy=theirs" in args:
+        strategy = "theirs"
+        args.remove("--strategy=theirs")
+    elif "--strategy=union" in args:
+        strategy = "union"
+        args.remove("--strategy=union")
+
+    target = Path(args[0] if args else "app.py")
     if not target.exists():
         print(f"error: file not found: {target}")
         return 1
@@ -70,9 +86,9 @@ def main() -> int:
         print(f"No conflict markers found in {target}.")
         return 0
 
-    resolved, count = resolve_conflicts(text)
+    resolved, count = resolve_conflicts(text, strategy=strategy)
     target.write_text(resolved, encoding="utf-8")
-    print(f"Resolved {count} conflict block(s) in {target}.")
+    print(f"Resolved {count} conflict block(s) in {target} using strategy={strategy}.")
     return 0
 
 
