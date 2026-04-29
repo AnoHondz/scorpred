@@ -196,6 +196,7 @@ class TestApiClientDemoMode:
         """In normal mode, _load_demo_fixtures_json must not be called."""
         import api_client as ac
         monkeypatch.setattr(ac, "_DEMO_MODE", False)
+        ac.set_request_demo_mode(False)  # reset thread-local to avoid pollution from prior tests
         called = {"n": 0}
         real_fn = ac._load_demo_fixtures_json
 

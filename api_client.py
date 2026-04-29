@@ -15,6 +15,7 @@ import hashlib
 import importlib
 import json
 import os
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -59,7 +60,27 @@ requests = _LazyModuleProxy("requests")
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 # Demo mode: skip paid API calls; use ESPN + bundled fixture file as fallback.
+# Module-level default (from env); overridden per-request via set_request_demo_mode().
 _DEMO_MODE: bool = os.getenv("SCORPRED_DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
+
+_request_mode: threading.local = threading.local()
+
+
+def set_request_demo_mode(demo: bool) -> None:
+    """Called by app.py before_request to apply the session-level mode for this thread."""
+    _request_mode.demo = demo
+
+
+def _effective_demo_mode() -> bool:
+    """Return per-request override when set; fall back to module-level env default.
+
+    _DEMO_MODE=True (global env flag) always wins — it represents a process-wide
+    deployment choice.  The thread-local is only consulted when the global flag is off,
+    allowing per-request opt-in without a process restart.
+    """
+    if _DEMO_MODE:
+        return True
+    return getattr(_request_mode, "demo", False)
 
 API_KEY  = os.getenv("API_FOOTBALL_KEY", "").strip()
 API_HOST = os.getenv("API_FOOTBALL_HOST", "api-football-v1.p.rapidapi.com").strip()
@@ -1476,7 +1497,7 @@ def get_upcoming_fixtures(
     season: int = CURRENT_SEASON,
     next_n: int = 20,
 ) -> list:
-    if _DEMO_MODE:
+    if _effective_demo_mode():
         # Demo mode: try ESPN (free, no key required) then fall back to bundled file.
         try:
             espn_fixtures = _espn_upcoming_for_league(league_id, next_n)

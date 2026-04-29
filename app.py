@@ -93,6 +93,32 @@ _RELEASE_TAG = "2026-04-20-d53ddbe"
 _DEMO_MODE: bool = os.getenv("SCORPRED_DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
 
 
+def _env_default_mode() -> str:
+    """Derive default mode from SCORPRED_DEMO_MODE env var.
+
+    Absent or falsy → live (backward-compatible default).
+    Set to truthy value (1/true/yes) → demo.
+    Users can override anytime via the in-app mode switcher.
+    """
+    raw = os.getenv("SCORPRED_DEMO_MODE")
+    return "demo" if (raw or "").strip().lower() in ("1", "true", "yes") else "live"
+
+
+def get_runtime_mode() -> str:
+    """Return current effective mode: 'demo' or 'live'.
+
+    Priority: session["scorpred_mode"] > env default.
+    Safe to call outside request context (returns env default).
+    """
+    try:
+        mode = session.get("scorpred_mode")
+        if mode in ("demo", "live"):
+            return mode
+    except Exception:
+        pass
+    return _env_default_mode()
+
+
 class _LazyModuleProxy:
     """Lazy-load heavyweight modules to keep cold starts leaner."""
 
@@ -143,6 +169,33 @@ def _runtime_release_tag() -> str:
         short = commit[:7]
         return f"{branch}@{short}" if branch else short
     return _RELEASE_TAG
+
+
+def _clear_mode_sensitive_caches() -> None:
+    """Evict all fixture/prediction caches when mode switches to prevent cross-mode leakage."""
+    global _FIXTURE_INDEX
+    _local_fixture_cache.clear()
+    _local_match_analysis_cache.clear()
+    _FIXTURE_INDEX = {}
+    # Evidence module in-process cache
+    try:
+        evidence_services._UPCOMING_FIXTURE_CACHE.clear()
+    except Exception:
+        pass
+    # MatchBrain per-instance caches
+    if _MATCH_BRAIN is not None:
+        try:
+            _MATCH_BRAIN._analysis_cache.clear()
+            _MATCH_BRAIN._fixture_index.clear()
+        except Exception:
+            pass
+    # Redis fixture + analysis keys (best-effort; no KEYS scan in prod)
+    for league_id in (39, 140, 135, 78, 61, 2, 3, 848):
+        try:
+            cache_service.delete(cache_service.make_key("fixtures_raw", league_id))
+        except Exception:
+            pass
+    _logger.info("mode_switch: mode-sensitive caches cleared")
 
 # â”€â”€ Production startup guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _secret_key = os.environ.get("SECRET_KEY", "").strip()
@@ -226,6 +279,10 @@ app.register_blueprint(user_auth.user_auth_bp)
 def inject_user():
     g.current_user = user_auth.current_user()
     g._request_started_at = time.perf_counter()
+    # Sync session mode → api_client thread-local so get_upcoming_fixtures sees it
+    mode = get_runtime_mode()
+    g.scorpred_mode = mode
+    ac.set_request_demo_mode(mode == "demo")
 
 
 @app.after_request
@@ -420,8 +477,15 @@ def _football_data_source() -> str:
 def _page_context(data_source: str | None = None, **kwargs) -> dict:
     if "alert_count" not in kwargs:
         kwargs["alert_count"] = 0
+    mode = get_runtime_mode()
     if "demo_mode" not in kwargs:
-        kwargs["demo_mode"] = _DEMO_MODE
+        kwargs["demo_mode"] = (mode == "demo")
+    if "scorpred_mode" not in kwargs:
+        kwargs["scorpred_mode"] = mode
+    if "fixture_source" not in kwargs:
+        kwargs["fixture_source"] = "ESPN" if mode == "demo" else _football_data_source()
+    if "prediction_source" not in kwargs:
+        kwargs["prediction_source"] = "ScorPred demo rules" if mode == "demo" else "ScorPred DecisionEngine"
     return assistant_services.page_context(ac, data_source=data_source, **kwargs)
 
 
@@ -2306,7 +2370,7 @@ def _load_upcoming_fixtures(
         include_injuries=include_injuries,
         include_standings=include_standings,
     )
-    if _DEMO_MODE and result and result[0]:
+    if get_runtime_mode() == "demo" and result and result[0]:
         try:
             from services.demo_prediction_engine import DemoPredictionEngine
             _demo_engine = DemoPredictionEngine()
@@ -5881,6 +5945,21 @@ def _get_api_health(now_ts: float) -> bool:
     _health_probe["ok"] = ok
     _health_probe["ts"] = now_ts
     return ok
+
+
+@app.route("/set-mode", methods=["POST"])
+def set_mode():
+    """Switch between 'demo' and 'live' mode; clears mode-sensitive caches."""
+    data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode") or "").strip().lower()
+    if mode not in ("demo", "live"):
+        return jsonify({"ok": False, "error": "Invalid mode. Must be 'demo' or 'live'."}), 400
+    session["scorpred_mode"] = mode
+    session.modified = True
+    _clear_mode_sensitive_caches()
+    label = "Demo Mode" if mode == "demo" else "Live Mode"
+    _logger.info("mode_switch: mode=%s", mode)
+    return jsonify({"ok": True, "mode": mode, "label": label})
 
 
 @app.route("/health")
