@@ -152,7 +152,10 @@ python app.py
 | Variable | Description |
 |---|---|
 | `SECRET_KEY` | Flask session secret |
-| `API_FOOTBALL_KEY` | RapidAPI key for API-Football |
+| `FOOTBALL_PROVIDER` | Provider mode: `auto` (default), `football_data`, `api_football` |
+| `FOOTBALL_DATA_API_KEY` | football-data.org token (free plan, covers PL/CL/BL1/SA/FL1/PD) |
+| `FOOTBALL_DATA_BASE_URL` | Override football-data.org base URL (default: `https://api.football-data.org/v4`) |
+| `API_FOOTBALL_KEY` | api-sports.io key (fallback provider) |
 | `NBA_API_KEY` | RapidAPI key for NBA data |
 | `DATABASE_URL` | PostgreSQL URL (optional, defaults to SQLite) |
 
@@ -160,6 +163,32 @@ python app.py
 # Run the test suite
 pytest tests/ -v
 ```
+
+---
+
+### Football Provider Migration
+
+ScorPred supports a **multi-provider strategy** for football data to survive individual provider outages.
+
+**Provider modes** (`FOOTBALL_PROVIDER` env var):
+
+| Mode | Behaviour |
+|------|-----------|
+| `auto` | Use football-data.org if `FOOTBALL_DATA_API_KEY` is set, else api-sports.io/ESPN |
+| `football_data` | Prefer football-data.org; fall back to api-sports.io/ESPN on failure |
+| `api_football` | Use api-sports.io/ESPN only; skip football-data.org entirely |
+
+**Supported competitions** (football-data.org free plan, permanent):
+`PL` `CL` `BL1` `DED` `BSA` `PD` `FL1` `ELC` `PPL` `EC` `SA`
+
+**Data limitations** when on football-data.org:
+Fixtures, standings, teams, and H2H results are available.
+Win-probability predictions, injury data, bookmaker odds, and xG are **not** available.
+Affected fixtures are automatically tagged `data_completeness.tier = "limited"` so the
+prediction engine degrades gracefully (SKIP / low-confidence) without faking missing inputs.
+
+**Health endpoint** (`/health`) reports the active provider and last API success without
+hammering external APIs on every Render probe — results are cached for 60 s.
 
 ---
 

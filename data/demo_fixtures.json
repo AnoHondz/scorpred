@@ -1,0 +1,135 @@
+[
+  {
+    "fixture": {
+      "id": 9900001,
+      "date": "2026-05-07T19:45:00Z",
+      "season": 2025,
+      "status": {"short": "NS", "long": "Not Started", "elapsed": null},
+      "venue": {"name": "Emirates Stadium"}
+    },
+    "league": {"id": 39, "name": "Premier League", "season": 2025, "round": "Round 36"},
+    "teams": {
+      "home": {"id": 42, "name": "Arsenal", "logo": ""},
+      "away": {"id": 49, "name": "Chelsea", "logo": ""}
+    },
+    "goals": {"home": null, "away": null},
+    "score": {"halftime": {"home": null, "away": null}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900002,
+      "date": "2026-05-07T17:00:00Z",
+      "season": 2025,
+      "status": {"short": "NS", "long": "Not Started", "elapsed": null},
+      "venue": {"name": "Etihad Stadium"}
+    },
+    "league": {"id": 39, "name": "Premier League", "season": 2025, "round": "Round 36"},
+    "teams": {
+      "home": {"id": 50, "name": "Manchester City", "logo": ""},
+      "away": {"id": 40, "name": "Liverpool", "logo": ""}
+    },
+    "goals": {"home": null, "away": null},
+    "score": {"halftime": {"home": null, "away": null}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900003,
+      "date": "2026-05-14T20:00:00Z",
+      "season": 2025,
+      "status": {"short": "NS", "long": "Not Started", "elapsed": null},
+      "venue": {"name": "Old Trafford"}
+    },
+    "league": {"id": 39, "name": "Premier League", "season": 2025, "round": "Round 37"},
+    "teams": {
+      "home": {"id": 33, "name": "Manchester United", "logo": ""},
+      "away": {"id": 47, "name": "Tottenham Hotspur", "logo": ""}
+    },
+    "goals": {"home": null, "away": null},
+    "score": {"halftime": {"home": null, "away": null}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900004,
+      "date": "2026-05-06T19:00:00Z",
+      "season": 2025,
+      "status": {"short": "NS", "long": "Not Started", "elapsed": null},
+      "venue": {"name": "Allianz Arena"}
+    },
+    "league": {"id": 2, "name": "UEFA Champions League", "season": 2025, "round": "Semi-final"},
+    "teams": {
+      "home": {"id": 157, "name": "Bayern Munich", "logo": ""},
+      "away": {"id": 541, "name": "Real Madrid", "logo": ""}
+    },
+    "goals": {"home": null, "away": null},
+    "score": {"halftime": {"home": null, "away": null}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900005,
+      "date": "2026-05-13T20:00:00Z",
+      "season": 2025,
+      "status": {"short": "NS", "long": "Not Started", "elapsed": null},
+      "venue": {"name": "Santiago Bernabeu"}
+    },
+    "league": {"id": 2, "name": "UEFA Champions League", "season": 2025, "round": "Semi-final"},
+    "teams": {
+      "home": {"id": 541, "name": "Real Madrid", "logo": ""},
+      "away": {"id": 157, "name": "Bayern Munich", "logo": ""}
+    },
+    "goals": {"home": null, "away": null},
+    "score": {"halftime": {"home": null, "away": null}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900006,
+      "date": "2026-04-27T14:00:00Z",
+      "season": 2025,
+      "status": {"short": "FT", "long": "Match Finished", "elapsed": 90},
+      "venue": {"name": "Anfield"}
+    },
+    "league": {"id": 39, "name": "Premier League", "season": 2025, "round": "Round 35"},
+    "teams": {
+      "home": {"id": 40, "name": "Liverpool", "logo": ""},
+      "away": {"id": 42, "name": "Arsenal", "logo": ""}
+    },
+    "goals": {"home": 2, "away": 1},
+    "score": {"halftime": {"home": 1, "away": 0}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  },
+  {
+    "fixture": {
+      "id": 9900007,
+      "date": "2026-04-26T16:30:00Z",
+      "season": 2025,
+      "status": {"short": "FT", "long": "Match Finished", "elapsed": 90},
+      "venue": {"name": "Stamford Bridge"}
+    },
+    "league": {"id": 39, "name": "Premier League", "season": 2025, "round": "Round 35"},
+    "teams": {
+      "home": {"id": 49, "name": "Chelsea", "logo": ""},
+      "away": {"id": 50, "name": "Manchester City", "logo": ""}
+    },
+    "goals": {"home": 0, "away": 3},
+    "score": {"halftime": {"home": 0, "away": 1}},
+    "events": [],
+    "stats": [],
+    "source": "demo"
+  }
+]

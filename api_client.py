@@ -58,6 +58,9 @@ requests = _LazyModuleProxy("requests")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 
+# Demo mode: skip paid API calls; use ESPN + bundled fixture file as fallback.
+_DEMO_MODE: bool = os.getenv("SCORPRED_DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
+
 API_KEY  = os.getenv("API_FOOTBALL_KEY", "").strip()
 API_HOST = os.getenv("API_FOOTBALL_HOST", "api-football-v1.p.rapidapi.com").strip()
 API_BASE = os.getenv("API_FOOTBALL_BASE_URL", "https://api-football-v1.p.rapidapi.com/v3").rstrip("/")
@@ -76,14 +79,18 @@ _USING_DIRECT_APISPORTS = bool(_APISPORTS_KEY) or "api-sports.io" in API_HOST
 # different endpoint paths from API-Football v3.
 _USING_FREE_API = "free-api-live-football-data" in API_HOST
 
-# football-data.org provider — takes priority over api-sports.io when active.
-# Activated by API_FOOTBALL_PROVIDER=football_data OR FOOTBALL_DATA_KEY being set.
+# ── Provider orchestration ────────────────────────────────────────────────────
+# Controlled by FOOTBALL_PROVIDER=football_data|api_football|auto (default auto).
+# FOOTBALL_DATA_API_KEY / FOOTBALL_DATA_KEY / FOOTBALL_DATA_ORG_KEY are all
+# accepted; see providers/__init__.py for full alias list.
 try:
-    import football_data_client as _fdo_mod
-    _USING_FDO = _fdo_mod.is_available()
+    from providers import get_primary_provider as _get_primary_provider, FOOTBALL_PROVIDER as _FOOTBALL_PROVIDER
+    _fdo_provider = _get_primary_provider()
+    _USING_FDO = _fdo_provider is not None and _fdo_provider.is_available()
 except Exception:
-    _fdo_mod = None  # type: ignore[assignment]
+    _fdo_provider = None          # type: ignore[assignment]
     _USING_FDO = False
+    _FOOTBALL_PROVIDER = "auto"
 
 # Endpoint translation: API-Football v3 path → free-api-live-football-data path.
 # Params are re-mapped per entry: the value is (free_path, param_remapper_fn | None).
@@ -1006,13 +1013,15 @@ def _stat(stats: dict, section: str, key: str) -> float | None:
 # ── Domain methods ─────────────────────────────────────────────────────────────
 
 def get_teams(league_id: int = DEFAULT_LEAGUE_ID, season: int = CURRENT_SEASON) -> list:
-    if _USING_FDO:
+    if _USING_FDO and _fdo_provider is not None:
         try:
-            teams = _fdo_mod.get_teams(league_id)
+            teams = _fdo_provider.get_teams(league_id, season)
             if teams:
                 return teams
         except Exception as exc:
             logging.getLogger("api_client").warning("FDO teams failed for league %s: %s", league_id, exc)
+        if _FOOTBALL_PROVIDER == "api_football":
+            return []  # explicit mode — do not fallback
     try:
         data = api_get("teams", {"league": league_id, "season": season}, cache_hours=24)
         if data.get("response"):
@@ -1345,9 +1354,9 @@ def get_standings(
     league_id: int = DEFAULT_LEAGUE_ID,
     season: int = CURRENT_SEASON,
 ) -> list:
-    if _USING_FDO:
+    if _USING_FDO and _fdo_provider is not None:
         try:
-            rows = _fdo_mod.get_standings(league_id)
+            rows = _fdo_provider.get_standings(league_id, season)
             if rows:
                 return rows
         except Exception as exc:
@@ -1400,34 +1409,8 @@ def get_standings(
     return rows
 
 
-def get_upcoming_fixtures(
-    league_id: int = DEFAULT_LEAGUE_ID,
-    season: int = CURRENT_SEASON,
-    next_n: int = 20,
-) -> list:
-    if _USING_FDO:
-        try:
-            fixtures = _fdo_mod.get_upcoming_fixtures(league_id, next_n)
-            if fixtures:
-                return fixtures
-        except Exception as exc:
-            logging.getLogger("api_client").warning("FDO fixtures failed for league %s: %s", league_id, exc)
-    try:
-        logger = logging.getLogger("api_client")
-        logger.debug(f"[API_CLIENT] Fetching upcoming fixtures: league_id={league_id}, season={season}, next_n={next_n}")
-        response = api_get(
-            "fixtures",
-            {"league": league_id, "season": season, "next": next_n},
-            cache_hours=2,
-        ).get("response", [])
-        logger.debug(f"[API_CLIENT] get_upcoming_fixtures fetched {len(response)} fixtures")
-        if response:
-            return response
-    except Exception as exc:
-        logger.warning(f"[API_CLIENT] get_upcoming_fixtures failed: {exc}")
-    # ESPN fallback: scan ahead across the next few weeks (UTC) because many
-    # leagues have multi-day gaps between matchdays. Fetch all days in parallel
-    # to avoid the sequential-per-day hang.
+def _espn_upcoming_for_league(league_id: int, next_n: int) -> list:
+    """Fetch upcoming fixtures from ESPN for a given league. Returns empty list on failure."""
     slug = _espn_slug(league_id)
     now_utc = datetime.now(timezone.utc)
     all_fixtures: list = []
@@ -1468,12 +1451,64 @@ def get_upcoming_fixtures(
             if fid:
                 seen_ids.add(fid)
             status_short = (fixture.get("fixture") or {}).get("status", {}).get("short", "NS")
-            # Keep not-started and any unknown status; skip finished and live
             if status_short not in _FINISHED and status_short not in _LIVE:
                 all_fixtures.append(fixture)
 
     all_fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""))
     return all_fixtures[:next_n]
+
+
+def _load_demo_fixtures_json(league_id: int) -> list:
+    """Load bundled demo_fixtures.json, filtered to the requested league."""
+    import json as _json
+    demo_path = Path(__file__).parent / "data" / "demo_fixtures.json"
+    try:
+        raw: list = _json.loads(demo_path.read_text())
+    except Exception:
+        return []
+    if league_id:
+        raw = [f for f in raw if (f.get("league") or {}).get("id") == league_id]
+    return raw
+
+
+def get_upcoming_fixtures(
+    league_id: int = DEFAULT_LEAGUE_ID,
+    season: int = CURRENT_SEASON,
+    next_n: int = 20,
+) -> list:
+    if _DEMO_MODE:
+        # Demo mode: try ESPN (free, no key required) then fall back to bundled file.
+        try:
+            espn_fixtures = _espn_upcoming_for_league(league_id, next_n)
+            if espn_fixtures:
+                return espn_fixtures
+        except Exception:
+            pass
+        return _load_demo_fixtures_json(league_id)
+
+    if _USING_FDO and _fdo_provider is not None:
+        try:
+            fixtures = _fdo_provider.get_upcoming_fixtures(league_id, season, next_n)
+            if fixtures:
+                return fixtures
+        except Exception as exc:
+            logging.getLogger("api_client").warning("FDO fixtures failed for league %s: %s", league_id, exc)
+    try:
+        logger = logging.getLogger("api_client")
+        logger.debug(f"[API_CLIENT] Fetching upcoming fixtures: league_id={league_id}, season={season}, next_n={next_n}")
+        response = api_get(
+            "fixtures",
+            {"league": league_id, "season": season, "next": next_n},
+            cache_hours=2,
+        ).get("response", [])
+        logger.debug(f"[API_CLIENT] get_upcoming_fixtures fetched {len(response)} fixtures")
+        if response:
+            return response
+    except Exception as exc:
+        logger.warning(f"[API_CLIENT] get_upcoming_fixtures failed: {exc}")
+
+    # ESPN fallback
+    return _espn_upcoming_for_league(league_id, next_n)
 
 
 def get_espn_fixtures(espn_slug: str, next_n: int = 20) -> list:

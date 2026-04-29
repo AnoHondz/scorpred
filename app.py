@@ -90,6 +90,8 @@ import logging as _logging
 _logger = _logging.getLogger(__name__)
 _RELEASE_TAG = "2026-04-20-d53ddbe"
 
+_DEMO_MODE: bool = os.getenv("SCORPRED_DEMO_MODE", "").strip().lower() in ("1", "true", "yes")
+
 
 class _LazyModuleProxy:
     """Lazy-load heavyweight modules to keep cold starts leaner."""
@@ -125,6 +127,10 @@ _local_match_analysis_cache = TTLCache(maxsize=500, ttl=300)
 _local_fixture_cache = TTLCache(maxsize=50, ttl=120)
 _local_league_cache = TTLCache(maxsize=20, ttl=300)
 _API_CIRCUIT: dict[str, dict[str, Any]] = {}
+
+# Health probe throttle — at most one external API call per 60 s.
+_HEALTH_PROBE_TTL_S = 60.0
+_health_probe: dict[str, Any] = {"ok": None, "ts": 0.0}
 _RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
 _DECISION_ENGINE = DecisionEngine()
 _MATCH_BRAIN: MatchBrain | None = None
@@ -414,6 +420,8 @@ def _football_data_source() -> str:
 def _page_context(data_source: str | None = None, **kwargs) -> dict:
     if "alert_count" not in kwargs:
         kwargs["alert_count"] = 0
+    if "demo_mode" not in kwargs:
+        kwargs["demo_mode"] = _DEMO_MODE
     return assistant_services.page_context(ac, data_source=data_source, **kwargs)
 
 
@@ -2285,7 +2293,7 @@ def _load_upcoming_fixtures(
     include_injuries: bool = True,
     include_standings: bool = True,
 ):
-    return evidence_services.load_upcoming_fixtures(
+    result = evidence_services.load_upcoming_fixtures(
         ac,
         pred,
         se,
@@ -2298,6 +2306,15 @@ def _load_upcoming_fixtures(
         include_injuries=include_injuries,
         include_standings=include_standings,
     )
+    if _DEMO_MODE and result and result[0]:
+        try:
+            from services.demo_prediction_engine import DemoPredictionEngine
+            _demo_engine = DemoPredictionEngine()
+            for fixture in result[0]:
+                _demo_engine.inject(fixture)
+        except Exception as _demo_exc:
+            _logger.warning("demo_prediction_engine inject failed: %s", _demo_exc)
+    return result
 
 
 def load_fixtures_cached(league_id: int):
@@ -5849,6 +5866,23 @@ def worldcup():
         ),
     )
 
+def _get_api_health(now_ts: float) -> bool:
+    """Return cached API reachability; triggers a real probe at most once per 60 s."""
+    if now_ts - _health_probe["ts"] < _HEALTH_PROBE_TTL_S and _health_probe["ok"] is not None:
+        return bool(_health_probe["ok"])
+    try:
+        ok = _safe_external_call(
+            lambda: ac.get_teams(_active_league_id(), SEASON),
+            retries=0,
+            label="health-probe",
+        ) is not None
+    except Exception:
+        ok = False
+    _health_probe["ok"] = ok
+    _health_probe["ts"] = now_ts
+    return ok
+
+
 @app.route("/health")
 @app.route("/status")
 def health():
@@ -5857,8 +5891,10 @@ def health():
         db_status = "connected"
     except Exception:
         db_status = "unavailable"
+
     cache_status = "redis" if cache_service._get_redis_client() is not None else "local"
-    api_ok = _safe_external_call(lambda: ac.get_teams(_active_league_id(), SEASON), retries=1, label="health-api-check") is not None
+    api_ok = _get_api_health(time.time())
+
     brain_health = {}
     if _MATCH_BRAIN is not None:
         try:
@@ -5869,17 +5905,18 @@ def health():
 
     degraded_mode = bool(brain_health.get("degraded_mode")) or db_status != "connected" or not api_ok
 
-    # Football data provider info
-    provider_info: dict[str, Any] = {}
+    # Football provider info — read from module-level provider, no extra I/O
     try:
-        import football_data_client as _fdo
-        if _fdo.is_available():
-            provider_info = _fdo.get_provider_info()
+        from providers import get_primary_provider, provider_mode_summary
+        primary = get_primary_provider()
+        if primary is not None and hasattr(primary, "get_provider_info"):
+            provider_info: dict[str, Any] = primary.get_provider_info()
+        else:
+            provider_info = provider_mode_summary()
+            provider_info.setdefault("base_url", ac.API_BASE)
     except Exception:
-        pass
-    if not provider_info:
         provider_info = {
-            "provider": "api-sports" if ac._USING_DIRECT_APISPORTS else "rapidapi",
+            "provider": "api-sports" if ac._USING_DIRECT_APISPORTS else "api_football",
             "base_url": ac.API_BASE,
         }
 

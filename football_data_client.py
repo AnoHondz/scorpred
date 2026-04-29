@@ -40,11 +40,10 @@ _logger = logging.getLogger(__name__)
 # ── Config ──────────────────────────────────────────────────────────────────
 FDO_PROVIDER_NAME = "football_data"
 
-# Active when API_FOOTBALL_PROVIDER=football_data OR FOOTBALL_DATA_KEY set.
-# FOOTBALL_DATA_ORG_KEY accepted as legacy alias.
+# Accept canonical FOOTBALL_DATA_API_KEY plus legacy aliases in priority order.
 FDO_KEY = (
-    os.getenv("FOOTBALL_DATA_KEY", "")
-    or os.getenv("FOOTBALL_DATA_ORG_KEY", "")
+    os.getenv("FOOTBALL_DATA_API_KEY", "")
+    or os.getenv("FOOTBALL_DATA_KEY", "")
     or os.getenv("FOOTBALL_DATA_ORG_KEY", "")
 ).strip()
 FDO_BASE_URL = os.getenv(
@@ -52,8 +51,12 @@ FDO_BASE_URL = os.getenv(
     os.getenv("FOOTBALL_DATA_ORG_BASE_URL", "https://api.football-data.org/v4"),
 ).rstrip("/")
 
-_PROVIDER_ENV = os.getenv("API_FOOTBALL_PROVIDER", "").strip().lower()
-_ACTIVE = _PROVIDER_ENV == "football_data" or bool(FDO_KEY)
+# Active when any recognised provider env selects football_data, or when key is set.
+_PROVIDER_ENV = (
+    os.getenv("FOOTBALL_PROVIDER", "")
+    or os.getenv("API_FOOTBALL_PROVIDER", "")
+).strip().lower()
+_ACTIVE = _PROVIDER_ENV in ("football_data", "auto", "") or bool(FDO_KEY)
 
 # ── All competitions available on the free plan ─────────────────────────────
 AVAILABLE_COMPETITIONS: dict[str, str] = {
