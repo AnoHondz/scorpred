@@ -237,6 +237,20 @@ def _next_step_reply(context: dict) -> str:
     return next_steps.get(page_kind, "If you are early in the flow, start with Matchup and then Prediction. If the game has finished, open the result detail page to see how the legs graded.")
 
 
+def _model_performance_reply(context: dict) -> str | None:
+    page = context.get("page") or {}
+    sport = str(page.get("sport") or "").lower()
+    sport_label = "NBA" if sport == "nba" else "football" if sport in ("soccer", "football") else "this sport"
+    return (
+        f"ScorPred's {sport_label} model blends a 65 % ML ensemble (Logistic Regression, "
+        "Random Forest, XGBoost, LightGBM, stacking) with 35 % rule-based signals "
+        "(recent form, H2H, home advantage, injury adjustments). "
+        "Walk-forward backtesting across five chronological folds validates accuracy and "
+        "calibration without leaking future results. Open the Model Performance page for "
+        "live hit-rate breakdowns by confidence tier and league."
+    )
+
+
 def _general_reply(context: dict) -> str:
     page = context.get("page") or {}
     football = context.get("football") or {}

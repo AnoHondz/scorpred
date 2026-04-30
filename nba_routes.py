@@ -13,6 +13,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 import hashlib
 import importlib
 import json
@@ -480,6 +481,33 @@ def _assistant_extract_top_factors(prediction: dict) -> list[str]:
         differences.append((diff, key.replace("_", " ").title()))
     differences.sort(reverse=True)
     return [label for _, label in differences[:3]]
+
+
+def _extract_totals_leg(prediction: dict) -> dict | None:
+    if not prediction or not isinstance(prediction, dict):
+        return None
+    pick = prediction.get("totals_pick")
+    line = prediction.get("totals_line")
+    market = prediction.get("totals_market")
+    if not pick and "optional_picks" in prediction:
+        for opt in prediction["optional_picks"]:
+            m = str(opt.get("market") or "").lower()
+            if "over/under" in m or "o/u" in m:
+                pick = opt.get("lean") or opt.get("pick")
+                try:
+                    line = float(opt.get("line") or opt.get("value") or 0)
+                except Exception:
+                    line = None
+                market = opt.get("market")
+                break
+    result: dict[str, Any] = {}
+    if pick:
+        result["pick"] = pick
+    if line is not None:
+        result["line"] = line
+    if market:
+        result["market"] = market
+    return result if result else None
 
 
 def _assistant_totals_pick_display(prediction: dict) -> str | None:

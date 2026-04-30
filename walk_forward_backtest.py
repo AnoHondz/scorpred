@@ -1025,65 +1025,6 @@ def run_walk_forward(
     print(f"\nSaved walk-forward report -> {save_path}")
     return report
 
-    fold_results: list[dict[str, Any]] = []
-    for fold_def in folds:
-        fold_num = fold_def["fold"]
-        print(f"\n── Fold {fold_num}/{len(folds)} ──")
-        print(f"  Train: rows 0–{fold_def['train_end']-1} ({fold_def['train_size']} rows)")
-        print(f"  Cal:   rows {fold_def['cal_start']}–{fold_def['cal_end']-1} ({fold_def['cal_size']} rows)")
-        print(f"  Test:  rows {fold_def['test_start']}–{fold_def['test_end']-1} ({fold_def['test_size']} rows)")
-
-        result = evaluate_fold(rows, fold_def, policy, random_state)
-        fold_results.append(result)
-
-        ens = result["base_models"].get("stacking_ensemble", {})
-        comb = result["combined"]
-        pol = result["policy"]
-        print(f"  Ensemble acc:  {ens.get('accuracy', 0)*100:.1f}%")
-        print(f"  Combined acc:  {comb['combined_accuracy']*100:.1f}%")
-        print(f"  Policy placed: {pol['total_placed']}/{pol['total_evaluated']} "
-              f"({pol['coverage_pct']:.0f}% coverage, {pol['hit_rate_pct']:.0f}% hit rate)")
-
-    aggregate = _aggregate_folds(fold_results)
-
-    # Date range of full dataset
-    all_dates = [r.get("date", "") for r in rows if r.get("date")]
-
-    report = {
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "config": {
-            "n_folds": len(folds),
-            "min_train_pct": min_train_pct,
-            "test_pct": test_pct,
-            "cal_pct": cal_pct,
-            "random_state": random_state,
-            "total_rows": n_rows,
-            "date_range": [all_dates[0], all_dates[-1]] if all_dates else [],
-            "feature_count": len(FEATURE_COLUMNS),
-            "policy_used": policy,
-        },
-        "aggregate": aggregate,
-        "folds": [
-            {
-                "fold_meta": fr["fold_meta"],
-                "base_models": fr["base_models"],
-                "combined": fr["combined"],
-                "policy": fr["policy"],
-                "roi": fr["roi"],
-                "test_class_distribution": fr["test_class_distribution"],
-            }
-            for fr in fold_results
-        ],
-    }
-
-    # ── Save report ───────────────────────────────────────────────────────────
-    save_path = output_path or DEFAULT_REPORT_PATH
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    save_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(f"\nSaved walk-forward report → {save_path}")
-
-    return report
-
 
 def load_walk_forward_report(path: Path | None = None) -> dict[str, Any] | None:
     """Load a saved walk-forward report if it exists."""
