@@ -186,7 +186,13 @@
         <div class="sp-topbar__right">
           <div class="sp-topbar__pills">
             {% set _tb_mode = scorpred_mode if scorpred_mode is defined else ('demo' if demo_mode else 'live') %}
-            {% if _tb_mode == 'demo' %}<span class="sp-topbar__pill" style="background:rgba(167,139,250,.18);color:#c4b5fd;border-color:rgba(167,139,250,.35)" title="ESPN fixtures + ScorPred simulated rules">🧪 Demo</span>{% elif _tb_mode == 'live' %}<span class="sp-topbar__pill" style="background:rgba(52,211,153,.15);color:#6ee7b7;border-color:rgba(52,211,153,.35)" title="Real provider data">🌐 Live</span>{% endif %}
+            <button
+              id="sp-mode-toggle-topbar"
+              class="sp-topbar__pill sp-topbar__pill--btn sp-topbar__pill--{{ _tb_mode }}"
+              type="button"
+              title="{{ 'Switch to Live mode (real provider data)' if _tb_mode == 'demo' else 'Switch to Demo mode (ESPN + simulated)' }}"
+              data-current="{{ _tb_mode }}"
+            >{{ '🧪 Demo' if _tb_mode == 'demo' else '🌐 Live' }}<span class="sp-topbar__pill-switch-hint">{{ ' → Live' if _tb_mode == 'demo' else ' → Demo' }}</span></button>
             {% if fixture_source is defined and fixture_source %}<span class="sp-topbar__pill" title="Fixture source">{{ fixture_source }}</span>{% endif %}
             {% if data_source %}<span class="sp-topbar__pill">{{ data_source }}</span>{% endif %}
             {% if last_updated %}<span class="sp-topbar__pill">{{ last_updated }}</span>{% endif %}
@@ -275,49 +281,29 @@
     </form>
   </section>
 
-  {# ── Mode Switcher ─────────────────────────────────────────────────────── #}
+  {# ── Mode Switcher (floating toggle, bottom-left) ─────────────────────── #}
   {% set _mode = scorpred_mode if scorpred_mode is defined else 'demo' %}
-  <div id="sp-mode-switcher" class="sp-mode-switcher" data-mode="{{ _mode }}" aria-label="Switch prediction mode">
+  {% set _next_mode = 'live' if _mode == 'demo' else 'demo' %}
+  <div id="sp-mode-switcher" class="sp-mode-switcher" aria-label="Switch prediction mode">
     <button
       id="sp-mode-pill"
       class="sp-mode-pill sp-mode-pill--{{ _mode }}"
       type="button"
-      aria-haspopup="true"
-      aria-expanded="false"
-      title="{{ 'ESPN fixtures + ScorPred simulated rules' if _mode == 'demo' else 'Real provider data + ScorPred DecisionEngine' }}"
+      title="{{ 'Switch to Live mode (real provider data)' if _mode == 'demo' else 'Switch to Demo mode (ESPN + simulated)' }}"
+      data-next="{{ _next_mode }}"
     >
       <span class="sp-mode-pill__dot"></span>
       <span class="sp-mode-pill__icon">{{ '🧪' if _mode == 'demo' else '🌐' }}</span>
-      <span class="sp-mode-pill__label">{{ 'Demo Mode' if _mode == 'demo' else 'Live Mode' }}</span>
-      <svg class="sp-mode-pill__chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12" aria-hidden="true"><polyline points="18 15 12 9 6 15"/></svg>
+      <span class="sp-mode-pill__label">{{ 'Demo' if _mode == 'demo' else 'Live' }}</span>
+      <span class="sp-mode-pill__switch-hint">→ {{ 'Live' if _mode == 'demo' else 'Demo' }}</span>
     </button>
-
-    <div id="sp-mode-popover" class="sp-mode-popover" role="menu" aria-hidden="true">
-      <p class="sp-mode-popover__title">Data Source</p>
-      <button class="sp-mode-option {% if _mode == 'demo' %}sp-mode-option--active{% endif %}" data-pick="demo" role="menuitem" type="button">
-        <span class="sp-mode-option__icon">🧪</span>
-        <span class="sp-mode-option__body">
-          <strong>Demo Mode</strong>
-          <small>ESPN fixtures · simulated rules</small>
-        </span>
-        {% if _mode == 'demo' %}<svg class="sp-mode-option__check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>{% endif %}
-      </button>
-      <button class="sp-mode-option {% if _mode == 'live' %}sp-mode-option--active{% endif %}" data-pick="live" role="menuitem" type="button">
-        <span class="sp-mode-option__icon">🌐</span>
-        <span class="sp-mode-option__body">
-          <strong>Live Mode</strong>
-          <small>Configured provider · real data</small>
-        </span>
-        {% if _mode == 'live' %}<svg class="sp-mode-option__check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" width="14" height="14" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>{% endif %}
-      </button>
-    </div>
   </div>
 
   <style>
-    .sp-mode-switcher{position:fixed;bottom:1.5rem;left:1.5rem;z-index:990;display:flex;flex-direction:column;align-items:flex-start;gap:.5rem}
+    .sp-mode-switcher{position:fixed;bottom:1.5rem;left:1.5rem;z-index:990}
     @media(max-width:768px){.sp-mode-switcher{bottom:4.75rem;left:.75rem}}
 
-    .sp-mode-pill{display:flex;align-items:center;gap:.45rem;padding:.4rem .75rem;border-radius:999px;border:1px solid;font-size:.72rem;font-weight:600;letter-spacing:.03em;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:box-shadow .18s,transform .12s;white-space:nowrap;line-height:1}
+    .sp-mode-pill{display:flex;align-items:center;gap:.45rem;padding:.4rem .8rem;border-radius:999px;border:1px solid;font-size:.72rem;font-weight:600;letter-spacing:.03em;cursor:pointer;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);transition:box-shadow .18s,transform .12s,opacity .15s;white-space:nowrap;line-height:1}
     .sp-mode-pill:hover{transform:translateY(-1px)}
     .sp-mode-pill--demo{background:rgba(139,92,246,.18);border-color:rgba(139,92,246,.5);color:#c4b5fd;box-shadow:0 2px 12px rgba(139,92,246,.2)}
     .sp-mode-pill--demo:hover{box-shadow:0 4px 20px rgba(139,92,246,.35)}
@@ -329,77 +315,61 @@
     .sp-mode-pill--live .sp-mode-pill__dot{background:#34d399}
     @keyframes sp-dot-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
-    .sp-mode-pill__chevron{transition:transform .2s;flex-shrink:0;opacity:.7}
-    .sp-mode-pill[aria-expanded="true"] .sp-mode-pill__chevron{transform:rotate(180deg)}
+    .sp-mode-pill__switch-hint{opacity:0;font-size:.67rem;font-weight:500;transition:opacity .15s;margin-left:.1rem}
+    .sp-mode-pill:hover .sp-mode-pill__switch-hint{opacity:.7}
 
-    .sp-mode-popover{display:none;position:absolute;bottom:calc(100% + .5rem);left:0;min-width:210px;background:rgba(15,15,23,.94);border:1px solid rgba(255,255,255,.1);border-radius:.75rem;padding:.6rem .5rem;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 8px 32px rgba(0,0,0,.55);animation:sp-pop-in .15s ease}
-    .sp-mode-popover.sp-mode-popover--open{display:block}
-    @keyframes sp-pop-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .sp-mode-pill--loading{opacity:.55;pointer-events:none}
 
-    .sp-mode-popover__title{font-size:.65rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:rgba(255,255,255,.35);padding:.2rem .55rem .45rem;margin:0}
-
-    .sp-mode-option{display:flex;align-items:center;gap:.6rem;width:100%;padding:.5rem .6rem;border-radius:.5rem;border:none;background:transparent;color:rgba(255,255,255,.7);font-size:.78rem;cursor:pointer;text-align:left;transition:background .12s,color .12s}
-    .sp-mode-option:hover{background:rgba(255,255,255,.07);color:#fff}
-    .sp-mode-option--active{color:#fff}
-    .sp-mode-option--active[data-pick="demo"]{background:rgba(139,92,246,.15)}
-    .sp-mode-option--active[data-pick="live"]{background:rgba(52,211,153,.12)}
-
-    .sp-mode-option__icon{font-size:1rem;line-height:1;flex-shrink:0}
-    .sp-mode-option__body{display:flex;flex-direction:column;gap:.05rem;flex:1}
-    .sp-mode-option__body strong{font-size:.78rem;font-weight:600;line-height:1.2}
-    .sp-mode-option__body small{font-size:.67rem;opacity:.6;line-height:1.2}
-    .sp-mode-option__check{margin-left:auto;flex-shrink:0;opacity:.9}
-
-    .sp-mode-pill--loading{opacity:.6;pointer-events:none}
+    /* topbar toggle button */
+    .sp-topbar__pill--btn{cursor:pointer;border:1px solid;background:none;font:inherit;transition:opacity .15s,box-shadow .15s}
+    .sp-topbar__pill--btn:hover{opacity:.85}
+    .sp-topbar__pill--demo{background:rgba(167,139,250,.18);color:#c4b5fd;border-color:rgba(167,139,250,.35)}
+    .sp-topbar__pill--live{background:rgba(52,211,153,.15);color:#6ee7b7;border-color:rgba(52,211,153,.35)}
+    .sp-topbar__pill-switch-hint{opacity:0;font-size:.67em;transition:opacity .15s;margin-left:.1rem}
+    .sp-topbar__pill--btn:hover .sp-topbar__pill-switch-hint{opacity:.7}
+    .sp-topbar__pill--btn.sp-mode-pill--loading{opacity:.5;pointer-events:none}
   </style>
 
   <script>
   (function(){
-    const pill = document.getElementById('sp-mode-pill');
-    const popover = document.getElementById('sp-mode-popover');
-    const switcher = document.getElementById('sp-mode-switcher');
     const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 
-    if (!pill || !popover) return;
-
-    function openPopover(){
-      popover.classList.add('sp-mode-popover--open');
-      pill.setAttribute('aria-expanded','true');
-    }
-    function closePopover(){
-      popover.classList.remove('sp-mode-popover--open');
-      pill.setAttribute('aria-expanded','false');
-    }
-    function togglePopover(){ popover.classList.contains('sp-mode-popover--open') ? closePopover() : openPopover(); }
-
-    pill.addEventListener('click', function(e){ e.stopPropagation(); togglePopover(); });
-    document.addEventListener('click', function(e){ if(!switcher.contains(e.target)) closePopover(); });
-    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closePopover(); });
-
-    popover.querySelectorAll('.sp-mode-option').forEach(function(btn){
-      btn.addEventListener('click', function(){
-        const mode = btn.dataset.pick;
-        if(!mode) return;
-        closePopover();
-        pill.classList.add('sp-mode-pill--loading');
-        fetch('/set-mode', {
-          method: 'POST',
-          headers: {'Content-Type':'application/json', 'X-CSRF-Token': csrfToken},
-          body: JSON.stringify({mode: mode, csrf_token: csrfToken})
-        })
-        .then(function(r){ return r.json(); })
-        .then(function(data){
-          if(data.ok){ window.location.reload(); }
-          else {
-            pill.classList.remove('sp-mode-pill--loading');
-            alert(data.error || 'Mode switch failed.');
-          }
-        })
-        .catch(function(){
-          pill.classList.remove('sp-mode-pill--loading');
-        });
+    function switchMode(btn, targetMode) {
+      btn.classList.add('sp-mode-pill--loading');
+      fetch('/set-mode', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json','X-CSRF-Token':csrfToken},
+        body: JSON.stringify({mode: targetMode, csrf_token: csrfToken})
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.ok) { window.location.reload(); }
+        else {
+          btn.classList.remove('sp-mode-pill--loading');
+          alert(data.error || 'Mode switch failed.');
+        }
+      })
+      .catch(function(){
+        btn.classList.remove('sp-mode-pill--loading');
       });
-    });
+    }
+
+    // Floating bottom-left toggle
+    const floatBtn = document.getElementById('sp-mode-pill');
+    if (floatBtn) {
+      floatBtn.addEventListener('click', function(){
+        switchMode(floatBtn, floatBtn.dataset.next);
+      });
+    }
+
+    // Topbar toggle
+    const topbarBtn = document.getElementById('sp-mode-toggle-topbar');
+    if (topbarBtn) {
+      topbarBtn.addEventListener('click', function(){
+        const next = topbarBtn.dataset.current === 'demo' ? 'live' : 'demo';
+        switchMode(topbarBtn, next);
+      });
+    }
   })();
   </script>
 
