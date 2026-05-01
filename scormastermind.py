@@ -816,7 +816,8 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass  # odds unavailable — ml_service will use training median fallback
 
-    inference = ml_service.predict_match(_features_for_inference)
+    _league_id = int(context.get("league_id") or 0) or None
+    inference = ml_service.predict_match(_features_for_inference, league_id=_league_id)
     if inference.get("available"):
         probs = inference.get("probabilities") or [0.3333, 0.3333, 0.3334]
         model_type = inference.get("model_type", "random_forest")
@@ -992,6 +993,7 @@ def analyze_match(match_id: int | str) -> dict[str, Any] | None:
             "team_a_name": home_name,
             "team_b_name": away_name,
             "team_a_is_home": True,
+            "league_id": league_id,
             "form_a": form_home,
             "form_b": form_away,
             "h2h_form_a": h2h_home,

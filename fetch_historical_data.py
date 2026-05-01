@@ -12,7 +12,8 @@ writes the enriched CSV back.
 
 Output schema (superset of existing CSV schema):
     date, home_team, away_team, form, goals_scored, goals_conceded,
-    goal_diff, result, league_id, season
+    goal_diff, result, league_id, season, referee,
+    home_xg, away_xg, odds_home, odds_away, odds_draw
 
 Columns not present in existing rows (league_id, season, form) are left empty;
 train_model.py only reads: date, home_team, away_team, goals_scored,
@@ -37,6 +38,8 @@ FIELDNAMES = [
     "date", "home_team", "away_team", "form",
     "goals_scored", "goals_conceded", "goal_diff",
     "result", "league_id", "season",
+    "referee", "home_xg", "away_xg",
+    "odds_home", "odds_away", "odds_draw",
 ]
 
 
@@ -67,6 +70,76 @@ def _load_existing(path: Path) -> tuple[list[dict], set[tuple]]:
         rows = list(csv.DictReader(fh))
     keys = {_dedup_key(r) for r in rows}
     return rows, keys
+
+
+def _safe_xg(score: dict) -> str:
+    """Extract home xG from the score sub-object when present (API-Football v3)."""
+    # Some responses include xG under score.home / score.away as floats
+    val = (score.get("home") if isinstance(score.get("home"), float) else None)
+    return str(val) if val is not None else ""
+
+
+def _safe_xg_away(score: dict) -> str:
+    val = (score.get("away") if isinstance(score.get("away"), float) else None)
+    return str(val) if val is not None else ""
+
+
+def _fetch_season_odds(league_id: int, season: int) -> dict[tuple[str, str, str], dict]:
+    """Fetch pre-match 1X2 bookmaker odds for one league/season.
+
+    Returns a dict keyed by (date[:10], home_name_lower, away_name_lower) mapping
+    to {"odds_home": str, "odds_away": str, "odds_draw": str} with average decimal odds.
+    Falls back to empty dict on any API error.
+    """
+    try:
+        data = api_get(
+            "odds",
+            {"league": league_id, "season": season, "bet": 1},  # bet=1 = Match Winner
+            cache_hours=168,  # cache for 1 week; historical odds don't change
+        )
+    except Exception as exc:
+        print(f"  [warn] odds league={league_id} season={season}: {exc}")
+        return {}
+
+    result: dict[tuple[str, str, str], dict] = {}
+    for entry in (data.get("response") or []):
+        fixture = (entry.get("fixture") or {})
+        raw_date = str(fixture.get("date") or "")[:10]
+        teams = (entry.get("teams") or {})
+        home_name = str((teams.get("home") or {}).get("name") or "").strip().lower()
+        away_name = str((teams.get("away") or {}).get("name") or "").strip().lower()
+        if not raw_date or not home_name or not away_name:
+            continue
+
+        # Collect all bookmaker values for bet "Match Winner" (values[0]=home, [1]=draw, [2]=away)
+        home_vals: list[float] = []
+        draw_vals: list[float] = []
+        away_vals: list[float] = []
+        for bookie in (entry.get("bookmakers") or []):
+            for bet in (bookie.get("bets") or []):
+                if str(bet.get("name") or "").strip() != "Match Winner":
+                    continue
+                values = bet.get("values") or []
+                for v in values:
+                    try:
+                        odd_val = float(v.get("odd") or 0)
+                        label = str(v.get("value") or "").strip()
+                        if label == "Home":
+                            home_vals.append(odd_val)
+                        elif label == "Draw":
+                            draw_vals.append(odd_val)
+                        elif label == "Away":
+                            away_vals.append(odd_val)
+                    except (TypeError, ValueError):
+                        continue
+
+        if home_vals and draw_vals and away_vals:
+            result[(raw_date, home_name, away_name)] = {
+                "odds_home": str(round(sum(home_vals) / len(home_vals), 3)),
+                "odds_draw": str(round(sum(draw_vals) / len(draw_vals), 3)),
+                "odds_away": str(round(sum(away_vals) / len(away_vals), 3)),
+            }
+    return result
 
 
 def _fetch_season(league_id: int, season: int) -> list[dict]:
@@ -120,6 +193,12 @@ def _fetch_season(league_id: int, season: int) -> list[dict]:
             "result":        _result_label(hg, ag),
             "league_id":     league_id,
             "season":        season,
+            "referee":       str(fixture_meta.get("referee") or "").strip(),
+            "home_xg":       _safe_xg(f.get("score") or {}),
+            "away_xg":       _safe_xg_away(f.get("score") or {}),
+            "odds_home":     "",
+            "odds_away":     "",
+            "odds_draw":     "",
         })
     return rows
 
@@ -153,6 +232,29 @@ def fetch_historical(dry_run: bool = False) -> None:
                     added += 1
             print(f"{len(fetched)} fetched, {added} new")
             # small sleep to stay within API rate limits
+            time.sleep(0.1)
+
+    # Enrich new rows with pre-match odds from API-Football /odds endpoint
+    print("\nFetching historical odds …")
+    for league_id in SUPPORTED_LEAGUE_IDS:
+        for season in seasons:
+            odds_map = _fetch_season_odds(league_id, season)
+            if not odds_map:
+                continue
+            matched = 0
+            for row in new_rows:
+                if int(row.get("league_id") or 0) != league_id or int(row.get("season") or 0) != season:
+                    continue
+                key = (
+                    str(row.get("date", ""))[:10],
+                    str(row.get("home_team", "")).strip().lower(),
+                    str(row.get("away_team", "")).strip().lower(),
+                )
+                if key in odds_map:
+                    row.update(odds_map[key])
+                    matched += 1
+            if matched:
+                print(f"  odds matched {matched} rows for league={league_id} season={season}")
             time.sleep(0.1)
 
     rows_added = len(new_rows)
