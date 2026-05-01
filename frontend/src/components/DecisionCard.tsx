@@ -169,9 +169,9 @@ export function DecisionCard({ decision, featured = false, onAnalyze }: { decisi
         <button
           type="button"
           onClick={() => onAnalyze(decision)}
-          className="mt-4 w-full rounded-lg border border-emerald-400/25 bg-emerald-400/[0.07] px-4 py-2.5 text-[12px] font-semibold uppercase tracking-widest text-emerald-300 transition hover:border-emerald-400/50 hover:bg-emerald-400/[0.14] hover:text-emerald-200 active:scale-[0.98]"
+          className="mt-4 w-full rounded-lg border border-teal-500/30 bg-teal-500/[0.08] px-4 py-2.5 text-[13px] font-bold uppercase tracking-[0.08em] text-teal-300 transition hover:border-teal-400/50 hover:bg-teal-500/[0.15] hover:text-teal-200 active:scale-[0.98]"
         >
-          Analyze Match →
+          ANALYZE MATCH →
         </button>
       )}
 
