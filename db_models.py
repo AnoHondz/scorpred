@@ -9,8 +9,8 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     created_at = db.Column(db.DateTime, nullable=False)
-    saved_picks = db.Column(db.PickleType, default=list)
-    history = db.Column(db.PickleType, default=list)
+    saved_picks = db.Column(db.JSON, default=list)
+    history = db.Column(db.JSON, default=list)
 
     def to_dict(self):
         return {

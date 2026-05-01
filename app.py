@@ -201,6 +201,7 @@ else:
 try:
     _db_ready = bool(db.session.execute(text("SELECT 1")).scalar())
 except Exception:
+    _logger.warning("Database connectivity check failed at startup", exc_info=True)
     _db_ready = False
 _redis_ready = cache_service._get_redis_client() is not None
 _logger.info(
@@ -212,6 +213,51 @@ _logger.info(
 )
 
 # â”€â”€ Blueprints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+_CRITICAL_API_KEYS = {"API_FOOTBALL_KEY", "ANTHROPIC_API_KEY"}
+_OPTIONAL_API_KEYS = {
+    "NBA_API_KEY": "NBA live data will be unavailable",
+    "ODDS_API_KEY": "betting odds and edge badges will be unavailable",
+}
+_FEATURE_NOTES = {
+    "API_FOOTBALL_KEY": "soccer fixtures, standings, and match data will be unavailable",
+    "ANTHROPIC_API_KEY": "AI assistant chat will be unavailable",
+}
+
+
+def _validate_api_keys() -> None:
+    missing_critical: list[str] = []
+    present: list[str] = []
+
+    for key in _CRITICAL_API_KEYS:
+        if os.getenv(key, "").strip():
+            present.append(key)
+        else:
+            missing_critical.append(key)
+            _logger.warning(
+                "Missing API key %s -- %s",
+                key,
+                _FEATURE_NOTES.get(key, "related features will be degraded"),
+            )
+
+    for key, note in _OPTIONAL_API_KEYS.items():
+        if os.getenv(key, "").strip():
+            present.append(key)
+        else:
+            _logger.warning("Missing optional API key %s -- %s", key, note)
+
+    if present:
+        _logger.info("api_keys_present keys=%s", ",".join(sorted(present)))
+
+    if missing_critical and _is_production:
+        raise RuntimeError(
+            "Critical API keys missing in production: "
+            + ", ".join(sorted(missing_critical))
+            + ". Set them in your environment before starting the server."
+        )
+
+
+_validate_api_keys()
+
 app.register_blueprint(nba_bp)
 app.register_blueprint(user_auth.user_auth_bp)
 
@@ -377,6 +423,7 @@ def _extract_totals_leg(prediction: dict) -> dict | None:
                 try:
                     line = float(opt.get("line") or opt.get("value") or 0)
                 except Exception:
+                    _logger.debug("Failed to parse totals line value from optional pick: %r", opt, exc_info=True)
                     line = None
                 market = opt.get("market")
                 break
@@ -496,6 +543,7 @@ def _build_opp_strengths(standings: list) -> dict:
     try:
         return se.build_opp_strengths_from_standings(standings)
     except Exception:
+        _logger.warning("Failed to build opponent strengths from standings", exc_info=True)
         return {}
 
 
@@ -1369,10 +1417,12 @@ def _build_soccer_evidence(record: dict) -> dict:
         try:
             stats_rows = ac.get_fixture_stats(fixture_id)
         except Exception:
+            _logger.warning("Failed to fetch fixture stats for fixture_id=%s", fixture_id, exc_info=True)
             stats_rows = []
         try:
             raw_events = ac.get_fixture_events(fixture_id)
         except Exception:
+            _logger.warning("Failed to fetch fixture events for fixture_id=%s", fixture_id, exc_info=True)
             raw_events = []
         try:
             goal_scorers = ac.get_match_events(fixture_id)
@@ -1385,7 +1435,7 @@ def _build_soccer_evidence(record: dict) -> dict:
                 goal_scorers["away_team"] = team_b_name
             evidence["goal_scorers"] = goal_scorers
         except Exception:
-            pass
+            _logger.warning("Failed to fetch goal scorers for fixture_id=%s", fixture_id, exc_info=True)
 
     team_a_row = next(
         (row for row in stats_rows if _team_names_match((row.get("team") or {}).get("name", ""), team_a_name)),
@@ -1445,6 +1495,7 @@ def _build_soccer_evidence(record: dict) -> dict:
         try:
             player_rows = ac.get_fixture_players(fixture_id)
         except Exception:
+            _logger.warning("Failed to fetch player stats for fixture_id=%s", fixture_id, exc_info=True)
             player_rows = []
 
         for team_entry in player_rows:
@@ -1491,6 +1542,7 @@ def _build_soccer_evidence(record: dict) -> dict:
         try:
             items = _display_injuries(ac.get_injuries(league_id, SEASON, team_id))
         except Exception:
+            _logger.warning("Failed to fetch injuries for team_name=%s league_id=%s", team_name, league_id, exc_info=True)
             items = []
         injuries[team_name] = {
             "count": len(items),
@@ -1637,6 +1689,7 @@ def _build_nba_evidence(record: dict) -> dict:
         try:
             matched_game = nc.get_event_snapshot(fixture_id, date_hint=target_date)
         except Exception:
+            _logger.warning("Failed to fetch NBA event snapshot for fixture_id=%s", fixture_id, exc_info=True)
             matched_game = None
 
     seen_ids = set()
@@ -1646,6 +1699,7 @@ def _build_nba_evidence(record: dict) -> dict:
         try:
             games = nc.get_scoreboard_games(day)
         except Exception:
+            _logger.warning("Failed to fetch NBA scoreboard games for date=%s", day, exc_info=True)
             games = []
         for game in games:
             game_id = str(game.get("id") or "")
@@ -1704,10 +1758,12 @@ def _build_nba_evidence(record: dict) -> dict:
         try:
             stats_a = nc.get_team_season_stats(team_a_id)
         except Exception:
+            _logger.warning("Failed to fetch NBA season stats for team_a_id=%s", team_a_id, exc_info=True)
             stats_a = None
         try:
             stats_b = nc.get_team_season_stats(team_b_id)
         except Exception:
+            _logger.warning("Failed to fetch NBA season stats for team_b_id=%s", team_b_id, exc_info=True)
             stats_b = None
         a_val = stats_a.get(field) if isinstance(stats_a, dict) else None
         b_val = stats_b.get(field) if isinstance(stats_b, dict) else None
@@ -1751,6 +1807,7 @@ def _build_nba_evidence(record: dict) -> dict:
         try:
             injuries = nc.get_team_injuries(team_id)
         except Exception:
+            _logger.warning("Failed to fetch NBA injuries for team_id=%s", team_id, exc_info=True)
             injuries = []
         evidence["injuries"][name] = {
             "count": len(injuries),
@@ -1767,6 +1824,7 @@ def _build_nba_evidence(record: dict) -> dict:
             raw_form = nc.get_team_recent_form(team_id, n=5)
             extracted = np_nba.extract_recent_form(raw_form, team_id, n=5)
         except Exception:
+            _logger.warning("Failed to fetch NBA recent form for team_id=%s", team_id, exc_info=True)
             extracted = []
         if extracted:
             evidence["form_compare"][name] = {
@@ -1928,6 +1986,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         try:
             upcoming = ac.get_upcoming_fixtures(league_id, SEASON, next_n=40)
         except Exception:
+            _logger.warning("Failed to fetch upcoming fixtures for league_id=%s during tracking", league_id, exc_info=True)
             upcoming = []
 
         for fixture in upcoming:
@@ -1947,6 +2006,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         try:
             espn_fixtures = ac.get_espn_fixtures(slug, next_n=40)
         except Exception:
+            _logger.warning("Failed to fetch ESPN fixtures for league_id=%s slug=%s during tracking", league_id, slug, exc_info=True)
             espn_fixtures = []
 
         for fixture in espn_fixtures:
@@ -1976,6 +2036,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
             try:
                 standings_cache[league_id] = ac.get_standings(league_id, SEASON)
             except Exception:
+                _logger.warning("Failed to fetch standings for league_id=%s during tracking", league_id, exc_info=True)
                 standings_cache[league_id] = []
 
         opp_strengths = _build_opp_strengths(standings_cache.get(league_id, []))
@@ -1983,22 +2044,27 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         try:
             h2h_raw = ac.get_h2h(home_id, away_id, last=10) if home_id and away_id else []
         except Exception:
+            _logger.warning("Failed to fetch H2H for %s vs %s during tracking", home_name, away_name, exc_info=True)
             h2h_raw = []
         try:
             fixtures_home = ac.get_team_fixtures(home_id, league_id, SEASON, last=10) if home_id else []
         except Exception:
+            _logger.warning("Failed to fetch home fixtures for %s during tracking", home_name, exc_info=True)
             fixtures_home = []
         try:
             fixtures_away = ac.get_team_fixtures(away_id, league_id, SEASON, last=10) if away_id else []
         except Exception:
+            _logger.warning("Failed to fetch away fixtures for %s during tracking", away_name, exc_info=True)
             fixtures_away = []
         try:
             injuries_home = _clean_injuries(ac.get_injuries(league_id, SEASON, home_id)) if home_id else []
         except Exception:
+            _logger.warning("Failed to fetch home injuries for %s during tracking", home_name, exc_info=True)
             injuries_home = []
         try:
             injuries_away = _clean_injuries(ac.get_injuries(league_id, SEASON, away_id)) if away_id else []
         except Exception:
+            _logger.warning("Failed to fetch away injuries for %s during tracking", away_name, exc_info=True)
             injuries_away = []
 
         form_home = pred.extract_form(
@@ -2033,6 +2099,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                 opp_strengths=opp_strengths,
             )
         except Exception:
+            _logger.warning("Soccer prediction engine failed for %s vs %s during tracking", home_name, away_name, exc_info=True)
             continue
 
         best_pick = prediction.get("best_pick", {})
@@ -2070,6 +2137,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                 inserted += 1
                 existing_keys.add(game_key)
         except Exception:
+            _logger.warning("Failed to save soccer tracking prediction for %s vs %s", home_name, away_name, exc_info=True)
             continue
 
     # Track NBA games
@@ -2079,15 +2147,15 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         try:
             nba_games.extend(nc.get_scoreboard_games(date.today()))
         except Exception:
-            pass
+            _logger.warning("Failed to fetch NBA scoreboard games for today during tracking", exc_info=True)
         try:
             nba_games.extend(nc.get_scoreboard_games(date.today() - timedelta(days=1)))
         except Exception:
-            pass
+            _logger.warning("Failed to fetch NBA scoreboard games for yesterday during tracking", exc_info=True)
         try:
             nba_games.extend(nc.get_upcoming_games(next_n=40, days_ahead=1))
         except Exception:
-            pass
+            _logger.warning("Failed to fetch NBA upcoming games during tracking", exc_info=True)
 
         game_ids: set[str] = set()
         unique_nba_games: list[dict] = []
@@ -2123,6 +2191,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
 
             nba_standings = se.build_opp_strengths_from_standings(ranked)
         except Exception:
+            _logger.warning("Failed to build NBA opponent strengths from standings during tracking", exc_info=True)
             nba_standings = {}
 
         for game in unique_nba_games:
@@ -2144,23 +2213,23 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                 try:
                     h2h_raw = nc.get_h2h(str(home_team.get("id", "")), str(away_team.get("id", "")))
                 except Exception:
-                    pass
+                    _logger.warning("Failed to fetch NBA H2H for %s vs %s during tracking", home_name, away_name, exc_info=True)
                 try:
                     form_home_raw = nc.get_team_recent_form(str(home_team.get("id", "")))
                 except Exception:
-                    pass
+                    _logger.warning("Failed to fetch NBA home form for %s during tracking", home_name, exc_info=True)
                 try:
                     form_away_raw = nc.get_team_recent_form(str(away_team.get("id", "")))
                 except Exception:
-                    pass
+                    _logger.warning("Failed to fetch NBA away form for %s during tracking", away_name, exc_info=True)
                 try:
                     injuries_home = nc.get_team_injuries(str(home_team.get("id", "")))
                 except Exception:
-                    pass
+                    _logger.warning("Failed to fetch NBA home injuries for %s during tracking", home_name, exc_info=True)
                 try:
                     injuries_away = nc.get_team_injuries(str(away_team.get("id", "")))
                 except Exception:
-                    pass
+                    _logger.warning("Failed to fetch NBA away injuries for %s during tracking", away_name, exc_info=True)
 
                 prediction = se.scorpred_predict(
                     form_a=np_nba.extract_recent_form(form_home_raw, str(home_team.get("id", "")), n=5),
@@ -2176,6 +2245,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                     opp_strengths=nba_standings,
                 )
             except Exception:
+                _logger.warning("NBA prediction engine failed for %s vs %s during tracking", home_name, away_name, exc_info=True)
                 continue
 
             best_pick = prediction.get("best_pick", {})
@@ -2211,6 +2281,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                     inserted += 1
                     existing_keys.add(game_key)
             except Exception:
+                _logger.warning("Failed to save NBA tracking prediction for %s vs %s", home_name, away_name, exc_info=True)
                 continue
     else:
         app.logger.warning("NBA tracking skipped because nba_live_client or nba_predictor is unavailable.")
@@ -3131,6 +3202,7 @@ def _soccer_logo_lookup(league_id: int | None) -> dict[str, str]:
     try:
         teams = ac.get_teams(selected_id, SEASON) or []
     except Exception:
+        _logger.warning("Failed to fetch teams for soccer logo lookup league_id=%s", selected_id, exc_info=True)
         teams = []
 
     for entry in teams:
@@ -3164,6 +3236,7 @@ def _nba_logo_lookup() -> dict[str, str]:
     try:
         teams = nc.get_teams() if nc else []
     except Exception:
+        _logger.warning("Failed to fetch NBA teams for logo lookup", exc_info=True)
         teams = []
     for team in teams or []:
         if not isinstance(team, dict):
@@ -3511,6 +3584,7 @@ def _recent_nba_result_records(limit: int = 10) -> list[dict[str, Any]]:
         try:
             return nc.get_scoreboard_games(target, request_profile="page")
         except Exception:
+            _logger.warning("Failed to fetch NBA scoreboard games for date=%s in recent results", target, exc_info=True)
             return []
 
     with ThreadPoolExecutor(max_workers=6) as pool:
@@ -3557,6 +3631,7 @@ def _recent_soccer_result_records(limit: int = 50) -> list[dict[str, Any]]:
                 ttl_hours=0.5,
             )
         except Exception:
+            _logger.warning("Failed to fetch ESPN scoreboard for league_id=%s date=%s", league_id, date_str, exc_info=True)
             return []
         rows = []
         for event in payload.get("events") or []:
@@ -3911,6 +3986,7 @@ def _recent_team_fixtures_all_comps(
         try:
             league_fixtures = ac.get_team_fixtures(team_id, league_id, season, last=last)
         except Exception:
+            _logger.warning("Failed to fetch team fixtures for team_id=%s league_id=%s", team_id, league_id, exc_info=True)
             continue
         for fixture in league_fixtures or []:
             fixture_block = fixture.get("fixture") or {}
@@ -4158,6 +4234,7 @@ def _assistant_page_path_from_payload(payload: dict) -> str:
         try:
             return urlparse(request.referrer).path or "/"
         except Exception:
+            _logger.debug("Failed to parse referrer URL: %r", request.referrer, exc_info=True)
             return "/"
     return "/"
 
@@ -4299,6 +4376,7 @@ def insights():
             try:
                 all_cards.append(_with_insight_metadata(card))
             except Exception:
+                _logger.warning("Failed to enrich insight metadata for card matchup=%s", card.get("matchup"), exc_info=True)
                 all_cards.append(card)
         home_context: dict = {"all_cards": all_cards}
         sport_filter = (request.args.get("sport") or "all").strip().lower()
@@ -4419,7 +4497,7 @@ def soccer():
     try:
         teams = ac.get_teams(league_id, SEASON) or []
     except Exception:
-        pass
+        _logger.warning("Failed to fetch teams for /soccer route league_id=%s", league_id, exc_info=True)
     full_slate, fixtures, fixtures_error, fixtures_source, _ = prediction_service.get_fixture_cards(league_id)
     return render_template(
         "soccer.html",
@@ -4623,6 +4701,7 @@ def matchup():
         try:
             h2h_enriched.append(ac.enrich_fixture(fixture))
         except Exception:
+            _logger.warning("Failed to enrich H2H fixture fixture_id=%s", (fixture.get("fixture") or {}).get("id"), exc_info=True)
             h2h_enriched.append({**fixture, "events": [], "stats": []})
 
     form_a = pred.extract_form(fixtures_a, id_a)[:5]
@@ -5800,6 +5879,7 @@ def worldcup():
             if wc_fixtures:
                 break
         except Exception:
+            _logger.warning("Failed to fetch World Cup fixtures for slug=%s", slug, exc_info=True)
             continue
 
     if request.method == "POST" and team_a and team_b:
@@ -5829,6 +5909,7 @@ def health():
         db.session.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception:
+        _logger.warning("Database health check failed", exc_info=True)
         db_status = "unavailable"
     cache_status = "redis" if cache_service._get_redis_client() is not None else "local"
     api_ok = _safe_external_call(lambda: ac.get_teams(_active_league_id(), SEASON), retries=1, label="health-api-check") is not None
@@ -6393,6 +6474,7 @@ def api_dashboard_nba():
                     try:
                         ordered[idx] = fut.result()
                     except Exception:
+                        _logger.warning("NBA prediction card build failed for game index=%d", idx, exc_info=True)
                         ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
                     if not ((ordered[idx] or {}).get("prediction") or {}).get("decision_card"):
                         ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)

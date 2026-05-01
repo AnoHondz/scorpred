@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import threading
 from typing import Any
 
 from runtime_paths import prediction_policy_path
@@ -45,6 +46,7 @@ _DEFAULT_POLICY = {
 
 _cache: dict[str, Any] = {}
 _cache_mtime: dict[str, float] = {}
+_cache_lock = threading.Lock()
 
 
 def _safe_float(value: Any, default: float) -> float:
@@ -105,36 +107,37 @@ def load_policy(force_reload: bool = False) -> dict[str, Any]:
     path = prediction_policy_path()
     cache_key = str(path)
 
-    if not force_reload and cache_key in _cache:
-        # Invalidate cache if file has been updated by another process
+    with _cache_lock:
+        if not force_reload and cache_key in _cache:
+            # Invalidate cache if file has been updated by another process
+            try:
+                current_mtime = path.stat().st_mtime if path.exists() else -1.0
+            except OSError:
+                current_mtime = -1.0
+            if current_mtime == _cache_mtime.get(cache_key, -1.0):
+                return _cache[cache_key]
+
+        if not path.exists():
+            policy = default_policy()
+            _cache[cache_key] = policy
+            _cache_mtime[cache_key] = -1.0
+            return policy
+
         try:
-            current_mtime = path.stat().st_mtime if path.exists() else -1.0
-        except OSError:
-            current_mtime = -1.0
-        if current_mtime == _cache_mtime.get(cache_key, -1.0):
-            return _cache[cache_key]
+            current_mtime = path.stat().st_mtime
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Policy file must be a JSON object")
+        except Exception:
+            policy = default_policy()
+            _cache[cache_key] = policy
+            _cache_mtime[cache_key] = -1.0
+            return policy
 
-    if not path.exists():
-        policy = default_policy()
+        policy = normalize_policy(payload)
         _cache[cache_key] = policy
-        _cache_mtime[cache_key] = -1.0
+        _cache_mtime[cache_key] = current_mtime
         return policy
-
-    try:
-        current_mtime = path.stat().st_mtime
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError("Policy file must be a JSON object")
-    except Exception:
-        policy = default_policy()
-        _cache[cache_key] = policy
-        _cache_mtime[cache_key] = -1.0
-        return policy
-
-    policy = normalize_policy(payload)
-    _cache[cache_key] = policy
-    _cache_mtime[cache_key] = current_mtime
-    return policy
 
 
 def save_policy(policy: dict[str, Any]) -> None:
@@ -144,7 +147,8 @@ def save_policy(policy: dict[str, Any]) -> None:
     if not normalized.get("generated_at"):
         normalized["generated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     path.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
-    _cache[str(path)] = normalized
+    with _cache_lock:
+        _cache[str(path)] = normalized
 
 
 def sport_policy(sport: str | None = None) -> dict[str, float]:
