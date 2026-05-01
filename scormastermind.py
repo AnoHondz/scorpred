@@ -787,7 +787,36 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
                 "top_features": ml_outputs.get("top_features") or [],
             }
 
-    inference = ml_service.predict_match(_ml_features(context))
+    _features_for_inference = _ml_features(context)
+
+    # Inject live odds as features when available
+    try:
+        import odds_fetcher as _of
+        _home_team_name = str(context.get("team_a_name") or context.get("team_a") or "")
+        _away_team_name = str(context.get("team_b_name") or context.get("team_b") or "")
+        _live_odds = _of.fetch_match_odds("soccer", _home_team_name, _away_team_name)
+        if _live_odds.get("available"):
+            _h = float(_live_odds.get("home_odds") or 0)
+            _a = float(_live_odds.get("away_odds") or 0)
+            _d = float(_live_odds.get("draw_odds") or 0)
+            if _h > 1.0 and _a > 1.0 and _d > 1.0:
+                _m = 1.0/_h + 1.0/_d + 1.0/_a
+                _features_for_inference["home_implied_prob"] = round((1.0/_h)/_m, 4)
+                _features_for_inference["away_implied_prob"] = round((1.0/_a)/_m, 4)
+                _features_for_inference["draw_implied_prob"] = round((1.0/_d)/_m, 4)
+                _features_for_inference["odds_home_away_ratio"] = round(
+                    _features_for_inference["home_implied_prob"] / max(_features_for_inference["away_implied_prob"], 0.01),
+                    4,
+                )
+                _features_for_inference["market_confidence"] = max(
+                    _features_for_inference["home_implied_prob"],
+                    _features_for_inference["away_implied_prob"],
+                    _features_for_inference["draw_implied_prob"],
+                )
+    except Exception:
+        pass  # odds unavailable — ml_service will use training median fallback
+
+    inference = ml_service.predict_match(_features_for_inference)
     if inference.get("available"):
         probs = inference.get("probabilities") or [0.3333, 0.3333, 0.3334]
         model_type = inference.get("model_type", "random_forest")

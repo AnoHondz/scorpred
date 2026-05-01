@@ -275,6 +275,7 @@ def run_weekly_retrain(
     skip_backtest: bool = False,
     n_folds: int = 5,
     random_state: int = 42,
+    skip_policy_optimize: bool = False,
 ) -> dict:
     """Run the full weekly retrain pipeline and return a summary dict."""
     ensure_runtime_dirs()
@@ -325,7 +326,7 @@ def run_weekly_retrain(
     _banner("[5/5] Daily refresh (learn . optimize . report)")
     try:
         from daily_refresh import run_daily_refresh
-        daily_summary = run_daily_refresh(dry_run=dry_run)
+        daily_summary = run_daily_refresh(dry_run=dry_run, skip_policy=skip_policy_optimize)
         for s in daily_summary.get("steps", []):
             steps.append(s)
     except Exception:
@@ -373,6 +374,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-backtest", action="store_true", help="Skip walk-forward backtest step")
     p.add_argument("--folds", type=int, default=5, help="Number of walk-forward folds (default: 5)")
     p.add_argument("--random-state", type=int, default=42, help="Random seed")
+    p.add_argument("--skip-policy-optimize", action="store_true", help="Skip policy optimisation step in daily refresh")
     return p
 
 
@@ -385,6 +387,7 @@ def main() -> int:
         skip_backtest=args.skip_backtest,
         n_folds=args.folds,
         random_state=args.random_state,
+        skip_policy_optimize=args.skip_policy_optimize,
     )
     return 1 if summary["error_count"] > 0 else 0
 

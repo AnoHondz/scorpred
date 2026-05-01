@@ -9,7 +9,11 @@ from typing import Any
 import joblib
 from sklearn.metrics import accuracy_score
 
-from runtime_paths import clean_soccer_dataset_path, clean_soccer_model_path, ensemble_soccer_model_path, trained_model_path
+import logging
+
+from runtime_paths import clean_soccer_dataset_path, clean_soccer_model_path, ensemble_soccer_model_path, league_model_path, trained_model_path
+
+_log = logging.getLogger(__name__)
 from train_model import CLASS_LABELS, FEATURE_COLUMNS, _target_from_row
 from utils.parsing import safe_float
 import prediction_policy as pp
@@ -142,13 +146,29 @@ def model_exists(model_path: Path | None = None) -> bool:
     return (model_path or clean_soccer_model_path()).exists()
 
 
-def load_model(model_path: Path | None = None, force_reload: bool = False) -> dict[str, Any] | None:
+def load_model(
+    model_path: Path | None = None,
+    force_reload: bool = False,
+    league_id: int | None = None,
+) -> dict[str, Any] | None:
     path = Path(model_path) if model_path else None
+    # Auto-resolve: when league_id is given, try the per-league model first
+    if path is None and league_id is not None:
+        _league_path = league_model_path(league_id)
+        if _league_path.exists():
+            path = _league_path
+            _log.debug("ml_service: using per-league model league_id=%s at %s", league_id, path)
+        else:
+            _log.debug(
+                "ml_service: league model not found for league_id=%s, falling back to combined",
+                league_id,
+            )
     # Auto-resolve: prefer ensemble, fall back to RF, then legacy
     if path is None:
         for candidate in [ensemble_soccer_model_path(), clean_soccer_model_path()]:
             if candidate.exists():
                 path = candidate
+                _log.debug("ml_service: using combined model at %s", path)
                 break
     if path is None:
         path = clean_soccer_model_path()
@@ -207,8 +227,12 @@ def _base_model_agreement(model: Any, vector: list[float]) -> dict[str, Any] | N
         return None
 
 
-def predict_match(features_dict: dict[str, Any], model_path: Path | None = None) -> dict[str, Any]:
-    bundle = load_model(model_path=model_path)
+def predict_match(
+    features_dict: dict[str, Any],
+    model_path: Path | None = None,
+    league_id: int | None = None,
+) -> dict[str, Any]:
+    bundle = load_model(model_path=model_path, league_id=league_id)
     if not bundle:
         return {
             "available": False,

@@ -143,6 +143,11 @@ def ensemble_soccer_model_path() -> Path:
     return data_dir() / "models" / "soccer_ensemble_stack.pkl"
 
 
+def league_model_path(league_id: int | str) -> Path:
+    """Per-league stacking ensemble, trained and evaluated on that league only."""
+    return data_dir() / "models" / f"soccer_ensemble_league_{league_id}.pkl"
+
+
 def nba_model_path() -> Path:
     """Calibrated Random Forest model for NBA home/away win prediction."""
     return data_dir() / "models" / "nba_random_forest.pkl"

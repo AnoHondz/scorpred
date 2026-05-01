@@ -86,6 +86,7 @@ from runtime_paths import (
     elo_state_path,
     ensemble_soccer_model_path,
     historical_dataset_path,
+    league_model_path,
 )
 from utils.parsing import safe_float
 
@@ -155,6 +156,22 @@ FEATURE_COLUMNS = [
     "home_elo",
     "away_elo",
     "elo_diff",
+    # Market odds features (median-filled when absent)
+    "home_implied_prob",
+    "away_implied_prob",
+    "draw_implied_prob",
+    "odds_home_away_ratio",
+    "market_confidence",
+    # xG features (median-filled when absent)
+    "home_xg_last5",
+    "away_xg_last5",
+    "home_xg_conceded_last5",
+    "away_xg_conceded_last5",
+    "xg_diff",
+    # Referee features (median-filled for unknown referees)
+    "referee_avg_cards",
+    "referee_avg_goals",
+    "referee_penalty_rate",
 ]
 
 CLASS_LABELS = {0: "HomeWin", 1: "Draw", 2: "AwayWin"}
@@ -229,12 +246,18 @@ def _parse_date(date_str: str) -> date | None:
         return None
 
 
-def build_clean_features(historical_path: Path) -> tuple[list[dict[str, Any]], dict[str, float]]:
+def build_clean_features(
+    historical_path: Path,
+    league_id_filter: int | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, float]]:
     """Build a leakage-free pre-match feature dataset from historical_matches.csv.
 
     Each row's features are computed ONLY from matches before that match's date.
     Both teams' histories are updated AFTER feature extraction for that row.
     Rows where either team has fewer than MIN_HISTORY prior matches are dropped.
+
+    When league_id_filter is set, only rows where row["league_id"] == str(league_id_filter)
+    are included in the output feature set (histories still process all rows for warm-up).
 
     History entry fields stored per team:
         gf       (float) – goals scored
@@ -253,6 +276,7 @@ def build_clean_features(historical_path: Path) -> tuple[list[dict[str, Any]], d
     h2h_records:      dict[tuple[str, str], list[dict]]      = collections.defaultdict(list)
     last_match_dates: dict[str, date]                        = {}
     elo_ratings:      dict[str, float]                       = collections.defaultdict(lambda: ELO_BASE)
+    referee_history:  dict[str, list[dict[str, Any]]]        = collections.defaultdict(list)
     processed:        list[dict[str, Any]]                   = []
 
     for row in raw_rows:
@@ -282,8 +306,56 @@ def build_clean_features(historical_path: Path) -> tuple[list[dict[str, Any]], d
         home_s5 = _rolling_stats(home_hist, SHORT_WINDOW)
         away_s5 = _rolling_stats(away_hist, SHORT_WINDOW)
 
+        # Odds features — read from CSV columns if present (else 0.0 sentinel for median fill)
+        raw_odds_home = safe_float(row.get("odds_home"), 0.0)
+        raw_odds_away = safe_float(row.get("odds_away"), 0.0)
+        raw_odds_draw = safe_float(row.get("odds_draw"), 0.0)
+        if raw_odds_home > 1.0 and raw_odds_away > 1.0 and raw_odds_draw > 1.0:
+            _odds_margin = 1.0/raw_odds_home + 1.0/raw_odds_draw + 1.0/raw_odds_away
+            _home_ip = (1.0/raw_odds_home) / _odds_margin
+            _away_ip = (1.0/raw_odds_away) / _odds_margin
+            _draw_ip = (1.0/raw_odds_draw) / _odds_margin
+            _odds_ratio = round(_home_ip / max(_away_ip, 0.01), 4)
+            _mkt_conf = max(_home_ip, _away_ip, _draw_ip)
+        else:
+            _home_ip = 0.0; _away_ip = 0.0; _draw_ip = 0.0
+            _odds_ratio = 0.0; _mkt_conf = 0.0
+
+        # xG features — rolling average of last 5 for each team (0.0 sentinel for median fill)
+        _home_xg_hist = team_history[home_team]
+        _away_xg_hist = team_history[away_team]
+
+        def _xg_avg(hist: list[dict[str, Any]], key: str, window: int = SHORT_WINDOW) -> float:
+            recent = hist[-window:]
+            vals = [r[key] for r in recent if r.get(key, 0.0) > 0.0]
+            return round(sum(vals) / len(vals), 4) if vals else 0.0
+
+        _home_xg5 = _xg_avg(_home_xg_hist, "xg_for")
+        _away_xg5 = _xg_avg(_away_xg_hist, "xg_for")
+        _home_xgc5 = _xg_avg(_home_xg_hist, "xg_against")
+        _away_xgc5 = _xg_avg(_away_xg_hist, "xg_against")
+        _xg_diff = round(_home_xg5 - _away_xg5, 4)
+
+        # Referee features — expanding window from referee history (no leakage)
+        referee = str(row.get("referee", "")).strip()
+        _ref_hist = referee_history[referee] if referee else []
+        if _ref_hist:
+            _ref_avg_cards = round(sum(r["total_cards"] for r in _ref_hist) / len(_ref_hist), 4)
+            _ref_avg_goals = round(sum(r["total_goals"] for r in _ref_hist) / len(_ref_hist), 4)
+            _ref_pen_rate  = round(sum(r["penalties"] for r in _ref_hist) / len(_ref_hist), 4)
+        else:
+            # 0.0 sentinel — will be median-filled after loop
+            _ref_avg_cards = 0.0; _ref_avg_goals = 0.0; _ref_pen_rate = 0.0
+
+        # League filter: only include in processed output when filter matches
+        _row_league_id = str(row.get("league_id", "")).strip()
+        _league_match = (
+            league_id_filter is None
+            or _row_league_id == str(league_id_filter)
+        )
+
         # ── Feature extraction (only when both teams have enough prior data) ──
-        if len(home_hist) >= MIN_HISTORY and len(away_hist) >= MIN_HISTORY:
+        if len(home_hist) >= MIN_HISTORY and len(away_hist) >= MIN_HISTORY and _league_match:
             home_s10    = _rolling_stats(home_hist, LONG_WINDOW)
             away_s10    = _rolling_stats(away_hist, LONG_WINDOW)
             home_venue  = _venue_rolling_stats(home_hist, is_home=True,  window=SHORT_WINDOW)
@@ -364,6 +436,22 @@ def build_clean_features(historical_path: Path) -> tuple[list[dict[str, Any]], d
                 "home_elo":              round(h_elo, 2),
                 "away_elo":              round(a_elo, 2),
                 "elo_diff":              round(h_elo - a_elo, 2),
+                # Market odds (0.0 sentinel when not present — median-filled after loop)
+                "home_implied_prob":     round(_home_ip, 4),
+                "away_implied_prob":     round(_away_ip, 4),
+                "draw_implied_prob":     round(_draw_ip, 4),
+                "odds_home_away_ratio":  _odds_ratio,
+                "market_confidence":     round(_mkt_conf, 4),
+                # xG features (0.0 sentinel when not present — median-filled after loop)
+                "home_xg_last5":         _home_xg5,
+                "away_xg_last5":         _away_xg5,
+                "home_xg_conceded_last5": _home_xgc5,
+                "away_xg_conceded_last5": _away_xgc5,
+                "xg_diff":               _xg_diff,
+                # Referee features (0.0 sentinel when unknown — median-filled after loop)
+                "referee_avg_cards":     _ref_avg_cards,
+                "referee_avg_goals":     _ref_avg_goals,
+                "referee_penalty_rate":  _ref_pen_rate,
                 # Target
                 "result": CLASS_LABELS[result],
                 "target": result,
@@ -373,15 +461,35 @@ def build_clean_features(historical_path: Path) -> tuple[list[dict[str, Any]], d
         home_pts = 3.0 if result == 0 else (1.0 if result == 1 else 0.0)
         away_pts = 3.0 if result == 2 else (1.0 if result == 1 else 0.0)
 
+        # Read match xG from CSV (0.0 when absent)
+        _match_home_xg = safe_float(row.get("home_xg"), 0.0)
+        _match_away_xg = safe_float(row.get("away_xg"), 0.0)
+
         # opp_ppg stored = opponent's pre-match rolling PPG (computed above)
         team_history[home_team].append({
             "gf": home_gf, "ga": home_ga, "pts": home_pts,
             "is_home": True,  "opp": away_team, "opp_ppg": away_s5["ppg"],
+            "xg_for": _match_home_xg, "xg_against": _match_away_xg,
         })
         team_history[away_team].append({
             "gf": home_ga, "ga": home_gf, "pts": away_pts,
             "is_home": False, "opp": home_team, "opp_ppg": home_s5["ppg"],
+            "xg_for": _match_away_xg, "xg_against": _match_home_xg,
         })
+
+        # Referee history update
+        if referee:
+            _total_cards = safe_float(row.get("home_yellow_cards"), 0.0) + \
+                           safe_float(row.get("away_yellow_cards"), 0.0) + \
+                           safe_float(row.get("home_red_cards"), 0.0) + \
+                           safe_float(row.get("away_red_cards"), 0.0)
+            _total_goals = home_gf + home_ga
+            _penalties   = safe_float(row.get("penalties"), 0.0)
+            referee_history[referee].append({
+                "total_cards": _total_cards,
+                "total_goals": _total_goals,
+                "penalties": _penalties,
+            })
 
         h2h_records[(home_team, away_team)].append(
             {"pts": home_pts, "gd": home_gf - home_ga}
@@ -497,8 +605,14 @@ def train_model(
     output_path: Path | None = None,
     processed_dataset_path: Path | None = None,
     random_state: int = 42,
+    league_id: int | None = None,
 ) -> dict[str, Any]:
-    """Build clean features, train 4 base models + stacking ensemble, save model."""
+    """Build clean features, train 4 base models + stacking ensemble, save model.
+
+    When league_id is set, only rows for that league are included in the training
+    set. The model is saved to league_model_path(league_id) unless output_path
+    overrides it. Returns {"skipped": True, "reason": ...} when sample size < 500.
+    """
     historical = historical_path or historical_dataset_path()
     if not historical.exists():
         raise FileNotFoundError(
@@ -507,7 +621,16 @@ def train_model(
         )
 
     print(f"Building clean pre-match features from: {historical}")
-    rows, final_elo = build_clean_features(historical)
+    rows, final_elo = build_clean_features(historical, league_id_filter=league_id)
+
+    if league_id is not None:
+        print(f"Per-league filter: league_id={league_id}  →  {len(rows)} rows after filtering")
+        if len(rows) < 500:
+            print(
+                f"[warn] Insufficient data for league {league_id}: "
+                f"{len(rows)} rows (need >= 500). Skipping."
+            )
+            return {"skipped": True, "reason": "insufficient data", "league_id": league_id, "rows": len(rows)}
 
     if len(rows) < 20:
         raise ValueError(
@@ -523,6 +646,40 @@ def train_model(
     # ── Feature matrix and targets ────────────────────────────────────────────
     x = np.array([_row_to_features(r) for r in rows])
     y = np.array([int(r["target"]) for r in rows])
+
+    # Median-fill odds features: 0.0 sentinel means data was absent
+    for _col_name in ("home_implied_prob", "away_implied_prob", "draw_implied_prob",
+                      "odds_home_away_ratio", "market_confidence"):
+        _col_idx = FEATURE_COLUMNS.index(_col_name)
+        _col_vals = x[:, _col_idx]
+        _present = _col_vals[_col_vals > 0.0]
+        if len(_present) > 0:
+            _median = float(np.median(_present))
+            x[_col_vals == 0.0, _col_idx] = _median
+
+    # Median-fill xG features: 0.0 sentinel means data was absent
+    for _col_name in ("home_xg_last5", "away_xg_last5",
+                      "home_xg_conceded_last5", "away_xg_conceded_last5"):
+        _col_idx = FEATURE_COLUMNS.index(_col_name)
+        _col_vals = x[:, _col_idx]
+        _present = _col_vals[_col_vals > 0.0]
+        if len(_present) > 0:
+            _median = float(np.median(_present))
+            x[_col_vals == 0.0, _col_idx] = _median
+    # xg_diff can legitimately be negative; recompute from filled values
+    _hi = FEATURE_COLUMNS.index("home_xg_last5")
+    _ai = FEATURE_COLUMNS.index("away_xg_last5")
+    _di = FEATURE_COLUMNS.index("xg_diff")
+    x[:, _di] = np.round(x[:, _hi] - x[:, _ai], 4)
+
+    # Median-fill referee features: 0.0 sentinel means referee was unknown
+    for _col_name in ("referee_avg_cards", "referee_avg_goals", "referee_penalty_rate"):
+        _col_idx = FEATURE_COLUMNS.index(_col_name)
+        _col_vals = x[:, _col_idx]
+        _present = _col_vals[_col_vals > 0.0]
+        if len(_present) > 0:
+            _median = float(np.median(_present))
+            x[_col_vals == 0.0, _col_idx] = _median
 
     # ── Class balance ─────────────────────────────────────────────────────────
     class_counts = collections.Counter(y.tolist())
@@ -697,6 +854,39 @@ def train_model(
     )
     print(f"\nRaw Brier: {brier_raw:.3f} | Calibrated Brier: {brier:.3f}  (lower = better)")
 
+    # ── Expected Calibration Error (ECE) ─────────────────────────────────────
+    # Bucket predictions by max-class confidence into 10 equal-width bins.
+    _proba_max = np.max(proba_test, axis=1)   # confidence = max class probability
+    _ece_bins = 10
+    _bin_edges = np.linspace(0.0, 1.0, _ece_bins + 1)
+    _ece_buckets: list[dict] = []
+    for _bi in range(_ece_bins):
+        _lo, _hi = _bin_edges[_bi], _bin_edges[_bi + 1]
+        _mask = (_proba_max >= _lo) & (_proba_max < _hi if _bi < _ece_bins - 1 else _proba_max <= _hi)
+        _bin_size = int(_mask.sum())
+        if _bin_size == 0:
+            continue
+        _bin_conf = float(np.mean(_proba_max[_mask]))
+        _bin_preds = np.argmax(proba_test[_mask], axis=1)
+        _bin_acc = float(np.mean(_bin_preds == y_test[_mask]))
+        _ece_buckets.append({
+            "range": f"{_lo * 100:.0f}-{_hi * 100:.0f}%",
+            "count": _bin_size,
+            "fraction": round(_bin_size / len(y_test), 4),
+            "avg_confidence": round(_bin_conf, 4),
+            "actual_accuracy": round(_bin_acc, 4),
+        })
+    _ece = float(sum(b["fraction"] * abs(b["avg_confidence"] - b["actual_accuracy"]) for b in _ece_buckets))
+    print(f"\nExpected Calibration Error (ECE): {_ece * 100:.3f}%")
+    print(f"  {'Bin':>8}  {'Count':>6}  {'Avg Conf':>9}  {'Actual Acc':>10}  {'Gap':>8}")
+    for _b in _ece_buckets:
+        print(
+            f"  {_b['range']:>8}  {_b['count']:>6}  "
+            f"{_b['avg_confidence'] * 100:>8.1f}%  "
+            f"{_b['actual_accuracy'] * 100:>9.1f}%  "
+            f"{(_b['avg_confidence'] - _b['actual_accuracy']) * 100:>+7.1f}%"
+        )
+
     # ── Feature importances (from RF base model) ─────────────────────────────
     rf_model = base_models.get("rf", {}).get("model")
     if rf_model is not None and hasattr(rf_model, "feature_importances_"):
@@ -708,7 +898,12 @@ def train_model(
     print(f"\nFeatures used ({len(FEATURE_COLUMNS)}): {FEATURE_COLUMNS}")
 
     # ── Save ensemble model bundle ────────────────────────────────────────────
-    save_path = output_path or ensemble_soccer_model_path()
+    if output_path is not None:
+        save_path = output_path
+    elif league_id is not None:
+        save_path = league_model_path(league_id)
+    else:
+        save_path = ensemble_soccer_model_path()
     save_path.parent.mkdir(parents=True, exist_ok=True)
     bundle = {
         "model": model,
@@ -723,6 +918,9 @@ def train_model(
         "brier_score_raw": brier_raw,
         "calibrated": True,
         "calibration_method": "isotonic",
+        "ece": round(_ece, 6),
+        "ece_buckets": _ece_buckets,
+        "league_id": league_id,
         "rolling_window": SHORT_WINDOW,
         "sample_weighting": sample_weighting_metadata(),
         "dataset_path": str(processed_path),
@@ -734,28 +932,35 @@ def train_model(
     print(f"\nSaved ensemble model → {save_path}")
 
     # Also save standalone RF for backward-compatibility with older code paths
+    # (only for the combined model, not per-league variants)
+    if league_id is None:
+        _save_rf_compat = True
+    else:
+        _save_rf_compat = False
     rf_compat_path = clean_soccer_model_path()
     rf_compat_path.parent.mkdir(parents=True, exist_ok=True)
-    rf_base = base_models["rf"]["model"]
-    rf_bundle = {
-        "model": rf_base,
-        "model_type": "random_forest",
-        "model_role": "fallback",
-        "feature_names": FEATURE_COLUMNS,
-        "class_labels": CLASS_LABELS,
-        "accuracy": base_models["rf"]["accuracy"],
-        "rolling_window": SHORT_WINDOW,
-        "sample_weighting": sample_weighting_metadata(),
-        "dataset_path": str(processed_path),
-    }
-    joblib.dump(rf_bundle, rf_compat_path)
-    print(f"Saved RF compat model → {rf_compat_path}")
+    if _save_rf_compat:
+        rf_base = base_models["rf"]["model"]
+        rf_bundle = {
+            "model": rf_base,
+            "model_type": "random_forest",
+            "model_role": "fallback",
+            "feature_names": FEATURE_COLUMNS,
+            "class_labels": CLASS_LABELS,
+            "accuracy": base_models["rf"]["accuracy"],
+            "rolling_window": SHORT_WINDOW,
+            "sample_weighting": sample_weighting_metadata(),
+            "dataset_path": str(processed_path),
+        }
+        joblib.dump(rf_bundle, rf_compat_path)
+        print(f"Saved RF compat model → {rf_compat_path}")
 
-    # ── Save ELO state for runtime lookup ─────────────────────────────────────
-    elo_path = elo_state_path()
-    elo_path.parent.mkdir(parents=True, exist_ok=True)
-    elo_path.write_text(json.dumps(final_elo, indent=2), encoding="utf-8")
-    print(f"Saved ELO state ({len(final_elo)} teams) → {elo_path}")
+    # ── Save ELO state for runtime lookup (combined model only) ───────────────
+    if league_id is None:
+        elo_path = elo_state_path()
+        elo_path.parent.mkdir(parents=True, exist_ok=True)
+        elo_path.write_text(json.dumps(final_elo, indent=2), encoding="utf-8")
+        print(f"Saved ELO state ({len(final_elo)} teams) → {elo_path}")
 
     return {
         "dataset": str(processed_path),
@@ -767,8 +972,10 @@ def train_model(
         "accuracy": accuracy,
         "brier_score": brier,
         "brier_score_raw": brier_raw,
+        "ece": round(_ece, 6),
         "calibrated": True,
         "calibration_method": "isotonic",
+        "league_id": league_id,
         "model_type": "stacking_ensemble",
         "sample_weighting": sample_weighting_metadata(),
         "base_models": [name for name, _ in estimators],
@@ -792,17 +999,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="Where to save the ensemble model pickle.",
     )
     parser.add_argument("--random-state", type=int, default=42, help="Random seed.")
+    parser.add_argument("--league-id", type=int, default=None, help="Train on one league only.")
+    parser.add_argument("--all-leagues", action="store_true", help="Train per-league + combined.")
     return parser
 
 
 def main() -> int:
     data_dir().mkdir(parents=True, exist_ok=True)
     args = build_parser().parse_args()
-    result = train_model(
-        historical_path=Path(args.historical),
-        output_path=Path(args.output),
-        random_state=args.random_state,
-    )
+
+    if args.all_leagues:
+        import league_config
+        league_ids = league_config.SUPPORTED_LEAGUE_IDS
+        print(f"\nTraining per-league models for league IDs: {league_ids}")
+        for lid in league_ids:
+            print(f"\n{'=' * 60}")
+            print(f"  Per-league training: league_id={lid}")
+            print(f"{'=' * 60}")
+            r = train_model(
+                historical_path=Path(args.historical),
+                random_state=args.random_state,
+                league_id=lid,
+            )
+            if r.get("skipped"):
+                print(f"  Skipped: {r.get('reason')}")
+            else:
+                print(f"  Done. Test accuracy: {r['accuracy'] * 100:.1f}%")
+        print(f"\n{'=' * 60}")
+        print("  Combined model (all leagues)")
+        print(f"{'=' * 60}")
+        result = train_model(
+            historical_path=Path(args.historical),
+            output_path=Path(args.output),
+            random_state=args.random_state,
+        )
+    elif args.league_id is not None:
+        result = train_model(
+            historical_path=Path(args.historical),
+            random_state=args.random_state,
+            league_id=args.league_id,
+        )
+    else:
+        result = train_model(
+            historical_path=Path(args.historical),
+            output_path=Path(args.output),
+            random_state=args.random_state,
+        )
+
+    if result.get("skipped"):
+        print(f"\nSkipped: {result.get('reason')}")
+        return 0
     print(f"\nDone. Test accuracy: {result['accuracy'] * 100:.1f}%")
     print(f"Clean dataset : {result['dataset']}")
     print(f"Saved model   : {result['model_path']}")

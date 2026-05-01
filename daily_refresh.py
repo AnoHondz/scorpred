@@ -172,8 +172,41 @@ def step_optimize_policy(dry_run: bool = False) -> dict:
         result["details"]["sample_size"] = payload.get("metadata", {}).get("sample_size", 0)
 
         if not dry_run:
-            ps.save_policy(payload)
-            result["details"]["policy_saved"] = True
+            # Guard: only save when the new policy scores at least as well as the current one.
+            new_score = (
+                payload
+                .get("metadata", {})
+                .get("sports", {})
+                .get("soccer", {})
+                .get("metrics", {})
+                .get("score", None)
+            )
+
+            current_policy = ps.load_policy()
+            current_score = (
+                current_policy
+                .get("metadata", {})
+                .get("sports", {})
+                .get("soccer", {})
+                .get("metrics", {})
+                .get("score", None)
+            ) if current_policy else None
+
+            # Save when: (a) no current policy, (b) current has no score, or (c) new >= current
+            policy_is_default = current_policy is None or current_score is None
+            should_save = policy_is_default or (
+                new_score is not None and new_score >= current_score
+            )
+
+            if should_save:
+                ps.save_policy(payload)
+                result["details"]["policy_saved"] = True
+                result["details"]["policy_improved"] = True
+            else:
+                result["details"]["policy_saved"] = False
+                result["details"]["policy_improved"] = False
+                result["details"]["new_score"] = new_score
+                result["details"]["current_score"] = current_score
         else:
             result["details"]["dry_run"] = True
     except Exception:
