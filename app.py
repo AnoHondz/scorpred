@@ -27,6 +27,8 @@ except ImportError:  # pragma: no cover
         return False
 from flask import Flask, jsonify, redirect, render_template as flask_render_template, request, session, url_for, g
 from werkzeug.middleware.proxy_fix import ProxyFix
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 
 import api_client as ac
@@ -75,7 +77,7 @@ from league_config import (
     SUPPORTED_LEAGUES,
     SUPPORTED_LEAGUE_IDS,
 )
-from nba_routes import nba_bp
+from nba_routes import nba_bp, nba_api_bp
 from cachetools import TTLCache
 
 try:
@@ -204,6 +206,13 @@ except Exception:
     _logger.warning("Database connectivity check failed at startup", exc_info=True)
     _db_ready = False
 _redis_ready = cache_service._get_redis_client() is not None
+_redis_url = os.getenv("REDIS_URL", "").strip()
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri=_redis_url or "memory://",
+)
 _logger.info(
     "startup_summary env=%s db=%s redis=%s api=%s",
     "production" if _is_production else "development",
@@ -259,6 +268,7 @@ def _validate_api_keys() -> None:
 _validate_api_keys()
 
 app.register_blueprint(nba_bp)
+app.register_blueprint(nba_api_bp)
 app.register_blueprint(user_auth.user_auth_bp)
 
 
@@ -319,6 +329,11 @@ def handle_unhandled_exception(exc):
 @app.errorhandler(404)
 def handle_404(exc):
     return _error_response(404, "Page not found.")
+
+
+@app.errorhandler(429)
+def handle_429(exc):
+    return jsonify({"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."}), 429
 
 
 LEAGUE = DEFAULT_LEAGUE_ID
@@ -4463,6 +4478,7 @@ def results():
     return redirect(url_for("insights"))
 
 
+@limiter.limit("60/hour")
 @app.route("/api/results/live")
 def api_results_live():
     rows = _completed_result_rows(limit=200)
@@ -5597,6 +5613,7 @@ def chat_clear():
     return jsonify({"status": "cleared", "last_updated": _now_stamp()})
 
 
+@limiter.limit("60/hour")
 @app.route("/api/football/leagues", methods=["GET"])
 def api_football_leagues():
     current_league_id = _set_active_league(_active_league_id())
@@ -5609,6 +5626,7 @@ def api_football_leagues():
     )
 
 
+@limiter.limit("60/hour")
 @app.route("/api/football/teams", methods=["GET"])
 def api_football_teams():
     league_id = _set_active_league(_coerce_league_id(request.args.get("league", _active_league_id())))
@@ -5620,12 +5638,14 @@ def api_football_teams():
     return jsonify({"teams": teams or [], "league": league_id, "season": SEASON})
 
 
+@limiter.limit("30/hour")
 @app.route("/api/football/squad", methods=["GET"])
 def api_football_squad():
-    team_id = _safe_int(request.args.get("team_id", 0), 0)
+    try:
+        team_id = validators.positive_int(request.args.get("team_id"), "team_id")
+    except validators.ValidationError as exc:
+        return jsonify({"error": "invalid_parameter", "field": exc.field, "message": str(exc)}), 400
     league_id = _coerce_league_id(request.args.get("league", _active_league_id()))
-    if not team_id:
-        return jsonify({"error": "team_id is required"}), 400
     try:
         squad = ac.get_squad(team_id, SEASON, league_id)
     except Exception as exc:
@@ -5634,12 +5654,14 @@ def api_football_squad():
     return jsonify({"team_id": team_id, "league": league_id, "squad": squad or []})
 
 
+@limiter.limit("30/hour")
 @app.route("/api/football/team-form", methods=["GET"])
 def api_football_team_form():
-    team_id = _safe_int(request.args.get("team_id", 0), 0)
+    try:
+        team_id = validators.positive_int(request.args.get("team_id"), "team_id")
+    except validators.ValidationError as exc:
+        return jsonify({"error": "invalid_parameter", "field": exc.field, "message": str(exc)}), 400
     league_id = _coerce_league_id(request.args.get("league", _active_league_id()))
-    if not team_id:
-        return jsonify({"error": "team_id is required"}), 400
 
     try:
         payload = _team_form_payload(team_id, league_id=league_id)
@@ -5650,13 +5672,16 @@ def api_football_team_form():
     return jsonify({**payload, "league": league_id})
 
 
+@limiter.limit("30/hour")
 @app.route("/api/player-stats", methods=["GET"])
 def api_player_stats():
-    raw_player_id = request.args.get("player_id", request.args.get("id", 0))
-    player_id = _safe_int(raw_player_id, 0)
-    if not player_id:
-        return jsonify({"error": "player_id is required"}), 400
-    season = _safe_int(request.args.get("season", SEASON), SEASON)
+    try:
+        player_id = validators.positive_int(
+            request.args.get("player_id") or request.args.get("id"), "player_id"
+        )
+        season = validators.year(request.args.get("season", SEASON), "season")
+    except validators.ValidationError as exc:
+        return jsonify({"error": "invalid_parameter", "field": exc.field, "message": str(exc)}), 400
     league = _coerce_league_id(request.args.get("league", _active_league_id()))
     try:
         stats = ac.get_player_stats(player_id, season=season, league_id=league)
@@ -5672,6 +5697,7 @@ def api_player_stats():
     return jsonify({"player_id": player_id, "stats": stats or []})
 
 
+@limiter.limit("20/hour")
 @app.route("/today-soccer-predictions", methods=["GET"])
 def today_soccer_predictions():
     """Show soccer predictions for today's fixtures or next available fixtures."""
@@ -5745,6 +5771,7 @@ def today_soccer_predictions():
     )
 
 
+@limiter.limit("60/hour")
 @app.route("/top-picks-today", methods=["GET"])
 def top_picks_today():
     """Fold legacy top-picks traffic into the Soccer workspace."""
@@ -5902,6 +5929,7 @@ def worldcup():
         ),
     )
 
+@limiter.exempt
 @app.route("/health")
 @app.route("/status")
 def health():
@@ -5938,15 +5966,17 @@ def health():
     )
 
 
+@limiter.limit("30/hour")
 @app.route("/api/football/relevant-competitions")
 def football_relevant_competitions_api():
     _set_data_refresh()
-    player_id = request.args.get("player_id", type=int)
-    team_id = request.args.get("team_id", type=int)
-    primary_league = request.args.get("league", default=LEAGUE, type=int)
-    season = request.args.get("season", default=SEASON, type=int)
-    if not player_id or not team_id:
-        return jsonify({"error": "player_id and team_id are required"}), 400
+    try:
+        player_id = validators.positive_int(request.args.get("player_id"), "player_id")
+        team_id = validators.positive_int(request.args.get("team_id"), "team_id")
+    except validators.ValidationError as exc:
+        return jsonify({"error": "invalid_parameter", "field": exc.field, "message": str(exc)}), 400
+    primary_league = request.args.get("league", default=LEAGUE, type=int) or LEAGUE
+    season = request.args.get("season", default=SEASON, type=int) or SEASON
 
     try:
         league_ids = ac.relevant_competitions_for_player(
@@ -5969,15 +5999,17 @@ def football_relevant_competitions_api():
     return jsonify({"competitions": competitions, "league_ids": league_ids, "data_source": _football_data_source(), "last_updated": _now_stamp()})
 
 
+@limiter.limit("30/hour")
 @app.route("/api/football/prefetch-competition")
 def football_prefetch_competition_api():
     _set_data_refresh()
-    player_id = request.args.get("player_id", type=int)
-    team_id = request.args.get("team_id", type=int)
-    league_id = request.args.get("league_id", type=int)
-    season = request.args.get("season", default=SEASON, type=int)
-    if not player_id or not team_id or not league_id:
-        return jsonify({"error": "player_id, team_id, and league_id are required"}), 400
+    try:
+        player_id = validators.positive_int(request.args.get("player_id"), "player_id")
+        team_id = validators.positive_int(request.args.get("team_id"), "team_id")
+        league_id = validators.positive_int(request.args.get("league_id"), "league_id")
+    except validators.ValidationError as exc:
+        return jsonify({"error": "invalid_parameter", "field": exc.field, "message": str(exc)}), 400
+    season = request.args.get("season", default=SEASON, type=int) or SEASON
 
     try:
         payload = ac.prefetch_competition(player_id, team_id, league_id, season)
@@ -6446,57 +6478,6 @@ def api_dashboard_soccer():
         app.logger.warning("api_dashboard_soccer error: %s", exc)
         return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "error": str(exc)}), 200
 
-
-@app.route("/api/dashboard/nba", methods=["GET"])
-def api_dashboard_nba():
-    try:
-        from nba_routes import bp as nba_bp_module  # noqa: F401
-        nba_service = app.blueprints.get("nba")
-        cards: list[dict] = []
-        load_error = None
-        try:
-            from nba_live_client import NBALiveClient as _NC
-            nc_inst = _NC()
-            upcoming = nc_inst.get_upcoming_games(12, 5, "api") or []
-            today = nc_inst.get_today_games("api") or []
-            slate = upcoming or [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
-            teams = nc_inst.get_teams() or []
-            team_map = {str(t["id"]): t for t in teams}
-            standings = nc_inst.get_standings() or {}
-            from nba_routes import _build_nba_opp_strengths, _build_upcoming_prediction_card, _fallback_prediction_card_from_game  # type: ignore
-            nba_opp_strengths = _build_nba_opp_strengths(standings)
-            from concurrent.futures import ThreadPoolExecutor, as_completed as _asc
-            ordered: list[dict | None] = [None] * len(slate)
-            with ThreadPoolExecutor(max_workers=min(6, len(slate) or 1)) as ex:
-                fmap = {ex.submit(_build_upcoming_prediction_card, g, team_map, nba_opp_strengths): i for i, g in enumerate(slate)}
-                for fut in _asc(fmap):
-                    idx = fmap[fut]
-                    try:
-                        ordered[idx] = fut.result()
-                    except Exception:
-                        _logger.warning("NBA prediction card build failed for game index=%d", idx, exc_info=True)
-                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
-                    if not ((ordered[idx] or {}).get("prediction") or {}).get("decision_card"):
-                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
-            games_with_pred = [r for r in ordered if r]
-            cards = [(g.get("prediction") or {}).get("decision_card") for g in games_with_pred]
-            cards = [c for c in cards if c]
-        except Exception as exc:
-            load_error = sanitize_error(exc)
-            app.logger.warning("api_dashboard_nba data fetch error: %s", exc)
-        dui.assign_opportunity_ranks(cards)
-        top = dui.top_opportunities(cards, limit=4)
-        plan = dui.plan_summary(cards)
-        return jsonify({
-            "slate": [_card_to_decision(c) for c in cards],
-            "topOpportunities": [_card_to_decision(c) for c in top],
-            "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
-            "error": load_error,
-            "last_updated": _now_stamp(),
-        })
-    except Exception as exc:
-        app.logger.warning("api_dashboard_nba error: %s", exc)
-        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "error": str(exc)}), 200
 
 
 @app.route("/api/dashboard/insights", methods=["GET"])

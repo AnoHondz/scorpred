@@ -29,6 +29,7 @@ import scorpred_engine as se
 import model_tracker as mt
 import decision_ui as dui
 from runtime_paths import cache_dir
+from security import sanitize_error
 
 nba_bp = Blueprint(
     "nba",
@@ -36,6 +37,8 @@ nba_bp = Blueprint(
     url_prefix="/nba",
     template_folder="templates",
 )
+
+nba_api_bp = Blueprint("nba_api", __name__)
 
 
 class _LazyModuleProxy:
@@ -2519,3 +2522,51 @@ def standings():
             route_support=_support("standings"),
         ),
     )
+
+
+@nba_api_bp.route("/api/dashboard/nba", methods=["GET"])
+def api_dashboard_nba():
+    try:
+        cards: list[dict] = []
+        load_error = None
+        try:
+            from nba_live_client import NBALiveClient as _NC
+            nc_inst = _NC()
+            upcoming = nc_inst.get_upcoming_games(12, 5, "api") or []
+            today = nc_inst.get_today_games("api") or []
+            slate = upcoming or [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
+            teams = nc_inst.get_teams() or []
+            team_map = {str(t["id"]): t for t in teams}
+            standings = nc_inst.get_standings() or {}
+            nba_opp_strengths = _build_nba_opp_strengths(standings)
+            ordered: list[dict | None] = [None] * len(slate)
+            with ThreadPoolExecutor(max_workers=min(6, len(slate) or 1)) as ex:
+                fmap = {ex.submit(_build_upcoming_prediction_card, g, team_map, nba_opp_strengths): i for i, g in enumerate(slate)}
+                for fut in as_completed(fmap):
+                    idx = fmap[fut]
+                    try:
+                        ordered[idx] = fut.result()
+                    except Exception:
+                        current_app.logger.warning("NBA prediction card build failed for game index=%d", idx, exc_info=True)
+                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
+                    if not ((ordered[idx] or {}).get("prediction") or {}).get("decision_card"):
+                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
+            games_with_pred = [r for r in ordered if r]
+            cards = [(g.get("prediction") or {}).get("decision_card") for g in games_with_pred]
+            cards = [c for c in cards if c]
+        except Exception as exc:
+            load_error = sanitize_error(exc)
+            current_app.logger.warning("api_dashboard_nba data fetch error: %s", exc)
+        dui.assign_opportunity_ranks(cards)
+        top = dui.top_opportunities(cards, limit=4)
+        plan = dui.plan_summary(cards)
+        return jsonify({
+            "slate": [dui.card_to_decision(c) for c in cards],
+            "topOpportunities": [dui.card_to_decision(c) for c in top],
+            "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
+            "error": load_error,
+            "last_updated": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception as exc:
+        current_app.logger.warning("api_dashboard_nba error: %s", exc)
+        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "error": str(exc)}), 200

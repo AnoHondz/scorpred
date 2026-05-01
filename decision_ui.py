@@ -942,3 +942,31 @@ def results_breakdowns(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "recent_soccer": [row for row in rows if row.get("sport") == "soccer"][:50],
         "recent_nba": [row for row in rows if row.get("sport") == "nba"][:10],
     }
+
+
+def normalize_data_label(raw: str | None) -> str:
+    s = str(raw or "").lower()
+    if "strong" in s:
+        return "Strong Data"
+    if "limited" in s:
+        return "Limited Data"
+    return "Partial Data"
+
+
+def card_to_decision(card: dict) -> dict:
+    action = str(card.get("action") or "CONSIDER").upper()
+    if action not in {"BET", "CONSIDER", "SKIP"}:
+        action = "CONSIDER"
+    return {
+        "action": action,
+        "side": card.get("recommended_side") or card.get("team_a") or "",
+        "matchup": card.get("matchup") or "",
+        "confidence": int(safe_float(card.get("confidence_pct") or card.get("confidence"), 0)),
+        "reason": card.get("reason") or "",
+        "data": normalize_data_label(
+            (card.get("data_confidence") or {}).get("label") or card.get("data_quality")
+        ),
+        "support": card.get("competition") or "",
+        "logo": card.get("team_a_logo") if card.get("recommended_side") == card.get("team_a") else card.get("team_b_logo") or "",
+        "leagueLogo": card.get("league_logo") or "",
+    }
