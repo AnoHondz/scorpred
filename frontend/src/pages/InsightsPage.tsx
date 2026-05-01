@@ -53,8 +53,8 @@ export default function InsightsPage() {
             onClick={() => setSport(item)}
             className={`rounded-full border px-4 py-2 text-sm transition ${
               item === sport
-                ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                : 'border-white/[0.08] text-slate-400 hover:border-white/20 hover:text-slate-200'
+                ? 'border-emerald-400/30 bg-emerald-400/[0.10] text-emerald-300'
+                : 'border-white/[0.08] text-slate-500 hover:border-white/20 hover:text-slate-300'
             }`}
           >
             {item}
@@ -81,7 +81,7 @@ export default function InsightsPage() {
         </div>
         {loading ? (
           <div className="empty-state">
-            <p className="font-oswald text-lg uppercase tracking-normal text-white">Loading opportunities…</p>
+            <p className="font-oswald text-lg uppercase tracking-normal text-slate-400">Loading opportunities…</p>
           </div>
         ) : radarCards.length > 0 ? (
           <div className="grid-2">
@@ -107,19 +107,19 @@ export default function InsightsPage() {
         </div>
         {loading ? (
           <div className="empty-state">
-            <p className="font-oswald text-lg uppercase tracking-normal text-white">Loading…</p>
+            <p className="font-oswald text-lg uppercase tracking-normal text-slate-400">Loading…</p>
           </div>
         ) : volatilityRows.length > 0 ? (
           <div className="grid-2">
             {volatilityRows.map((row) => (
               <article key={`${row.matchup}-${row.side}`} className="card">
-                <p className="text-xs uppercase tracking-[0.14em] text-amber-300">{row.action}</p>
+                <p className="text-xs uppercase tracking-[0.14em] text-amber-600">{row.action}</p>
                 <h3 className="mt-2 font-oswald text-2xl uppercase tracking-normal text-white">{row.side}</h3>
                 <p className="mt-1 text-sm text-slate-500">{row.matchup}</p>
-                <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/[0.06]">
-                  <div className="h-full rounded-full bg-amber-300" style={{ width: `${row.confidence}%` }} />
-                </div>
-                <p className="mt-4 text-sm text-slate-400">{row.note}</p>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/[0.05]">
+                    <div className="h-full rounded-full bg-amber-400" style={{ width: `${row.confidence}%` }} />
+                  </div>
+                  <p className="mt-4 text-sm text-slate-500">{row.note}</p>
               </article>
             ))}
           </div>

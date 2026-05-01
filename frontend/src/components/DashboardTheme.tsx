@@ -111,18 +111,23 @@ export default function DashboardLayout({
           </div>
         </header>
 
-        <div className="mobile-nav md:hidden">
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => onNavigate?.(item.label)}
-              className={item.label === activeItem ? 'text-emerald-200' : 'text-slate-500'}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        {/* Mobile bottom tab bar */}
+        <nav className="mobile-tab-bar md:hidden">
+          {NAV_ITEMS.map((item) => {
+            const active = item.label === activeItem;
+            return (
+              <button
+                key={item.label}
+                type="button"
+                onClick={() => onNavigate?.(item.label)}
+                className={`mobile-tab ${active ? 'mobile-tab-active' : ''}`}
+              >
+                <span className="mobile-tab-icon">{item.icon}</span>
+                <span className="mobile-tab-label">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
 
         <main className="main-content">{children}</main>
       </div>

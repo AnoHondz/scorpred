@@ -1,108 +1,160 @@
-import { useFetch } from '../hooks/useFetch';
 import { DataBadge, DecisionCard, EmptyState, type Decision, type DataConfidence } from '../components/DecisionCard';
+import ScorelinePredictor from '../components/ScorelinePredictor';
 
-interface SoccerData {
-  topOpportunities: Decision[];
-  slate: Decision[];
+type ActionColor = { stroke: string; glow: string };
+const ACTION_COLORS: Record<string, ActionColor> = {
+  BET:     { stroke: '#34d399', glow: 'rgba(52,211,153,0.30)' },
+  CONSIDER:{ stroke: '#fbbf24', glow: 'rgba(251,191,36,0.25)' },
+  SKIP:    { stroke: '#64748b', glow: 'rgba(100,116,139,0.15)' },
+};
+
+function ProbabilityRing({ value, action }: { value: number; action: string }) {
+  const r = 54;
+  const circ = 2 * Math.PI * r;
+  const filled = (value / 100) * circ;
+  const { stroke, glow } = ACTION_COLORS[action] ?? ACTION_COLORS.SKIP;
+
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <svg width="136" height="136" viewBox="0 0 136 136" aria-label={`${value}% confidence`}>
+        {/* Track */}
+        <circle cx="68" cy="68" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="10" />
+        {/* Filled arc */}
+        <circle
+          cx="68" cy="68" r={r}
+          fill="none"
+          stroke={stroke}
+          strokeWidth="10"
+          strokeLinecap="round"
+          strokeDasharray={`${filled} ${circ}`}
+          strokeDashoffset={circ / 4}
+          style={{ filter: `drop-shadow(0 0 6px ${glow})` }}
+        />
+        {/* Center text */}
+        <text x="68" y="62" textAnchor="middle" fill="#fff" fontSize="24" fontWeight="700" fontFamily="Oswald,sans-serif">{value}%</text>
+        <text x="68" y="80" textAnchor="middle" fill="#64748b" fontSize="11" fontFamily="Inter,sans-serif" letterSpacing="2">CONFIDENCE</text>
+      </svg>
+    </div>
+  );
 }
 
-interface ContextRow {
-  label: string;
-  value: string;
+function TrustRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="trust-stat">
+      <span className="trust-stat-label">{label}</span>
+      <span className="trust-stat-value">{value}</span>
+    </div>
+  );
 }
 
 function AnalysisDetail({ decision }: { decision: Decision }) {
   const [competition, venue] = (decision.support || '').split(' | ');
-  const contextRows: ContextRow[] = [
-    { label: 'Competition', value: competition || 'Unknown' },
-    { label: 'Venue', value: venue || 'TBD' },
-    { label: 'Draw risk', value: decision.confidence >= 66 ? 'Low' : decision.confidence >= 55 ? 'Moderate' : 'High' },
-    { label: 'Data confidence', value: decision.data },
-  ];
-
   const dataLabel = decision.data as DataConfidence;
+
+  const trustNote =
+    decision.data === 'Strong Data'
+      ? 'Form, venue context, and side-level data all agree.'
+      : decision.data === 'Partial Data'
+      ? 'Enough signal to act — confirm lineup news first.'
+      : 'Thin data. Treat with extra caution.';
+
+  const reasonLines = (decision.reason || 'No analysis available.')
+    .split(' | ')
+    .filter(Boolean);
 
   return (
     <div className="analysis-layout">
+      {/* Left column */}
       <div className="section">
         <DecisionCard decision={decision} featured />
+
         <section className="card">
-          <p className="section-label">Why This Pick</p>
+          <div className="section-header mb-4">
+            <p className="section-label">Why This Pick</p>
+            <div className="section-divider" />
+          </div>
           <ul className="why-list">
-            {(decision.reason || 'No analysis available.')
-              .split(' | ')
-              .filter(Boolean)
-              .map((line) => (
-                <li key={line}>{line}</li>
-              ))}
+            {reasonLines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
           </ul>
         </section>
       </div>
 
-      <aside className="card">
-        <p className="section-label">Trust Check</p>
-        <DataBadge label={dataLabel} />
-        <p className="mt-4 text-sm text-slate-500">
-          {decision.data === 'Strong Data'
-            ? 'Recent form, venue context, and side-level matchup data all support the same direction.'
-            : decision.data === 'Partial Data'
-            ? 'Enough data to act, but worth confirming lineup news before committing.'
-            : 'Limited data available. Treat this pick with extra caution.'}
-        </p>
-        <div className="mt-5 space-y-3">
-          <div>
-            <div className="mb-2 flex justify-between text-xs uppercase tracking-[0.12em] text-slate-500">
-              <span>Win probability</span>
-              <span>{decision.confidence}%</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
-              <div className="h-full rounded-full bg-emerald-300" style={{ width: `${decision.confidence}%` }} />
-            </div>
+      {/* Right sidebar */}
+      <aside className="section">
+        <div className="card flex flex-col items-center gap-5">
+          <ProbabilityRing value={decision.confidence} action={decision.action} />
+          <DataBadge label={dataLabel} />
+          <p className="text-center text-[13px] text-slate-500 leading-relaxed">{trustNote}</p>
+        </div>
+
+        <div className="card">
+          <div className="section-header mb-3">
+            <p className="section-label">Match Context</p>
+            <div className="section-divider" />
           </div>
-          {contextRows.map((item) => (
-            <div key={item.label} className="flex justify-between gap-4 border-b border-white/[0.05] pb-3 text-sm">
-              <span className="text-slate-500">{item.label}</span>
-              <strong className="text-right text-slate-200">{item.value}</strong>
-            </div>
-          ))}
+          <TrustRow label="Competition" value={competition || 'Unknown'} />
+          <TrustRow label="Venue" value={venue || 'TBD'} />
+          <TrustRow
+            label="Draw risk"
+            value={decision.confidence >= 66 ? 'Low' : decision.confidence >= 55 ? 'Moderate' : 'High'}
+          />
+          <TrustRow label="Data tier" value={decision.data} />
         </div>
       </aside>
     </div>
   );
 }
 
-export default function MatchAnalysisPage() {
-  const { data, loading, error } = useFetch<SoccerData>('/api/dashboard/soccer');
-
-  const decisions = data?.topOpportunities?.length
-    ? data.topOpportunities
-    : data?.slate ?? [];
-
-  const decision = decisions[0] ?? null;
-
+export default function MatchAnalysisPage({
+  decision,
+  sport = 'soccer',
+  teamAId,
+  teamBId,
+  leagueId,
+}: {
+  decision: Decision | null;
+  sport?: 'soccer' | 'nba';
+  teamAId?: number | string;
+  teamBId?: number | string;
+  leagueId?: number | string;
+}) {
   const matchup = decision?.matchup || 'Match Analysis';
-  const competition = (decision?.support || '').split(' | ')[0] || 'Soccer';
+  const competition = (decision?.support || '').split(' | ')[0] || (sport === 'nba' ? 'NBA' : 'Soccer');
+
+  // Parse team names from matchup string "Team A vs Team B"
+  const [teamAName, teamBName] = (() => {
+    const parts = (decision?.matchup || '').split(' vs ');
+    return parts.length === 2
+      ? [parts[0].trim(), parts[1].trim()]
+      : [decision?.side || 'Home', 'Away'];
+  })();
 
   return (
     <div className="page-stack">
       <section className="hero-card">
         <p className="page-eyebrow">{competition}</p>
         <h1 className="page-title">{matchup}</h1>
-        <p className="mt-4 max-w-2xl text-slate-400">
-          A focused breakdown that keeps the main decision first and the supporting evidence secondary.
+        <p className="mt-3 max-w-xl text-slate-400 text-sm leading-relaxed">
+          Full breakdown — decision first, evidence below.
         </p>
       </section>
 
-      {loading ? (
-        <div className="empty-state">
-          <p className="font-oswald text-lg uppercase tracking-normal text-white">Loading match analysis…</p>
-        </div>
-      ) : error ? (
-        <EmptyState title="Analysis unavailable" body="Could not load match data. The server may still be warming up." />
-      ) : decision ? (
-        <AnalysisDetail decision={decision} />
+      {decision ? (
+        <>
+          <AnalysisDetail decision={decision} />
+          <ScorelinePredictor
+            sport={sport}
+            teamAName={teamAName}
+            teamBName={teamBName}
+            teamAId={teamAId}
+            teamBId={teamBId}
+            leagueId={leagueId}
+          />
+        </>
       ) : (
-        <EmptyState title="No match selected" body="Navigate to Soccer or NBA to find a match, then open Match Analysis." />
+        <EmptyState title="No match selected" body="Go to Soccer or NBA and click Analyze Match on any card." />
       )}
     </div>
   );

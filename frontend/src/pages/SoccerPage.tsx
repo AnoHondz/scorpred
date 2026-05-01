@@ -1,5 +1,5 @@
 import { useFetch } from '../hooks/useFetch';
-import { DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
+import { CardSkeleton, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
 
 interface SoccerData {
   slate: Decision[];
@@ -8,7 +8,19 @@ interface SoccerData {
   error?: string | null;
 }
 
-export default function SoccerPage() {
+function SoccerWatermark() {
+  return (
+    <svg viewBox="0 0 80 80" className="hero-watermark" width="120" height="120" aria-hidden="true">
+      <circle cx="40" cy="40" r="36" fill="none" stroke="currentColor" strokeWidth="3" />
+      <polygon points="40,12 48,30 40,36 32,30" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+      <polygon points="40,36 52,44 48,58 32,58 28,44" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+      <line x1="32" y1="30" x2="28" y2="44" stroke="currentColor" strokeWidth="2" />
+      <line x1="48" y1="30" x2="52" y2="44" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decision) => void }) {
   const { data, loading, error } = useFetch<SoccerData>('/api/dashboard/soccer');
 
   const slate = data?.slate ?? [];
@@ -18,23 +30,24 @@ export default function SoccerPage() {
   return (
     <div className="page-stack">
       <section className="hero-card">
-        <p className="page-eyebrow">EPL, La Liga, Bundesliga, Serie A</p>
+        <SoccerWatermark />
+        <p className="page-eyebrow">EPL · La Liga · Bundesliga · Serie A</p>
         <h1 className="page-title">Today&apos;s Soccer Plan</h1>
-        <p className="mt-4 max-w-2xl text-slate-400">
-          Start with the strongest actions, scan the full slate, then open a focused matchup when more context is needed.
+        <p className="mt-3 max-w-xl text-slate-400 text-sm leading-relaxed">
+          Strongest actions first — scan top picks, then browse the full slate.
         </p>
       </section>
 
       <PlanStrip bet={plan.bet} consider={plan.consider} skip={plan.skip} />
 
       <section className="section">
-        <div>
-          <p className="section-label">Top Opportunities Today</p>
-          <h2 className="font-oswald text-2xl uppercase tracking-[0.08em] text-white">Strongest picks first.</h2>
+        <div className="section-header">
+          <p className="section-label">Top Opportunities</p>
+          <div className="section-divider" />
         </div>
         {loading ? (
-          <div className="empty-state">
-            <p className="font-oswald text-lg uppercase tracking-normal text-white">Loading fixtures…</p>
+          <div className="grid-2">
+            {[0, 1].map((i) => <CardSkeleton key={i} />)}
           </div>
         ) : error || data?.error ? (
           <EmptyState
@@ -44,7 +57,7 @@ export default function SoccerPage() {
         ) : top.length > 0 ? (
           <div className="grid-2">
             {top.map((decision) => (
-              <DecisionCard key={`${decision.action}-${decision.side}-${decision.matchup}`} decision={decision} featured />
+              <DecisionCard key={`${decision.action}-${decision.side}-${decision.matchup}`} decision={decision} featured onAnalyze={onSelectMatch} />
             ))}
           </div>
         ) : (
@@ -53,15 +66,18 @@ export default function SoccerPage() {
       </section>
 
       <section className="section">
-        <p className="section-label">Full Slate</p>
+        <div className="section-header">
+          <p className="section-label">Full Slate</p>
+          <div className="section-divider" />
+        </div>
         {loading ? (
-          <div className="empty-state">
-            <p className="font-oswald text-lg uppercase tracking-normal text-white">Loading slate…</p>
+          <div className="grid-2">
+            {[0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)}
           </div>
         ) : slate.length > 0 ? (
           <div className="grid-2">
             {slate.map((decision) => (
-              <DecisionCard key={`${decision.action}-${decision.side}-${decision.matchup}`} decision={decision} />
+              <DecisionCard key={`${decision.action}-${decision.side}-${decision.matchup}`} decision={decision} onAnalyze={onSelectMatch} />
             ))}
           </div>
         ) : !loading ? (
