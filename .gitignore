@@ -67,3 +67,4 @@ data/models/*.pkl
 .tmp/
 tmp/
 tmp_work/
+.env
