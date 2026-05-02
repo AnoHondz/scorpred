@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import DarkHUD from './components/DarkHUD';
 import DashboardLayout from './components/DashboardTheme';
 import HomePage from './pages/HomePage';
 import SoccerPage from './pages/SoccerPage';
@@ -7,8 +6,6 @@ import NBAPage from './pages/NBAPage';
 import MatchAnalysisPage from './pages/MatchAnalysisPage';
 import InsightsPage from './pages/InsightsPage';
 import type { Decision } from './components/DecisionCard';
-
-type View = 'landing' | 'dashboard';
 
 export type DashPage = 'Home' | 'Soccer' | 'NBA' | 'Match Analysis' | 'Insights';
 
@@ -44,26 +41,12 @@ function PageContent({
 }
 
 export default function App() {
-  const [view, setView] = useState<View>('landing');
   const [page, setPage] = useState<DashPage>('Home');
   const [selectedDecision, setSelectedDecision] = useState<Decision | null>(null);
 
   function handleSelectMatch(d: Decision) {
     setSelectedDecision(d);
     setPage('Match Analysis');
-  }
-
-  if (view === 'landing') {
-    return (
-      <button
-        type="button"
-        onClick={() => setView('dashboard')}
-        className="block w-full cursor-pointer text-left"
-        aria-label="Open ScorPred app"
-      >
-        <DarkHUD />
-      </button>
-    );
   }
 
   return (

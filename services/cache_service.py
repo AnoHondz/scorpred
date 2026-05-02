@@ -5,6 +5,8 @@ import importlib
 import json
 import logging
 import os
+import time
+from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
@@ -16,6 +18,10 @@ _redis_client = None
 
 # Bump this when canonical payload schema changes so stale shapes are evicted.
 _CACHE_SCHEMA_VERSION = "v3"
+
+# Disk persistence: compiled dashboard/fixture responses survive Flask restarts
+_DISK_CACHE_DIR = Path(__file__).parent.parent / "cache" / "service"
+_DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class _LazyModuleProxy:
@@ -52,44 +58,70 @@ def _get_redis_client():
         return None
 
 
-def make_key(*parts: Any) -> str:
-    """Create a namespaced, versioned cache key.
+def _disk_path(key: str) -> Path:
+    safe = hashlib.md5(key.encode()).hexdigest()
+    return _DISK_CACHE_DIR / f"{safe}.json"
 
-    The schema version suffix ensures that stale payloads from prior deploys
-    are never served after a canonical object shape change.
-    """
+
+def _disk_get(key: str, ttl: int) -> Any:
+    path = _disk_path(key)
+    try:
+        if not path.exists():
+            return None
+        age = time.time() - path.stat().st_mtime
+        if age > ttl:
+            return None
+        with path.open() as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _disk_set(key: str, value: Any) -> None:
+    path = _disk_path(key)
+    try:
+        with path.open("w") as f:
+            json.dump(value, f, separators=(",", ":"))
+    except Exception as exc:
+        _logger.debug("Disk cache write failed key=%s: %s", key, exc)
+
+
+def make_key(*parts: Any) -> str:
+    """Create a namespaced, versioned cache key."""
     raw = "|".join(str(p) for p in parts)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
     return f"scorpred:{_CACHE_SCHEMA_VERSION}:{digest}"
 
 
 def invalidate_pattern(prefix: str) -> int:
-    """Best-effort pattern invalidation for local cache.
-
-    Removes all keys whose stringified form starts with prefix.
-    Redis pattern-delete is not implemented here to avoid KEYS in production.
-    Returns count of local evictions.
-    """
     to_delete = [k for k in list(_local_cache.keys()) if str(k).startswith(prefix)]
     for k in to_delete:
         _local_cache.pop(k, None)
     return len(to_delete)
 
 
-def get_json(key: str) -> Any:
+def get_json(key: str, ttl: int = 3600) -> Any:
     client = _get_redis_client()
     if client is not None:
         try:
             value = client.get(key)
-            if value is None:
-                return None
-            return json.loads(value)
+            if value is not None:
+                return json.loads(value)
         except Exception as exc:
             _logger.warning("Redis get failed key=%s: %s", key, exc)
+
     value = _local_cache.get(key)
-    if value is None:
-        return None
-    return value
+    if value is not None:
+        return value
+
+    # Disk fallback: serves cold-start restarts without recomputing
+    value = _disk_get(key, ttl)
+    if value is not None:
+        _local_cache[key] = value
+        _logger.debug("Disk cache hit for key=%s", key)
+        return value
+
+    return None
 
 
 def set_json(key: str, value: Any, ttl: int) -> None:
@@ -103,6 +135,7 @@ def set_json(key: str, value: Any, ttl: int) -> None:
         except Exception as exc:
             _logger.warning("Redis set failed key=%s: %s", key, exc)
     _local_cache[key] = value
+    _disk_set(key, value)
 
 
 def delete(key: str) -> None:
@@ -113,3 +146,8 @@ def delete(key: str) -> None:
         except Exception as exc:
             _logger.warning("Redis delete failed key=%s: %s", key, exc)
     _local_cache.pop(key, None)
+    path = _disk_path(key)
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass

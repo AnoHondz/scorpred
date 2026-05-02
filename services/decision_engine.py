@@ -21,6 +21,10 @@ class DecisionEngine:
         edge_score = None if implied is None else round(model_probability - implied, 4)
         expected_value = None if edge_score is None else round(edge_score * 100.0, 4)
         data_quality = self._data_quality(match_data)
+        # When raw probabilities were absent (fallback used), cap quality as Limited
+        _raw = match_data.get("probabilities") or match_data.get("win_probabilities") or {}
+        if sum(float(v or 0) for v in _raw.values()) <= 0:
+            data_quality = min(data_quality, 45)
         risk_score = self._risk_score(confidence, data_quality, probabilities)
         risk_level = self._risk_level(risk_score)
         adaptive = self._adaptive_adjustment(match_data)
@@ -105,6 +109,13 @@ class DecisionEngine:
     def _confidence(self, match_data: dict[str, Any], probabilities: dict[str, float], side: str) -> int:
         raw_conf = match_data.get("confidence") or match_data.get("confidence_pct")
         if raw_conf is not None:
+            # Handle string labels ("High"/"Medium"/"Low") from scorpred engine
+            if isinstance(raw_conf, str):
+                label_map = {"high": 80, "medium": 65, "low": 45}
+                mapped = label_map.get(raw_conf.lower())
+                if mapped is not None:
+                    return mapped
+                return 65  # fallback for unknown string
             return int(max(0, min(100, round(float(raw_conf)))))
         side_key = "home" if side == match_data.get("home_name") else "away"
         if side.lower() == "draw":
@@ -142,6 +153,8 @@ class DecisionEngine:
         tier = str((match_data.get("data_completeness") or {}).get("tier") or raw or "partial").lower()
         if "strong" in tier:
             return 85
+        if "moderate" in tier:
+            return 70
         if "limited" in tier or "low" in tier:
             return 45
         return 65

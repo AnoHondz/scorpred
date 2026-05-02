@@ -130,6 +130,15 @@ def fallback_chat_reply(
     lower = (message or "").strip().lower()
     matchup = f"{team_a['name']} vs {team_b['name']}" if team_a and team_b else "your selected matchup"
 
+    if any(kw in lower for kw in ("scoreline", "correct score", "exact score", "score distribution", "score line")):
+        return (
+            f"The Scoreline Predictor gives you a full probability distribution of every possible "
+            f"result for {matchup}. It uses a Dixon-Coles corrected Poisson model (soccer) or "
+            f"Normal distribution (NBA) blended with ML win probabilities. "
+            f"You'll get the most likely scorelines, a heat-map grid, over/under probabilities "
+            f"for each line, and BTTS odds (soccer only).",
+            ["What is the most likely score?", "Show me O/U probabilities", "What does BTTS mean?"],
+        )
     if "props" in lower:
         return (
             f"Use the Props page to generate player lines for {matchup}. Pick a player, "
@@ -182,7 +191,11 @@ def chat_reply(
         "Players (squad comparison, prop ideas), Prediction (Poisson model, win probability), "
         "Props (player bet lines with 6-layer stat model), Fixtures (upcoming schedule), "
         "NBA (full NBA section at /nba with standings, matchup, players, predictions), "
-        "World Cup (/worldcup). "
+        "World Cup (/worldcup), "
+        "Scoreline Predictor (full probability distribution of all possible scorelines via "
+        "/api/scoreline/soccer or /api/scoreline/nba — Dixon-Coles Poisson for soccer, "
+        "Normal distribution for NBA, blended with ML win probabilities; "
+        "includes O/U line table, BTTS odds for soccer, heat-map grid, and top ranked scorelines). "
         "Be concise (2-3 sentences max), accurate, and friendly. "
         "Do not make up odds or guarantees. If unsure, say so."
     )

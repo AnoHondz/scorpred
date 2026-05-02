@@ -517,15 +517,17 @@ def load_upcoming_fixtures(
             injuries_away = (data.get("inj_away") or []) if include_injuries else []
 
             downgraded_reason = None
-            if not form_home or not form_away:
+            if not form_home and not form_away:
                 reason_bits = []
-                if not form_home:
-                    reason_bits.append(f"home form empty (team_id={home_id}, fixtures={len(fixtures_home)})")
-                if not form_away:
-                    reason_bits.append(f"away form empty (team_id={away_id}, fixtures={len(fixtures_away)})")
+                reason_bits.append(f"home form empty (team_id={home_id}, fixtures={len(fixtures_home)})")
+                reason_bits.append(f"away form empty (team_id={away_id}, fixtures={len(fixtures_away)})")
                 downgraded_reason = "; ".join(reason_bits)
                 logger.warning("[EVIDENCE] prediction_context downgraded fixture_id=%s reason=%s",
                                (fixture.get("fixture") or {}).get("id"), downgraded_reason)
+            elif not form_home or not form_away:
+                missing = "home" if not form_home else "away"
+                logger.info("[EVIDENCE] prediction_context partial fixture_id=%s missing=%s_form",
+                            (fixture.get("fixture") or {}).get("id"), missing)
 
             prediction = engine.scorpred_predict(
                 form_a=form_home, form_b=form_away,

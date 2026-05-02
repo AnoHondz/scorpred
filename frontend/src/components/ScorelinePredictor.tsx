@@ -33,6 +33,19 @@ interface TopScore {
   result?: string;
 }
 
+interface GridCell {
+  home: number;
+  away: number;
+  score: string;
+  prob: number; // percentage (0–100)
+}
+
+interface ProjectedScore {
+  home: number;
+  away: number;
+  total: number;
+}
+
 interface WinProbSoccer {
   home: number;
   draw: number;
@@ -44,37 +57,54 @@ interface WinProbNBA {
   away: number;
 }
 
+interface DataCompleteness {
+  score: number;
+  tier: 'high' | 'medium' | 'low';
+  factors: Record<string, boolean>;
+}
+
+interface MarketComparison {
+  model_prob: number;
+  market_prob: number;
+  edge: number;
+  signal: 'value' | 'caution' | 'fair';
+}
+
 interface SoccerResult {
   sport: 'soccer';
   team_a: string;
   team_b: string;
   lambda_a: number;
   lambda_b: number;
-  projected_score: string;
-  most_likely_score: { home: number; away: number; prob: number };
+  projected_score: ProjectedScore;
+  most_likely_score: TopScore;
   top_scorelines: TopScore[];
-  matrix_grid: number[][];
+  matrix_grid: GridCell[];
   win_probabilities: WinProbSoccer;
   over_under: OULine[];
   btts: { yes: number; no: number };
   primary_ou_line: OULine;
+  score_ranges: { low_0_1_goals: number; medium_2_3_goals: number; high_4_plus_goals: number };
   model: string;
+  data_completeness?: DataCompleteness;
+  market_comparison?: MarketComparison | null;
 }
 
 interface NBAResult {
   sport: 'nba';
   team_a: string;
   team_b: string;
-  projected_score: { home: number; away: number };
+  projected_score: ProjectedScore;
   proj_margin: number;
   spread_favorite: string;
-  most_likely_range: string;
+  most_likely_range: TopScore | Record<string, unknown>;
   top_scorelines: TopScore[];
   win_probabilities: WinProbNBA;
   over_under: OULine[];
   primary_ou_line: OULine;
   sigma_total: number;
   model: string;
+  data_completeness?: DataCompleteness;
 }
 
 type ScorelineResult = SoccerResult | NBAResult;
@@ -104,8 +134,7 @@ function leanBg(lean: string): string {
 }
 
 function heatColor(prob: number, maxProb: number): string {
-  // Scale 0 → maxProb to colour intensity
-  const ratio = Math.min(prob / maxProb, 1);
+  const ratio = maxProb > 0 ? Math.min(prob / maxProb, 1) : 0;
   if (ratio > 0.7) return 'bg-emerald-400 text-slate-900';
   if (ratio > 0.45) return 'bg-emerald-500/60 text-emerald-100';
   if (ratio > 0.25) return 'bg-emerald-600/35 text-emerald-200';
@@ -113,9 +142,16 @@ function heatColor(prob: number, maxProb: number): string {
   return 'bg-slate-800/60 text-slate-500';
 }
 
-function resultBadge(result: string | undefined): string {
-  if (result === 'home') return 'text-emerald-300';
-  if (result === 'away') return 'text-rose-300';
+function resultLabel(result: string | undefined): string {
+  if (result === 'H') return 'Home';
+  if (result === 'A') return 'Away';
+  if (result === 'D') return 'Draw';
+  return result ?? '';
+}
+
+function resultColor(result: string | undefined): string {
+  if (result === 'H') return 'text-emerald-300';
+  if (result === 'A') return 'text-rose-300';
   return 'text-amber-300';
 }
 
@@ -130,23 +166,12 @@ function SectionHeader({ title }: { title: string }) {
   );
 }
 
-function WinBar({
-  label,
-  pct,
-  color,
-}: {
-  label: string;
-  pct: number;
-  color: string;
-}) {
+function WinBar({ label, pct, color }: { label: string; pct: number; color: string }) {
   return (
     <div className="flex items-center gap-2 text-[12px]">
-      <span className="w-16 shrink-0 text-slate-400 text-right">{label}</span>
+      <span className="w-20 shrink-0 text-slate-400 text-right truncate">{label}</span>
       <div className="flex-1 h-2 rounded-full bg-slate-700 overflow-hidden">
-        <div
-          className={`h-full rounded-full ${color}`}
-          style={{ width: `${Math.min(pct, 100)}%` }}
-        />
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(pct, 100)}%` }} />
       </div>
       <span className="w-10 text-slate-200 font-semibold tabular-nums">{pct.toFixed(1)}%</span>
     </div>
@@ -176,15 +201,9 @@ function OUTable({ lines, primary }: { lines: OULine[]; primary: OULine }) {
                 {row.line.toFixed(1)}
                 {isPrimary && <span className="ml-1 text-[9px] text-amber-500 uppercase tracking-wide">primary</span>}
               </td>
-              <td className="py-1.5 px-2 text-right text-emerald-300 tabular-nums font-medium">
-                {row.over_prob.toFixed(1)}%
-              </td>
-              <td className="py-1.5 px-2 text-right text-rose-300 tabular-nums font-medium">
-                {row.under_prob.toFixed(1)}%
-              </td>
-              <td className={`py-1.5 pl-2 text-right font-bold tabular-nums ${leanColor(row.lean)}`}>
-                {row.lean}
-              </td>
+              <td className="py-1.5 px-2 text-right text-emerald-300 tabular-nums font-medium">{row.over_prob.toFixed(1)}%</td>
+              <td className="py-1.5 px-2 text-right text-rose-300 tabular-nums font-medium">{row.under_prob.toFixed(1)}%</td>
+              <td className={`py-1.5 pl-2 text-right font-bold tabular-nums ${leanColor(row.lean)}`}>{row.lean}</td>
             </tr>
           );
         })}
@@ -193,36 +212,38 @@ function OUTable({ lines, primary }: { lines: OULine[]; primary: OULine }) {
   );
 }
 
-/** 7×7 Soccer heat-map grid */
 function ScoreHeatmap({
   grid,
   teamA,
   teamB,
   mostLikely,
 }: {
-  grid: number[][];
+  grid: GridCell[];
   teamA: string;
   teamB: string;
   mostLikely: { home: number; away: number };
 }) {
-  const maxProb = Math.max(...grid.flat());
-  const SIZE = grid.length;
+  // Build lookup map: "home,away" → prob%
+  const probMap = new Map<string, number>();
+  let maxProb = 0;
+  for (const cell of grid) {
+    probMap.set(`${cell.home},${cell.away}`, cell.prob);
+    if (cell.prob > maxProb) maxProb = cell.prob;
+  }
+  const SIZE = 7;
 
   return (
     <div>
-      {/* Away axis label */}
       <div className="text-center text-[10px] text-slate-500 uppercase tracking-widest mb-1">
         ← {teamB} goals →
       </div>
       <div className="flex gap-1 items-start">
-        {/* Home axis label */}
         <div
           className="text-[10px] text-slate-500 uppercase tracking-widest"
           style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', minHeight: 80, alignSelf: 'center' }}
         >
           ← {teamA} goals →
         </div>
-
         <div>
           {/* Column headers (away goals) */}
           <div className="flex gap-0.5 mb-0.5 ml-5">
@@ -230,24 +251,23 @@ function ScoreHeatmap({
               <div key={j} className="w-8 text-center text-[10px] text-slate-500">{j}</div>
             ))}
           </div>
-
-          {/* Rows */}
-          {grid.map((row, i) => (
+          {/* Rows (home goals) */}
+          {Array.from({ length: SIZE }, (_, i) => (
             <div key={i} className="flex gap-0.5 mb-0.5 items-center">
-              {/* Row header (home goals) */}
               <div className="w-4 text-center text-[10px] text-slate-500">{i}</div>
-              {row.map((prob, j) => {
+              {Array.from({ length: SIZE }, (_, j) => {
+                const prob = probMap.get(`${i},${j}`) ?? 0;
                 const isBest = i === mostLikely.home && j === mostLikely.away;
                 return (
                   <div
                     key={j}
-                    title={`${teamA} ${i} – ${j} ${teamB}: ${(prob * 100).toFixed(2)}%`}
-                    className={`w-8 h-8 rounded-[3px] flex items-center justify-center text-[9px] font-bold tabular-nums cursor-default transition-opacity
+                    title={`${teamA} ${i} – ${j} ${teamB}: ${prob.toFixed(2)}%`}
+                    className={`w-8 h-8 rounded-[3px] flex items-center justify-center text-[9px] font-bold tabular-nums cursor-default
                       ${heatColor(prob, maxProb)}
                       ${isBest ? 'ring-1 ring-amber-400/80 ring-offset-1 ring-offset-slate-900' : ''}
                     `}
                   >
-                    {(prob * 100) >= 1 ? `${(prob * 100).toFixed(1)}` : ''}
+                    {prob >= 1 ? prob.toFixed(1) : ''}
                   </div>
                 );
               })}
@@ -262,16 +282,7 @@ function ScoreHeatmap({
   );
 }
 
-/** Top scorelines ranked list */
-function TopScorelines({
-  scores,
-  teamA,
-  teamB,
-}: {
-  scores: TopScore[];
-  teamA: string;
-  teamB: string;
-}) {
+function TopScorelines({ scores, teamA, teamB }: { scores: TopScore[]; teamA: string; teamB: string }) {
   return (
     <div className="space-y-1">
       {scores.slice(0, 8).map((s, idx) => (
@@ -285,8 +296,8 @@ function TopScorelines({
           <span className={`font-bold tabular-nums ${idx === 0 ? 'text-amber-300' : 'text-slate-200'}`}>
             {s.score ?? `${s.home}–${s.away}`}
           </span>
-          <span className={`text-[10px] ml-1 ${resultBadge(s.result)}`}>
-            {s.result ?? ''}
+          <span className={`text-[10px] ml-1 ${resultColor(s.result)}`}>
+            {resultLabel(s.result)}
           </span>
           <div className="ml-auto flex items-center gap-1">
             <div
@@ -297,6 +308,12 @@ function TopScorelines({
           </div>
         </div>
       ))}
+      {/* Legend */}
+      <div className="flex gap-4 pt-1 pl-1 text-[10px] text-slate-600">
+        <span><span className="text-emerald-300">Home</span> win</span>
+        <span><span className="text-amber-300">Draw</span></span>
+        <span><span className="text-rose-300">Away</span> win</span>
+      </div>
     </div>
   );
 }
@@ -304,25 +321,29 @@ function TopScorelines({
 // ── Soccer view ───────────────────────────────────────────────────────────────
 
 function SoccerView({ data }: { data: SoccerResult }) {
-  const { win_probabilities: wp, btts } = data;
+  const { win_probabilities: wp, btts, projected_score: ps } = data;
 
   return (
     <div className="space-y-5">
-      {/* Projected score + lambdas */}
+      {/* Projected score chips */}
       <div className="flex flex-wrap gap-3 justify-center">
         <div className="rounded-xl border border-white/8 bg-white/[0.04] px-6 py-4 text-center min-w-[160px]">
           <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Projected Score</p>
-          <p className="text-3xl font-bold text-white font-[Oswald,sans-serif] tracking-wider">{data.projected_score}</p>
-          <p className="text-[10px] text-slate-500 mt-1">λ {data.lambda_a.toFixed(2)} – {data.lambda_b.toFixed(2)}</p>
+          <p className="text-3xl font-bold text-white font-[Oswald,sans-serif] tracking-wider">
+            {ps.home.toFixed(1)} – {ps.away.toFixed(1)}
+          </p>
+          <p className="text-[10px] text-slate-500 mt-1">
+            Total {ps.total.toFixed(1)} &nbsp;·&nbsp; λ {data.lambda_a.toFixed(2)} / {data.lambda_b.toFixed(2)}
+          </p>
         </div>
 
         {/* Primary O/U */}
         <div className={`rounded-xl border px-6 py-4 text-center min-w-[140px] ${leanBg(data.primary_ou_line.lean)}`}>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Primary O/U</p>
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">O/U 2.5</p>
           <p className={`text-2xl font-bold ${leanColor(data.primary_ou_line.lean)}`}>{data.primary_ou_line.lean}</p>
           <p className="text-[11px] text-slate-400 mt-1">{data.primary_ou_line.line.toFixed(1)} goals</p>
           <p className="text-[10px] text-slate-500">
-            O:{data.primary_ou_line.over_prob.toFixed(1)}% / U:{data.primary_ou_line.under_prob.toFixed(1)}%
+            O: {data.primary_ou_line.over_prob.toFixed(1)}% / U: {data.primary_ou_line.under_prob.toFixed(1)}%
           </p>
         </div>
 
@@ -346,7 +367,13 @@ function SoccerView({ data }: { data: SoccerResult }) {
         </div>
       </div>
 
-      {/* Heatmap */}
+      {/* Most likely scorelines */}
+      <div>
+        <SectionHeader title="Most Likely Scorelines" />
+        <TopScorelines scores={data.top_scorelines} teamA={data.team_a} teamB={data.team_b} />
+      </div>
+
+      {/* Heat-map */}
       <div>
         <SectionHeader title="Scoreline Heat-Map" />
         <div className="overflow-x-auto">
@@ -359,12 +386,6 @@ function SoccerView({ data }: { data: SoccerResult }) {
         </div>
       </div>
 
-      {/* Top scorelines */}
-      <div>
-        <SectionHeader title="Most Likely Scorelines" />
-        <TopScorelines scores={data.top_scorelines} teamA={data.team_a} teamB={data.team_b} />
-      </div>
-
       {/* O/U table */}
       <div>
         <SectionHeader title="Over / Under Lines" />
@@ -372,6 +393,35 @@ function SoccerView({ data }: { data: SoccerResult }) {
           <OUTable lines={data.over_under} primary={data.primary_ou_line} />
         </div>
       </div>
+
+      {/* Market comparison */}
+      {data.market_comparison && (
+        <div className="rounded-lg border-l-2 border-teal-500/30 bg-teal-500/[0.03] p-4">
+          <h3 className="text-[11px] uppercase tracking-wider text-slate-500 mb-3 font-semibold">
+            Market Edge Analysis
+          </h3>
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <p className="text-[12px] text-slate-400">
+                Model: <strong className="text-slate-200">{data.market_comparison.model_prob}%</strong>
+              </p>
+              <p className="text-[12px] text-slate-400">
+                Market: <strong className="text-slate-200">{data.market_comparison.market_prob}%</strong>
+              </p>
+            </div>
+            <div className={`text-right ${
+              data.market_comparison.edge > 0 ? 'text-emerald-400' : 'text-rose-400'
+            }`}>
+              <p className="text-2xl font-bold tabular-nums">
+                {data.market_comparison.edge > 0 ? '+' : ''}{data.market_comparison.edge}%
+              </p>
+              <p className="text-[10px] uppercase tracking-wider font-semibold mt-0.5">
+                {data.market_comparison.signal}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <p className="text-[10px] text-slate-600 text-right">Model: {data.model}</p>
     </div>
@@ -383,6 +433,7 @@ function SoccerView({ data }: { data: SoccerResult }) {
 function NBAView({ data }: { data: NBAResult }) {
   const { win_probabilities: wp } = data;
   const proj = data.projected_score;
+  const likelyRange = data.most_likely_range as TopScore | undefined;
 
   return (
     <div className="space-y-5">
@@ -393,9 +444,7 @@ function NBAView({ data }: { data: NBAResult }) {
           <p className="text-3xl font-bold text-white font-[Oswald,sans-serif] tracking-wider">
             {proj.home.toFixed(0)} – {proj.away.toFixed(0)}
           </p>
-          <p className="text-[10px] text-slate-500 mt-1">
-            Total: {(proj.home + proj.away).toFixed(1)} pts
-          </p>
+          <p className="text-[10px] text-slate-500 mt-1">Total: {proj.total.toFixed(1)} pts</p>
         </div>
 
         {/* Spread */}
@@ -411,17 +460,20 @@ function NBAView({ data }: { data: NBAResult }) {
           <p className={`text-2xl font-bold ${leanColor(data.primary_ou_line.lean)}`}>{data.primary_ou_line.lean}</p>
           <p className="text-[11px] text-slate-400 mt-1">{data.primary_ou_line.line.toFixed(1)} pts</p>
           <p className="text-[10px] text-slate-500">
-            O:{data.primary_ou_line.over_prob.toFixed(1)}% / U:{data.primary_ou_line.under_prob.toFixed(1)}%
+            O: {data.primary_ou_line.over_prob.toFixed(1)}% / U: {data.primary_ou_line.under_prob.toFixed(1)}%
           </p>
         </div>
       </div>
 
-      {/* Most likely range */}
-      <div className="text-center">
-        <span className="inline-block text-[11px] text-slate-400 border border-white/10 rounded-full px-4 py-1">
-          Most likely total range: <strong className="text-slate-200">{data.most_likely_range}</strong>
-        </span>
-      </div>
+      {/* Most likely total range */}
+      {likelyRange && 'home' in likelyRange && (
+        <div className="text-center">
+          <span className="inline-block text-[11px] text-slate-400 border border-white/10 rounded-full px-4 py-1">
+            Most likely score: <strong className="text-slate-200">{likelyRange.score ?? `${likelyRange.home}–${likelyRange.away}`}</strong>
+            <span className="ml-2 text-slate-500">({likelyRange.prob.toFixed(1)}%)</span>
+          </span>
+        </div>
+      )}
 
       {/* Win probabilities */}
       <div>
@@ -468,7 +520,6 @@ export default function ScorelinePredictor({
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    // Cancel any in-flight request
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -478,10 +529,7 @@ export default function ScorelinePredictor({
     setData(null);
 
     const endpoint = sport === 'nba' ? '/api/scoreline/nba' : '/api/scoreline/soccer';
-    const body: Record<string, unknown> = {
-      team_a_name: teamAName,
-      team_b_name: teamBName,
-    };
+    const body: Record<string, unknown> = { team_a_name: teamAName, team_b_name: teamBName };
     if (teamAId) body.team_a_id = teamAId;
     if (teamBId) body.team_b_id = teamBId;
     if (leagueId) body.league_id = leagueId;
@@ -514,14 +562,26 @@ export default function ScorelinePredictor({
 
   return (
     <div className="card">
-      {/* Header */}
       <div className="section-header mb-4">
-        <p className="section-label">
-          Scoreline Predictor
-          <span className="ml-2 text-[9px] text-slate-600 uppercase tracking-widest font-normal">
-            {sport === 'nba' ? 'Normal dist.' : 'Poisson + ML blend'}
-          </span>
-        </p>
+        <div className="flex items-center gap-2">
+          <p className="section-label">
+            Scoreline Predictor
+            <span className="ml-2 text-[9px] text-slate-600 uppercase tracking-widest font-normal">
+              {sport === 'nba' ? 'Normal dist.' : 'Poisson + ML blend'}
+            </span>
+          </p>
+          {data?.data_completeness && (
+            <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-full border whitespace-nowrap ${
+              data.data_completeness.tier === 'high'
+                ? 'text-emerald-300 border-emerald-400/30 bg-emerald-400/10'
+                : data.data_completeness.tier === 'medium'
+                ? 'text-amber-300 border-amber-400/30 bg-amber-400/10'
+                : 'text-rose-300 border-rose-400/30 bg-rose-400/10'
+            }`}>
+              {data.data_completeness.tier.toUpperCase()} CONFIDENCE
+            </span>
+          )}
+        </div>
         <div className="section-divider" />
       </div>
 

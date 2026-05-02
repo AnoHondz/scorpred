@@ -69,7 +69,11 @@ except ImportError:  # pragma: no cover
     np_nba = None  # type: ignore[assignment]
 from services import evidence as evidence_services
 from services import tracking_bootstrap as bootstrap_services
+from services import scoreline_engine as _scoreline_engine
 from services.tracking_bootstrap import fixture_context_from_form
+from services.alerter import EmailAlerter
+from services.pipeline_monitor import PipelineMonitor
+import services.scheduler as _sched_module
 from league_config import (
     CURRENT_SEASON,
     DEFAULT_LEAGUE_ID,
@@ -126,6 +130,7 @@ _FIXTURE_INDEX: dict[str, dict[str, Any]] = {}
 _local_match_analysis_cache = TTLCache(maxsize=500, ttl=300)
 _local_fixture_cache = TTLCache(maxsize=50, ttl=120)
 _local_league_cache = TTLCache(maxsize=20, ttl=300)
+_local_scoreline_cache: TTLCache = TTLCache(maxsize=200, ttl=300)
 _API_CIRCUIT: dict[str, dict[str, Any]] = {}
 _RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
 _DECISION_ENGINE = DecisionEngine()
@@ -238,7 +243,12 @@ def _validate_api_keys() -> None:
     present: list[str] = []
 
     for key in _CRITICAL_API_KEYS:
-        if os.getenv(key, "").strip():
+        # Football key: satisfied by either API_FOOTBALL_KEY or APISPORTS_KEY (direct api-sports.io)
+        if key == "API_FOOTBALL_KEY":
+            has_key = bool(os.getenv("API_FOOTBALL_KEY", "").strip() or os.getenv("APISPORTS_KEY", "").strip())
+        else:
+            has_key = bool(os.getenv(key, "").strip())
+        if has_key:
             present.append(key)
         else:
             missing_critical.append(key)
@@ -607,11 +617,20 @@ def format_confidence(value: float | int | None, *, empty: str = "N/A") -> str:
 
 def _data_quality_label(value: Any) -> str:
     if isinstance(value, (int, float)):
-        return "Strong Data" if float(value) >= 75 else "Limited Data"
-    text = str(value or "").strip()
-    if not text:
+        v = float(value)
+        if v >= 75:
+            return "Strong Data"
+        if v >= 55:
+            return "Partial Data"
         return "Limited Data"
-    return text
+    text = str(value or "").strip().lower()
+    if not text or "limited" in text or "low" in text:
+        return "Limited Data"
+    if "strong" in text:
+        return "Strong Data"
+    if "moderate" in text or "partial" in text:
+        return "Partial Data"
+    return "Partial Data"
 
 
 _TRACKING_REFRESH_LAST_RUN: datetime | None = None
@@ -2393,11 +2412,11 @@ def load_fixtures_cached(league_id: int):
         return _local_fixture_cache[league_id]
     _logger.debug("fixture_cache miss league_id=%s", league_id)
     data = _load_upcoming_fixtures(
-        next_n=12,
-        max_deep_predictions=0,
+        next_n=24,
+        max_deep_predictions=4,
         league=league_id,
         include_injuries=False,
-        include_standings=False,
+        include_standings=True,
     )
     fixtures = (data or ([], None, _football_data_source(), ""))[0]
     load_error = (data or ([], None, _football_data_source(), ""))[1]
@@ -2407,7 +2426,7 @@ def load_fixtures_cached(league_id: int):
             _FIXTURE_INDEX[str(fixture_id)] = fixture
     if fixtures and not load_error:
         _local_fixture_cache[league_id] = data
-        cache_service.set_json(redis_key, list(data), ttl=120)
+        cache_service.set_json(redis_key, list(data), ttl=900)
     return data
 
 
@@ -2658,6 +2677,9 @@ def _soccer_decision_card_from_fixture(fixture: dict[str, Any]) -> dict[str, Any
     return _soccer_card_from_fixture_analysis(fixture, analysis)
 
 
+_TBD_NAMES = {"", "home", "away", "tbd", "unknown"}
+
+
 def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[str, Any]) -> dict[str, Any] | None:
     fixture_id = (fixture.get("fixture") or {}).get("id")
     if fixture_id is None:
@@ -2667,8 +2689,11 @@ def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[s
     away = teams_block.get("away") or {}
     league_block = fixture.get("league") or {}
     fixture_block = fixture.get("fixture") or {}
-    team_a = home.get("name") or "Home"
-    team_b = away.get("name") or "Away"
+    team_a = home.get("name") or ""
+    team_b = away.get("name") or ""
+    # Drop fixtures with missing or placeholder team names
+    if team_a.lower().strip() in _TBD_NAMES or team_b.lower().strip() in _TBD_NAMES:
+        return None
     card = dui.build_decision_card(analysis=analysis)
     if card is not None:
         probs = card.get("probabilities") or {}
@@ -2677,23 +2702,38 @@ def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[s
         card["match_id"] = str(fixture_id)
         card["team_a"] = team_a
         card["team_b"] = team_b
+        card["team_a_id"] = home.get("id")
+        card["team_b_id"] = away.get("id")
         card["team_a_logo"] = home.get("logo") or ""
         card["team_b_logo"] = away.get("logo") or ""
         card["team_a_initials"] = dui.initials(team_a)
         card["team_b_initials"] = dui.initials(team_b)
+        card["league_logo"] = league_block.get("logo") or ""
+        card["game_date"] = fixture_block.get("date") or ""
+        card["matchup"] = f"{team_a} vs {team_b}"
         card["competition"] = league_block.get("name") or "Soccer"
         card["action_label"] = card.get("action")
         card["action_class"] = str(card.get("action") or "").lower()
         card["confidence_pct"] = int(card.get("confidence") or 0)
         card["probability_rows"] = [
-            {"label": team_a, "value": probs.get("a"), "selected": card.get("recommended_side") == team_a},
-            {"label": "Draw", "value": probs.get("draw"), "selected": False},
-            {"label": team_b, "value": probs.get("b"), "selected": card.get("recommended_side") == team_b},
+            {"label": team_a, "value": dui.normalize_percent(probs.get("a"), 0), "selected": card.get("recommended_side") == team_a},
+            {"label": "Draw", "value": dui.normalize_percent(probs.get("draw"), 0), "selected": False},
+            {"label": team_b, "value": dui.normalize_percent(probs.get("b"), 0), "selected": card.get("recommended_side") == team_b},
         ]
         card["data_confidence"] = {"state": dq_state, "label": dq_text}
         card["cta_url"] = f"/prediction?match_id={fixture_id}"
         card["cta_method"] = "get"
         card["cta_payload"] = {"match_id": fixture_id}
+        # Derive recommended_side_key unambiguously while both team names are in scope
+        rec = (card.get("recommended_side") or "").lower().strip()
+        ta = team_a.lower().strip()
+        tb = team_b.lower().strip()
+        if ta and (rec in ta or ta in rec):
+            card["recommended_side_key"] = "a"
+        elif tb and (rec in tb or tb in rec):
+            card["recommended_side_key"] = "b"
+        else:
+            card["recommended_side_key"] = "a"  # default to home team
     return card
 
 
@@ -2731,10 +2771,38 @@ prediction_service.configure(
     plan_summary=dui.plan_summary,
 )
 
-# Start background auto-refresh for upcoming match data.
-# Runs every FIXTURE_REFRESH_INTERVAL_SECONDS (default 15 min), daemon thread.
+# Start background pipeline scheduler: proactive fixture refresh + ML + health monitoring
+_pipeline_alerter = EmailAlerter()
+_pipeline_monitor = PipelineMonitor(alerter=_pipeline_alerter)
 if not app.config.get("TESTING"):
-    _schedule_auto_refresh()
+    _pipeline_scheduler = _sched_module.start(
+        app, prediction_service, ac, nc, _pipeline_monitor
+    )
+
+
+def _warm_slate_cache() -> None:
+    """Pre-warm fixture cards for all supported leagues in parallel at startup."""
+    def _run() -> None:
+        try:
+            with app.app_context():
+                from league_config import SUPPORTED_LEAGUE_IDS
+                from concurrent.futures import ThreadPoolExecutor
+                def _warm_one(lid: int) -> None:
+                    try:
+                        prediction_service.get_fixture_cards(lid)
+                    except Exception:
+                        pass
+                with ThreadPoolExecutor(max_workers=len(SUPPORTED_LEAGUE_IDS)) as pool:
+                    list(pool.map(_warm_one, SUPPORTED_LEAGUE_IDS))
+                app.logger.info("startup_cache_warm completed leagues=%s", SUPPORTED_LEAGUE_IDS)
+        except Exception as exc:
+            app.logger.debug("startup_cache_warm failed: %s", exc, exc_info=True)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+if not app.config.get("TESTING"):
+    _warm_slate_cache()
 
 
 def _load_grouped_upcoming_fixtures_all_leagues(
@@ -6415,9 +6483,29 @@ def _card_to_decision(card: dict) -> dict:
     action = str(card.get("action") or "CONSIDER").upper()
     if action not in {"BET", "CONSIDER", "SKIP"}:
         action = "CONSIDER"
+    team_a = card.get("team_a") or card.get("home_team") or ""
+    team_b = card.get("team_b") or card.get("away_team") or ""
+    rec_side = card.get("recommended_side") or team_a
+    team_a_logo = card.get("team_a_logo") or ""
+    team_b_logo = card.get("team_b_logo") or ""
+    # Use pre-computed key when available (soccer cards); fall back to string match for NBA
+    side_key = card.get("recommended_side_key") or ""
+    if side_key == "a":
+        side_is_a = True
+    elif side_key == "b":
+        side_is_a = False
+    else:
+        _clean = lambda s: str(s).lower().replace(" win", "").replace("!", "").strip()
+        side_is_a = _clean(rec_side) in _clean(team_a) or _clean(team_a) in _clean(rec_side)
+    logo = team_a_logo if side_is_a else (team_b_logo or team_a_logo)
+    opponent = team_b if side_is_a else team_a
+    sport = str(card.get("sport") or "soccer").lower()
     return {
         "action": action,
-        "side": card.get("recommended_side") or card.get("team_a") or "",
+        "side": rec_side,
+        "opponent": opponent,
+        "teamA": team_a,
+        "teamB": team_b,
         "matchup": card.get("matchup") or "",
         "confidence": int(dui.safe_float(card.get("confidence_pct") or card.get("confidence"), 0)),
         "reason": card.get("reason") or "",
@@ -6425,8 +6513,13 @@ def _card_to_decision(card: dict) -> dict:
             (card.get("data_confidence") or {}).get("label") or card.get("data_quality")
         ),
         "support": card.get("competition") or "",
-        "logo": card.get("team_a_logo") if card.get("recommended_side") == card.get("team_a") else card.get("team_b_logo") or "",
+        "logo": logo,
         "leagueLogo": card.get("league_logo") or "",
+        "sport": sport,
+        "homeId": card.get("team_a_id") or card.get("home_id") or None,
+        "awayId": card.get("team_b_id") or card.get("away_id") or None,
+        "leagueId": card.get("league_id") or None,
+        "matchDate": card.get("game_date") or card.get("match_date") or card.get("date") or "",
     }
 
 
@@ -6460,23 +6553,88 @@ def api_dashboard_home():
         return jsonify({"topOpportunities": [], "insightRows": [], "plan": {"bet": 0, "consider": 0, "skip": 0}}), 200
 
 
+@app.route("/api/leagues", methods=["GET"])
+def api_leagues():
+    from league_config import all_leagues as _all_leagues
+    return jsonify({
+        "leagues": [
+            {"id": lg["id"], "name": lg["name"], "flag": lg.get("flag", ""), "country": lg.get("country", "")}
+            for lg in _all_leagues()
+        ]
+    })
+
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    status = _pipeline_monitor.get_status()
+    http_code = 200 if status["overall"] == "ok" else 503
+    return jsonify(status), http_code
+
+
 @app.route("/api/dashboard/soccer", methods=["GET"])
 def api_dashboard_soccer():
     try:
         league_id = _set_active_league(_active_league_id())
+        date_filter = (request.args.get("date") or "").strip()[:10]  # YYYY-MM-DD
+
         cards, _, load_error, _, _ = prediction_service.get_fixture_cards(league_id)
-        top = dui.top_opportunities(cards, limit=4)
-        plan = dui.plan_summary(cards)
+        for c in cards:
+            c.setdefault("league_id", league_id)
+            c.setdefault("sport", "soccer")
+
+        # Group all cards by calendar date for multi-day view
+        from collections import defaultdict as _dd
+        by_date: dict[str, list] = _dd(list)
+        for c in cards:
+            d = (c.get("game_date") or "")[:10]
+            if d:
+                by_date[d].append(c)
+
+        available_dates = sorted(by_date.keys())
+
+        # If a future date was requested but isn't in the cached batch, fetch it directly.
+        if date_filter and date_filter not in by_date:
+            try:
+                raw_extra = ac.get_fixtures_for_date(league_id, SEASON, date_filter)
+                if raw_extra:
+                    extra_cards = []
+                    for f in raw_extra:
+                        card = _soccer_decision_card_from_fixture(f)
+                        if card:
+                            card.setdefault("league_id", league_id)
+                            card.setdefault("sport", "soccer")
+                            extra_cards.append(card)
+                    if extra_cards:
+                        by_date[date_filter] = extra_cards
+                        available_dates = sorted(by_date.keys())
+            except Exception:
+                app.logger.warning("date-specific fetch failed for %s", date_filter, exc_info=True)
+
+        # When a specific date is requested, filter to that day only.
+        # If the requested date has no games, fall back to the nearest available date.
+        if date_filter and date_filter in by_date:
+            visible = by_date[date_filter]
+        elif available_dates:
+            visible = by_date[available_dates[0]]
+            date_filter = available_dates[0]
+        else:
+            visible = cards  # No date info at all → return all
+
+        top = dui.top_opportunities(visible, limit=4)
+        plan = dui.plan_summary(visible)
+
         return jsonify({
-            "slate": [_card_to_decision(c) for c in cards],
+            "slate": [_card_to_decision(c) for c in visible],
             "topOpportunities": [_card_to_decision(c) for c in top],
             "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
+            "availableDates": available_dates,
+            "selectedDate": date_filter,
             "error": load_error,
             "last_updated": _now_stamp(),
         })
     except Exception as exc:
         app.logger.warning("api_dashboard_soccer error: %s", exc)
-        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "error": str(exc)}), 200
+        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "selectedDate": "", "error": str(exc)}), 200
 
 
 
@@ -6555,6 +6713,126 @@ def api_dashboard_insights():
             "confidenceGroups": {"Top confidence": 0, "Playable range": 0, "Caution range": 0},
             "plan": {"bet": 0, "consider": 0, "skip": 0},
         }), 200
+
+
+@limiter.limit("30 per minute")
+@app.route("/api/scoreline/soccer", methods=["GET", "POST"])
+def api_scoreline_soccer():
+    """
+    Scoreline probability distribution for a soccer match.
+
+    Query / body params:
+        team_a_id   int   Home team provider ID
+        team_b_id   int   Away team provider ID
+        league_id   int   (optional) League ID – defaults to active league
+        team_a_name str   (optional) Override display name
+        team_b_name str   (optional) Override display name
+        odds_total  float (optional) Market total goals line for anchoring
+        ou_lines    csv   (optional) Comma-separated O/U lines e.g. "1.5,2.5,3.5"
+    """
+    try:
+        params = request.get_json(silent=True) or request.form or request.args
+        team_a_id = _safe_int(params.get("team_a_id") or params.get("home_id"))
+        team_b_id = _safe_int(params.get("team_b_id") or params.get("away_id"))
+        league_id = _coerce_league_id(params.get("league_id") or _active_league_id())
+        team_a_name = str(params.get("team_a_name") or params.get("team_a") or "Home").strip()
+        team_b_name = str(params.get("team_b_name") or params.get("team_b") or "Away").strip()
+        odds_total = _safe_float(params.get("odds_total")) or None
+        if odds_total is not None and odds_total <= 0:
+            odds_total = None
+
+        raw_lines = str(params.get("ou_lines") or "").strip()
+        ou_lines = None
+        if raw_lines:
+            try:
+                ou_lines = [float(x.strip()) for x in raw_lines.split(",") if x.strip()]
+            except ValueError:
+                ou_lines = None
+
+        form_a: list[dict] = []
+        form_b: list[dict] = []
+        h2h: list[dict] = []
+        injuries_a: list[dict] = []
+        injuries_b: list[dict] = []
+        ml_prob_a: float | None = None
+        ml_prob_b: float | None = None
+        _sl_key: str = ""
+
+        if team_a_id and team_b_id:
+            # Check scoreline cache first
+            _sl_key = f"scoreline:{team_a_id}:{team_b_id}:{league_id}"
+            _cached_sl = _local_scoreline_cache.get(_sl_key)
+            if _cached_sl is not None:
+                return jsonify({"status": "ok", "result": _cached_sl})
+
+            # Fetch all 6 data sources in parallel
+            try:
+                with ThreadPoolExecutor(max_workers=6) as _pool:
+                    _fut_a        = _pool.submit(ac.get_team_fixtures, team_a_id, league_id, SEASON, 10)
+                    _fut_b        = _pool.submit(ac.get_team_fixtures, team_b_id, league_id, SEASON, 10)
+                    _fut_h2h      = _pool.submit(ac.get_h2h, team_a_id, team_b_id, 10)
+                    _fut_inj_a    = _pool.submit(ac.get_injuries, league_id, SEASON, team_a_id)
+                    _fut_inj_b    = _pool.submit(ac.get_injuries, league_id, SEASON, team_b_id)
+                    _fut_standings= _pool.submit(ac.get_standings, league_id, SEASON)
+                    raw_a      = _fut_a.result()
+                    raw_b      = _fut_b.result()
+                    raw_h2h    = _fut_h2h.result()
+                    raw_inj_a  = _fut_inj_a.result()
+                    raw_inj_b  = _fut_inj_b.result()
+                    standings  = _fut_standings.result()
+                form_a = pred.extract_form(
+                    pred.filter_recent_completed_fixtures(raw_a, current_season=SEASON), team_a_id
+                )[:6]
+                form_b = pred.extract_form(
+                    pred.filter_recent_completed_fixtures(raw_b, current_season=SEASON), team_b_id
+                )[:6]
+                h2h = pred.extract_form(
+                    pred.filter_recent_completed_fixtures(raw_h2h, current_season=SEASON, seasons_back=5),
+                    team_a_id,
+                )[:6]
+                injuries_a = _clean_injuries(raw_inj_a) or []
+                injuries_b = _clean_injuries(raw_inj_b) or []
+            except Exception:
+                app.logger.warning("scoreline_soccer: data fetch failed", exc_info=True)
+                standings = []
+
+            # ML win probabilities from scorpred_engine
+            try:
+                opp_str = _build_opp_strengths(standings)
+                # Extract individual opponent strengths
+                opp_strength_b = opp_str.get(pred._norm(team_a_name), 5.0)  # team A faces team B
+                opp_strength_a = opp_str.get(pred._norm(team_b_name), 5.0)  # team B faces team A
+                ml_pred = se.scorpred_predict(
+                    form_a=form_a, form_b=form_b,
+                    h2h_form_a=h2h, h2h_form_b=h2h,
+                    injuries_a=injuries_a, injuries_b=injuries_b,
+                    team_a_is_home=True,
+                    team_a_name=team_a_name, team_b_name=team_b_name,
+                    sport="soccer", opp_strengths=opp_str,
+                )
+                wps = ml_pred.get("win_probabilities") or {}
+                ml_prob_a = _safe_float(wps.get("a")) or None
+                ml_prob_b = _safe_float(wps.get("b")) or None
+            except Exception:
+                app.logger.debug("scoreline_soccer: ML blend skipped", exc_info=True)
+
+        result = _scoreline_engine.predict_soccer_scoreline(
+            form_a=form_a, form_b=form_b,
+            h2h=h2h, injuries_a=injuries_a, injuries_b=injuries_b,
+            is_home_a=True,
+            ml_prob_a=ml_prob_a, ml_prob_b=ml_prob_b,
+            odds_total=odds_total,
+            team_a_name=team_a_name, team_b_name=team_b_name,
+            ou_lines=ou_lines,
+            opp_strength_a=opp_strength_a,
+            opp_strength_b=opp_strength_b,
+        )
+        if team_a_id and team_b_id:
+            _local_scoreline_cache[_sl_key] = result
+        return jsonify({"status": "ok", "result": result})
+    except Exception as exc:
+        app.logger.error("api_scoreline_soccer error: %s", exc, exc_info=True)
+        return jsonify({"status": "error", "message": sanitize_error(exc)}), 500
 
 
 @app.errorhandler(404)

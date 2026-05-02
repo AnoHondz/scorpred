@@ -86,20 +86,7 @@ SUPPORTED_LEAGUES: dict[str, dict] = {
     },
 }
 
-# Convenience: id → config
-LEAGUE_FLAGS: dict[str, str] = {
-    "premier_league": "🏴",
-    "la_liga": "🇪🇸",
-    "serie_a": "🇮🇹",
-    "bundesliga": "🇩🇪",
-    "ligue_1": "🇫🇷",
-    "champions_league": "⭐",
-}
-
-for _league_key, _flag in LEAGUE_FLAGS.items():
-    if _league_key in SUPPORTED_LEAGUES:
-        SUPPORTED_LEAGUES[_league_key]["flag"] = _flag
-
+# LEAGUE_BY_ID derives from SUPPORTED_LEAGUES which already has correct flags set above.
 LEAGUE_BY_ID: dict[int, dict] = {cfg["id"]: cfg for cfg in SUPPORTED_LEAGUES.values()}
 LEAGUE_KEY_BY_ID: dict[int, str] = {
     cfg["id"]: key for key, cfg in SUPPORTED_LEAGUES.items()

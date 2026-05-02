@@ -606,7 +606,7 @@ def build_decision_card(
             "action": prediction.get("play_type") or ("BET" if safe_float(conf, 0) >= 62 else "CONSIDER"),
             "recommended_side": best_pick.get("prediction") or best_pick.get("team") or team_a,
             "reason": best_pick.get("reasoning") or prediction.get("decision_summary") or prediction.get("matchup_reading") or "",
-            "data_quality": "Strong Data" if tier == "strong" else "Limited Data",
+            "data_quality": "Strong Data" if tier == "strong" else ("Partial Data" if tier in {"moderate", "partial"} else "Limited Data"),
             "metric_breakdown": prediction.get("metric_breakdown"),
             "match_id": _.get("match_id"),
         }

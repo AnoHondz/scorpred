@@ -18,8 +18,11 @@ export default function HomePage({ onSelectMatch }: { onSelectMatch: (d: Decisio
 
   const loading = soccer.loading || nba.loading;
 
-  const soccerTop = soccer.data?.topOpportunities ?? [];
-  const nbaTop = nba.data?.topOpportunities ?? [];
+  const isTBD = (d: Decision) =>
+    !d.teamA || !d.teamB || d.teamA === 'TBD' || d.teamB === 'TBD' ||
+    (d.matchup || '').includes('TBD');
+  const soccerTop = (soccer.data?.topOpportunities ?? []).filter(d => !isTBD(d));
+  const nbaTop = (nba.data?.topOpportunities ?? []).filter(d => !isTBD(d));
   const allTop = [...soccerTop, ...nbaTop].sort((a, b) => b.confidence - a.confidence);
 
   const visible: Decision[] =

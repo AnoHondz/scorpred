@@ -56,6 +56,14 @@ class _LazyModuleProxy:
 
 requests = _LazyModuleProxy("requests")
 
+# ── football-data.org client (preferred free provider) ────────────────────────
+try:
+    import football_data_client as _fd  # type: ignore
+    _FD_AVAILABLE = _fd.is_available()
+except Exception:
+    _fd = None  # type: ignore
+    _FD_AVAILABLE = False
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 API_KEY  = os.getenv("API_FOOTBALL_KEY", "").strip()
@@ -69,6 +77,12 @@ FREE_PLAN_MAX_SEASON = int(os.getenv("API_FOOTBALL_FREE_MAX_SEASON", "2024"))
 # Direct API-SPORTS key (api-sports.io account, bypasses RapidAPI entirely).
 # If set, requests use x-apisports-key header instead of RapidAPI headers.
 _APISPORTS_KEY = os.getenv("APISPORTS_KEY", "").strip()
+_APISPORTS_KEY_BACKUP = os.getenv("APISPORTS_KEY_BACKUP", "").strip()
+API_KEY_BACKUP = os.getenv("API_FOOTBALL_KEY_BACKUP", "").strip()
+
+# Session-level flag: set to True when primary key daily quota is exhausted.
+# Causes all subsequent requests to use the backup key until process restarts.
+_PRIMARY_KEY_EXHAUSTED: bool = False
 
 # Auto-detect direct mode: either APISPORTS_KEY is set, or host is api-sports.io
 _USING_DIRECT_APISPORTS = bool(_APISPORTS_KEY) or "api-sports.io" in API_HOST
@@ -211,7 +225,7 @@ _RATE_LIMITED_ENDPOINTS: dict[str, float] = {}
 _RATE_LIMIT_COOLDOWN_SECONDS = float(os.getenv("API_FOOTBALL_RATE_LIMIT_COOLDOWN_SECONDS", "900"))
 
 # ── Token bucket — cap burst API calls per request context ───────────────────
-_MAX_CALLS_PER_REQUEST = 12
+_MAX_CALLS_PER_REQUEST = 40
 
 def _request_call_count() -> int:
     try:
@@ -258,8 +272,15 @@ def _save(path: Path, data: Any) -> None:
 
 # ── Core HTTP ──────────────────────────────────────────────────────────────────
 
+def _active_api_key() -> str:
+    """Return the backup key when the primary daily quota is exhausted."""
+    if _PRIMARY_KEY_EXHAUSTED:
+        return _APISPORTS_KEY_BACKUP or API_KEY_BACKUP or _APISPORTS_KEY or API_KEY
+    return _APISPORTS_KEY or API_KEY
+
+
 def _headers(api_key=None) -> dict[str, str]:
-    key = api_key or _APISPORTS_KEY or API_KEY
+    key = api_key or _active_api_key()
     if _USING_DIRECT_APISPORTS:
         # Direct api-sports.io access — uses a single header, no host header needed
         return {"x-apisports-key": key, "Accept": "application/json"}
@@ -279,7 +300,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     params = params or {}
     path = _cache_path(endpoint, params)
     force_refresh = force_refresh or FORCE_REFRESH
-    api_key = API_KEY
+    api_key = API_KEY or _APISPORTS_KEY
     cache_key = _make_cache_key(endpoint, params)
     cache_ttl = _get_cache_ttl(endpoint)
     now = time.time()
@@ -300,7 +321,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             stale_entry = None
 
     if not api_key:
-        _logger.error("Missing API_FOOTBALL_KEY environment variable.")
+        _logger.error("Missing API_FOOTBALL_KEY / APISPORTS_KEY environment variable.")
         RAPIDAPI_OK = False
         return {}
 
@@ -343,6 +364,23 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             return {}
     else:
         url = f"{API_BASE}/{endpoint.lstrip('/')}"
+
+    # Pre-cap season and skip unsupported params for api-sports.io free plan.
+    # This avoids wasting a live API call that is guaranteed to fail.
+    if _USING_DIRECT_APISPORTS and not _USING_FREE_API:
+        # Season: free plan covers up to FREE_PLAN_MAX_SEASON; cap silently.
+        if isinstance(translated_params.get("season"), int) and translated_params["season"] > FREE_PLAN_MAX_SEASON:
+            translated_params = dict(translated_params)
+            translated_params["season"] = FREE_PLAN_MAX_SEASON
+            _logger.debug("Pre-capped season to %s for endpoint %s", FREE_PLAN_MAX_SEASON, endpoint)
+        # Params blocked on the free plan — skip the API call so ESPN handles it.
+        _FREE_PLAN_BLOCKED_PARAMS: dict[str, set] = {
+            "fixtures": {"next", "live"},
+        }
+        blocked = _FREE_PLAN_BLOCKED_PARAMS.get(endpoint, set())
+        if blocked & set(translated_params.keys()):
+            _logger.debug("Skipping blocked free-plan param for endpoint %s", endpoint)
+            return {}
 
     # Per-request dedup cache — prevent identical calls within one page render
     try:
@@ -398,6 +436,19 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             data = resp.json()
             if data.get("errors"):
                 error_text = str(data.get("errors", "")).lower()
+                # Daily quota exhausted — switch to backup key and retry immediately
+                if "reached the request limit for the day" in error_text:
+                    global _PRIMARY_KEY_EXHAUSTED
+                    backup = _APISPORTS_KEY_BACKUP or API_KEY_BACKUP
+                    if backup and not _PRIMARY_KEY_EXHAUSTED:
+                        _PRIMARY_KEY_EXHAUSTED = True
+                        api_key = backup
+                        _logger.warning(
+                            "Primary API key daily quota exhausted — switching to backup key for this session"
+                        )
+                        continue  # retry with backup key
+                    _logger.error("API daily quota exhausted and no backup key available")
+                    break
                 if (
                     "free plans do not have access to this season" in error_text
                     and not free_plan_season_retry_used
@@ -671,12 +722,12 @@ def _normalize_espn_fixture(event: dict, league_id: int) -> dict | None:
         "teams": {
             "home": {
                 "id": _si(home_team.get("id")),
-                "name": home_team.get("displayName") or home_team.get("name") or "Home",
+                "name": home_team.get("displayName") or home_team.get("name") or "",
                 "logo": home_team.get("logo") or _team_logo(home_team),
             },
             "away": {
                 "id": _si(away_team.get("id")),
-                "name": away_team.get("displayName") or away_team.get("name") or "Away",
+                "name": away_team.get("displayName") or away_team.get("name") or "",
                 "logo": away_team.get("logo") or _team_logo(away_team),
             },
         },
@@ -930,6 +981,16 @@ def _stat(stats: dict, section: str, key: str) -> float | None:
 # ── Domain methods ─────────────────────────────────────────────────────────────
 
 def get_teams(league_id: int = DEFAULT_LEAGUE_ID, season: int = CURRENT_SEASON) -> list:
+    # 1. football-data.org (preferred free provider — no daily quota)
+    if _FD_AVAILABLE:
+        try:
+            result = _fd.get_teams(league_id, season)
+            if result:
+                return result
+        except Exception:
+            pass
+
+    # 2. api-sports.io (legacy)
     try:
         data = api_get("teams", {"league": league_id, "season": season}, cache_hours=24)
         if data.get("response"):
@@ -955,6 +1016,7 @@ def get_teams(league_id: int = DEFAULT_LEAGUE_ID, season: int = CURRENT_SEASON) 
 
 
 def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
+    # 1. api-sports.io (has a real h2h endpoint)
     try:
         data = api_get("fixtures/headtohead", {"h2h": f"{id_a}-{id_b}"}, cache_hours=6)
         resp = data.get("response", [])
@@ -963,6 +1025,28 @@ def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
             return resp[:last]
     except Exception:
         pass
+
+    # 2. football-data.org: resolve names then scan by competition
+    if _FD_AVAILABLE:
+        try:
+            # find team names by checking all supported leagues
+            name_a = name_b = ""
+            for lid in [DEFAULT_LEAGUE_ID, *SUPPORTED_LEAGUE_IDS]:
+                if name_a and name_b:
+                    break
+                for t in (get_teams(lid) or []):
+                    team = t.get("team") or {}
+                    if str(team.get("id")) == str(id_a):
+                        name_a = team.get("name", "")
+                    if str(team.get("id")) == str(id_b):
+                        name_b = team.get("name", "")
+            if name_a and name_b:
+                for lid in [DEFAULT_LEAGUE_ID, *SUPPORTED_LEAGUE_IDS]:
+                    result = _fd.get_h2h(name_a, name_b, lid, last)
+                    if result:
+                        return result
+        except Exception:
+            pass
 
     team_a_id = _resolve_team_id(id_a)
     team_b_id = _resolve_team_id(id_b)
@@ -1221,9 +1305,23 @@ def get_team_fixtures(
                 seen.setdefault(key, fixture)
         return list(seen.values())
 
+    logger = logging.getLogger("api_client")
     fixtures = []
+
+    # Try football-data.org first — it's the primary source for European soccer team IDs
+    # and is fastest when the IDs originate from that provider (avoids slow API-Football
+    # timeout on wrong-namespace IDs).
     try:
-        logger = logging.getLogger("api_client")
+        import football_data_client as _fdc
+        if _fdc.FD_ENABLED:
+            fd_fixtures = _fdc.get_team_recent_matches(team_id, last=last)
+            if fd_fixtures:
+                logger.debug(f"[API_CLIENT] team_id={team_id} returning {len(fd_fixtures)} fixtures from football-data.org")
+                return fd_fixtures
+    except Exception:
+        pass
+
+    try:
         logger.debug(f"[API_CLIENT] Fetching team fixtures: team_id={team_id}, league_id={league_id}, season={season}")
         for season_year in (season, season - 1):
             season_fixtures = api_get(
@@ -1245,6 +1343,8 @@ def get_team_fixtures(
             return fixtures[:last]
     except Exception as exc:
         logger.warning(f"[API_CLIENT] get_team_fixtures failed for team_id={team_id}: {exc}")
+
+    # ESPN fallback
     fixtures = []
     for season_year in (season, season - 1):
         try:
@@ -1253,15 +1353,28 @@ def get_team_fixtures(
             )
         except Exception:
             continue
-    fixtures = _unique_fixtures(fixtures)
-    fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
-    return fixtures[:last]
+    if fixtures:
+        fixtures = _unique_fixtures(fixtures)
+        fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
+        return fixtures[:last]
+
+    return []
 
 
 def get_standings(
     league_id: int = DEFAULT_LEAGUE_ID,
     season: int = CURRENT_SEASON,
 ) -> list:
+    # 1. football-data.org (preferred free provider)
+    if _FD_AVAILABLE:
+        try:
+            result = _fd.get_standings(league_id, season)
+            if result:
+                return result
+        except Exception:
+            pass
+
+    # 2. api-sports.io (legacy)
     try:
         response = api_get("standings", {"league": league_id, "season": season}, cache_hours=4).get("response", [])
         if response:
@@ -1315,8 +1428,20 @@ def get_upcoming_fixtures(
     season: int = CURRENT_SEASON,
     next_n: int = 20,
 ) -> list:
+    logger = logging.getLogger("api_client")
+
+    # 1. football-data.org (preferred free provider — no daily quota)
+    if _FD_AVAILABLE:
+        try:
+            result = _fd.get_upcoming_fixtures(league_id, season, next_n)
+            if result:
+                logger.debug("[API_CLIENT] fd get_upcoming_fixtures returned %d fixtures", len(result))
+                return result
+        except Exception as exc:
+            logger.warning("[API_CLIENT] fd get_upcoming_fixtures failed: %s", exc)
+
+    # 2. api-sports.io (legacy)
     try:
-        logger = logging.getLogger("api_client")
         logger.debug(f"[API_CLIENT] Fetching upcoming fixtures: league_id={league_id}, season={season}, next_n={next_n}")
         response = api_get(
             "fixtures",
@@ -1377,6 +1502,73 @@ def get_upcoming_fixtures(
 
     all_fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""))
     return all_fixtures[:next_n]
+
+
+def get_fixtures_for_date(
+    league_id: int,
+    season: int,
+    date: str,
+) -> list:
+    """Fetch fixtures for a specific YYYY-MM-DD date.
+
+    Tries football-data.org (filter from upcoming batch), then api-sports.io
+    with the ?date= param, then ESPN date scoreboard as a final fallback.
+    """
+    logger = logging.getLogger("api_client")
+
+    # 1. football-data.org: pull ahead batch and filter by date
+    if _FD_AVAILABLE:
+        try:
+            result = _fd.get_upcoming_fixtures(league_id, season, 30)
+            if result:
+                filtered = [
+                    f for f in result
+                    if str((f.get("fixture") or {}).get("date", ""))[:10] == date
+                ]
+                if filtered:
+                    return filtered
+        except Exception as exc:
+            logger.debug("[API_CLIENT] fd get_fixtures_for_date filter failed: %s", exc)
+
+    # 2. api-sports.io supports ?date=YYYY-MM-DD
+    try:
+        response = api_get(
+            "fixtures",
+            {"league": league_id, "season": season, "date": date},
+            cache_hours=3,
+        ).get("response", [])
+        if response:
+            logger.debug(
+                "[API_CLIENT] get_fixtures_for_date api-sports returned %d for %s", len(response), date
+            )
+            return response
+    except Exception as exc:
+        logger.warning("[API_CLIENT] get_fixtures_for_date api-sports failed: %s", exc)
+
+    # 3. ESPN fallback
+    slug = _espn_slug(league_id)
+    if slug:
+        try:
+            espn_date = date.replace("-", "")
+            payload = _espn_get_json(
+                f"{ESPN_BASE}/{slug}/scoreboard?dates={espn_date}",
+                f"scoreboard:{league_id}:{espn_date}",
+                ttl_hours=3,
+            )
+            fixtures = []
+            for event in payload.get("events") or []:
+                fixture = _normalize_espn_fixture(event, league_id)
+                if fixture:
+                    fixtures.append(fixture)
+            if fixtures:
+                logger.debug(
+                    "[API_CLIENT] get_fixtures_for_date ESPN returned %d for %s", len(fixtures), date
+                )
+                return fixtures
+        except Exception as exc:
+            logger.debug("[API_CLIENT] get_fixtures_for_date ESPN failed: %s", exc)
+
+    return []
 
 
 def get_espn_fixtures(espn_slug: str, next_n: int = 20) -> list:

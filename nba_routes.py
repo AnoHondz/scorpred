@@ -2527,20 +2527,44 @@ def standings():
 @nba_api_bp.route("/api/dashboard/nba", methods=["GET"])
 def api_dashboard_nba():
     try:
+        date_filter = (request.args.get("date") or "").strip()[:10]  # YYYY-MM-DD
         cards: list[dict] = []
+        available_dates: list[str] = []
         load_error = None
         try:
-            from nba_live_client import NBALiveClient as _NC
-            nc_inst = _NC()
-            upcoming = nc_inst.get_upcoming_games(12, 5, "api") or []
-            today = nc_inst.get_today_games("api") or []
-            slate = upcoming or [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
-            teams = nc_inst.get_teams() or []
+            import nba_live_client as _nc
+            # Fetch 7 days ahead to power the multi-day tabs
+            all_games = _nc.get_upcoming_games(30, 7, "api") or []
+            today = _nc.get_today_games("api") or []
+            all_games = all_games or [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
+
+            # Collect available dates from all fetched games
+            from collections import defaultdict as _dd
+            games_by_date: dict[str, list] = _dd(list)
+            for g in all_games:
+                d = ((g.get("date") or {}).get("start") or "")[:10]
+                if d:
+                    games_by_date[d].append(g)
+            available_dates = sorted(games_by_date.keys())
+
+            # Filter to requested date or show all (first available day if none)
+            if date_filter and date_filter in games_by_date:
+                slate = games_by_date[date_filter]
+            elif date_filter:
+                slate = []
+            else:
+                # No date specified: show the nearest day that has games
+                slate = games_by_date.get(available_dates[0], []) if available_dates else all_games
+
+            teams = _nc.get_teams() or []
             team_map = {str(t["id"]): t for t in teams}
-            standings = nc_inst.get_standings() or {}
+            try:
+                standings = _nc.get_standings() or {}
+            except Exception:
+                standings = {}
             nba_opp_strengths = _build_nba_opp_strengths(standings)
             ordered: list[dict | None] = [None] * len(slate)
-            with ThreadPoolExecutor(max_workers=min(6, len(slate) or 1)) as ex:
+            with ThreadPoolExecutor(max_workers=min(8, len(slate) or 1)) as ex:
                 fmap = {ex.submit(_build_upcoming_prediction_card, g, team_map, nba_opp_strengths): i for i, g in enumerate(slate)}
                 for fut in as_completed(fmap):
                     idx = fmap[fut]
@@ -2554,6 +2578,11 @@ def api_dashboard_nba():
             games_with_pred = [r for r in ordered if r]
             cards = [(g.get("prediction") or {}).get("decision_card") for g in games_with_pred]
             cards = [c for c in cards if c]
+            cards = [
+                c for c in cards
+                if (c.get("team_a") or "").strip().lower() not in ("", "tbd", "home")
+                and (c.get("team_b") or "").strip().lower() not in ("", "tbd", "away")
+            ]
         except Exception as exc:
             load_error = sanitize_error(exc)
             current_app.logger.warning("api_dashboard_nba data fetch error: %s", exc)
@@ -2564,9 +2593,118 @@ def api_dashboard_nba():
             "slate": [dui.card_to_decision(c) for c in cards],
             "topOpportunities": [dui.card_to_decision(c) for c in top],
             "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
+            "availableDates": available_dates,
             "error": load_error,
             "last_updated": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as exc:
         current_app.logger.warning("api_dashboard_nba error: %s", exc)
-        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "error": str(exc)}), 200
+        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "error": str(exc)}), 200
+
+
+@nba_api_bp.route("/api/scoreline/nba", methods=["GET", "POST"])
+def api_scoreline_nba():
+    """
+    Scoreline / points distribution for an NBA game.
+
+    Query / body params:
+        team_a_id   str   Home team provider ID
+        team_b_id   str   Away team provider ID
+        team_a_name str   (optional) Override display name
+        team_b_name str   (optional) Override display name
+        odds_total  float (optional) Market total points line for anchoring
+        ou_lines    csv   (optional) Comma-separated O/U lines e.g. "215.5,220.5,225.5"
+    """
+    from services import scoreline_engine as _se
+    try:
+        params = request.get_json(silent=True) or request.form or request.args
+        team_a_id = str(params.get("team_a_id") or params.get("home_id") or "").strip()
+        team_b_id = str(params.get("team_b_id") or params.get("away_id") or "").strip()
+        team_a_name = str(params.get("team_a_name") or params.get("team_a") or "Home").strip()
+        team_b_name = str(params.get("team_b_name") or params.get("team_b") or "Away").strip()
+        try:
+            odds_total: float | None = float(params.get("odds_total") or 0) or None
+        except (TypeError, ValueError):
+            odds_total = None
+
+        raw_lines = str(params.get("ou_lines") or "").strip()
+        ou_lines = None
+        if raw_lines:
+            try:
+                ou_lines = [float(x.strip()) for x in raw_lines.split(",") if x.strip()]
+            except ValueError:
+                ou_lines = None
+
+        stats_a: dict = {}
+        stats_b: dict = {}
+        form_a: list[dict] = []
+        form_b: list[dict] = []
+        injuries_a: list = []
+        injuries_b: list = []
+        ml_prob_a: float | None = None
+        ml_prob_b: float | None = None
+        opp_strength_a: float = 5.0  # default neutral
+        opp_strength_b: float = 5.0
+
+        if team_a_id and team_b_id:
+            try:
+                import nba_live_client as _nc
+                import nba_predictor as _np
+                import scorpred_engine as _se
+                import prediction_engine as _pred
+
+                # Fetch standings for opponent strength
+                standings_raw = _nc.get_standings() or {}
+                standings_list = standings_raw.get("standings", []) if isinstance(standings_raw, dict) else []
+                opp_str = _se.build_opp_strengths_from_standings(standings_list)
+                # Extract individual opponent strengths
+                opp_strength_b = opp_str.get(_pred._norm(team_a_name), 5.0)  # team A faces team B
+                opp_strength_a = opp_str.get(_pred._norm(team_b_name), 5.0)  # team B faces team A
+
+                raw_stats_a = _nc.get_team_season_stats(team_a_id) or {}
+                raw_stats_b = _nc.get_team_season_stats(team_b_id) or {}
+                stats_a = {
+                    "ppg": raw_stats_a.get("ppg"),
+                    "opp_ppg": raw_stats_a.get("opp_ppg"),
+                }
+                stats_b = {
+                    "ppg": raw_stats_b.get("ppg"),
+                    "opp_ppg": raw_stats_b.get("opp_ppg"),
+                }
+                raw_form_a = _nc.get_team_recent_form(team_a_id, n=6)
+                raw_form_b = _nc.get_team_recent_form(team_b_id, n=6)
+                form_a = _np.extract_recent_form(raw_form_a, team_a_id, n=6)
+                form_b = _np.extract_recent_form(raw_form_b, team_b_id, n=6)
+                injuries_a = _nc.get_team_injuries(team_a_id) or []
+                injuries_b = _nc.get_team_injuries(team_b_id) or []
+            except Exception:
+                current_app.logger.warning("scoreline_nba: data fetch failed", exc_info=True)
+
+            # Try ML win probabilities from scorpred_engine
+            try:
+                import nba_predictor as _np
+                nba_pred = _np.predict_winner(
+                    team_a_id=team_a_id, team_b_id=team_b_id,
+                    team_a_name=team_a_name, team_b_name=team_b_name,
+                )
+                ml_prob_a = float(nba_pred.get("home_win_prob") or 0) or None
+                ml_prob_b = float(nba_pred.get("away_win_prob") or 0) or None
+            except Exception:
+                current_app.logger.debug("scoreline_nba: ML blend skipped", exc_info=True)
+
+        result = _se.predict_nba_scoreline(
+            stats_a=stats_a, stats_b=stats_b,
+            form_a=form_a, form_b=form_b,
+            injuries_a=injuries_a, injuries_b=injuries_b,
+            is_home_a=True,
+            ml_prob_a=ml_prob_a, ml_prob_b=ml_prob_b,
+            odds_total=odds_total,
+            team_a_name=team_a_name, team_b_name=team_b_name,
+            ou_lines=ou_lines,
+            opp_strength_a=opp_strength_a,
+            opp_strength_b=opp_strength_b,
+        )
+        return jsonify({"status": "ok", "result": result})
+    except Exception as exc:
+        current_app.logger.error("api_scoreline_nba error: %s", exc, exc_info=True)
+        return jsonify({"status": "error", "message": sanitize_error(exc)}), 500

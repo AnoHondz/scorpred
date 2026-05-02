@@ -47,6 +47,9 @@ def configure_security(app, secret_key: str | None = None) -> None:
             token = (request.get_json(silent=True) or {}).get("csrf_token")
         if validate_csrf_token(token):
             return None
+        # Exempt API endpoints for external/client access
+        if request.path.startswith(("/api/scoreline", "/api/dashboard")):
+            return None
         if request.path.startswith("/chat") or request.is_json:
             return jsonify({"error": "Invalid or missing CSRF token"}), 400
         return "Invalid or missing CSRF token", 400

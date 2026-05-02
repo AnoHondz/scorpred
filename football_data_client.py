@@ -1,0 +1,517 @@
+"""
+football_data_client.py — football-data.org v4 wrapper for ScorPred.
+
+Provider: api.football-data.org/v4  (free tier: 10 req/min, no daily cap)
+Auth:     X-Auth-Token header
+Signup:   https://www.football-data.org/client
+
+Set FOOTBALL_DATA_KEY in .env to activate. Falls back to ESPN if key is absent.
+
+Normalises all responses to the same dict structure used by api_client.py so
+the rest of the codebase needs no changes.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+from runtime_paths import cache_dir
+
+load_dotenv()
+
+_logger = logging.getLogger("football_data_client")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+FD_KEY: str = os.getenv("FOOTBALL_DATA_KEY", "").strip()
+FD_BASE = "https://api.football-data.org/v4"
+FD_TIMEOUT = float(os.getenv("EXTERNAL_API_TIMEOUT_SECONDS", "8"))
+FD_RETRY_ATTEMPTS = 2
+FD_RETRY_BACKOFF = 2.0
+
+# True when a key is configured
+FD_ENABLED: bool = bool(FD_KEY)
+
+# ── Competition ID mapping: API-Football league ID → football-data.org ID ─────
+# football-data.org free tier covers all listed competitions.
+FD_COMP_MAP: dict[int, int] = {
+    39:  2021,   # Premier League
+    140: 2014,   # La Liga
+    135: 2019,   # Serie A
+    78:  2002,   # Bundesliga
+    61:  2015,   # Ligue 1
+    2:   2001,   # Champions League
+    3:   2146,   # Europa League
+    848: 2048,   # Conference League
+    94:  2017,   # Primeira Liga (Portugal)
+    88:  2003,   # Eredivisie (Netherlands)
+    65:  2018,   # Brasileirão Série A
+    71:  2013,   # Campeonato Brasileiro Série A (alt)
+}
+
+# Reverse map: fd comp ID → API-Football league ID (for normalisation)
+_FD_COMP_REVERSE: dict[int, int] = {v: k for k, v in FD_COMP_MAP.items()}
+
+# ── Cache ─────────────────────────────────────────────────────────────────────
+
+_CACHE_DIR: Path = cache_dir("football") / "fd"
+_CACHE_LOCK = threading.Lock()
+_MEM_CACHE: dict[str, dict] = {}   # {"key": {"data": ..., "ts": float}}
+
+_TTL: dict[str, int] = {
+    "competitions/%d/matches":    120,    # 2 min
+    "competitions/%d/standings":  300,    # 5 min
+    "competitions/%d/teams":      3600,   # 1 hr
+    "teams/%d/matches":           300,    # 5 min
+    "matches/%d/head2head":       3600,   # 1 hr
+    "matches/%d":                 120,    # 2 min
+    "default":                    300,
+}
+
+
+def _ttl_for(endpoint: str) -> int:
+    for pattern, secs in _TTL.items():
+        if pattern.replace("%d", "").strip("/") in endpoint:
+            return secs
+    return _TTL["default"]
+
+
+def _cache_key(endpoint: str, params: dict) -> str:
+    raw = endpoint + ":" + json.dumps(params or {}, sort_keys=True)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_path(key: str) -> Path:
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return _CACHE_DIR / f"{key}.json"
+
+
+def _cache_valid(path: Path, ttl: int) -> bool:
+    if not path.exists():
+        return False
+    age = time.time() - path.stat().st_mtime
+    return age < ttl
+
+
+def _load_json(path: Path) -> Any:
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+
+def fd_get(endpoint: str, params: dict | None = None) -> dict:
+    """
+    GET {FD_BASE}/{endpoint} and return the parsed JSON.
+    Returns {} on any error. Caches results to disk + memory.
+    """
+    if not FD_ENABLED:
+        return {}
+
+    params = params or {}
+    mem_key = _cache_key(endpoint, params)
+    disk_path = _cache_path(mem_key)
+    ttl = _ttl_for(endpoint)
+    now = time.time()
+
+    # 1. memory cache
+    with _CACHE_LOCK:
+        entry = _MEM_CACHE.get(mem_key)
+        if entry and (now - entry["ts"]) < ttl:
+            return entry["data"]
+        stale = entry  # may be None
+
+    # 2. disk cache
+    if _cache_valid(disk_path, ttl):
+        try:
+            data = _load_json(disk_path)
+            with _CACHE_LOCK:
+                _MEM_CACHE[mem_key] = {"data": data, "ts": now}
+            return data
+        except Exception:
+            pass
+
+    # 3. live request
+    url = f"{FD_BASE}/{endpoint.lstrip('/')}"
+    headers = {"X-Auth-Token": FD_KEY, "Accept": "application/json"}
+
+    # Rate-limit guard: football-data.org free tier = 10 req/min
+    # We respect this by keeping a simple per-process token bucket.
+    _rate_limit_wait()
+
+    result: dict = {}
+    for attempt in range(FD_RETRY_ATTEMPTS):
+        try:
+            import requests as _req
+            resp = _req.get(url, headers=headers, params=params, timeout=FD_TIMEOUT)
+            _logger.debug("fd_get %s status=%s", url, resp.status_code)
+
+            if resp.status_code == 429:
+                _logger.warning("football-data.org rate-limited (429) for %s", endpoint)
+                if stale:
+                    return stale["data"]
+                return {}
+
+            if resp.status_code in (401, 403):
+                _logger.error("football-data.org auth error %s — check FOOTBALL_DATA_KEY", resp.status_code)
+                return {}
+
+            if resp.status_code >= 500 and attempt < FD_RETRY_ATTEMPTS - 1:
+                time.sleep(FD_RETRY_BACKOFF * (2 ** attempt))
+                continue
+
+            resp.raise_for_status()
+            result = resp.json()
+            break
+        except Exception as exc:
+            _logger.warning("fd_get failed for %s (attempt %d): %s", endpoint, attempt + 1, exc)
+            if attempt < FD_RETRY_ATTEMPTS - 1:
+                time.sleep(FD_RETRY_BACKOFF)
+                continue
+            if stale:
+                return stale["data"]
+            # try disk even if stale
+            if disk_path.exists():
+                try:
+                    return _load_json(disk_path)
+                except Exception:
+                    pass
+            return {}
+
+    if result:
+        _save_json(disk_path, result)
+        with _CACHE_LOCK:
+            _MEM_CACHE[mem_key] = {"data": result, "ts": now}
+
+    return result
+
+
+# ── Simple token bucket (10 req / 60 s) ──────────────────────────────────────
+
+_RATE_BUCKET_LOCK = threading.Lock()
+_RATE_CALL_TIMES: list[float] = []
+_RATE_LIMIT = 10   # max calls per window
+_RATE_WINDOW = 60  # seconds
+
+
+def _rate_limit_wait() -> None:
+    with _RATE_BUCKET_LOCK:
+        now = time.time()
+        # Prune calls outside the window
+        cutoff = now - _RATE_WINDOW
+        while _RATE_CALL_TIMES and _RATE_CALL_TIMES[0] < cutoff:
+            _RATE_CALL_TIMES.pop(0)
+        if len(_RATE_CALL_TIMES) >= _RATE_LIMIT:
+            wait = _RATE_WINDOW - (now - _RATE_CALL_TIMES[0]) + 0.1
+            _logger.debug("Rate-limit: sleeping %.2fs before fd_get", wait)
+            # Release lock while sleeping
+        else:
+            _RATE_CALL_TIMES.append(now)
+            return
+
+    time.sleep(wait)
+    with _RATE_BUCKET_LOCK:
+        _RATE_CALL_TIMES.append(time.time())
+
+
+# ── Normalisers ───────────────────────────────────────────────────────────────
+
+def _fd_status(fd_status: str) -> str:
+    """Convert football-data.org match status to API-Football short code."""
+    mapping = {
+        "SCHEDULED":  "NS",
+        "TIMED":      "NS",
+        "IN_PLAY":    "LIVE",
+        "PAUSED":     "HT",
+        "FINISHED":   "FT",
+        "SUSPENDED":  "SUSP",
+        "POSTPONED":  "PST",
+        "CANCELLED":  "CANC",
+        "AWARDED":    "FT",
+    }
+    return mapping.get(fd_status, "NS")
+
+
+def _normalize_fd_match(match: dict, our_league_id: int) -> dict:
+    """Normalise a football-data.org match dict to API-Football fixture format."""
+    home = match.get("homeTeam") or {}
+    away = match.get("awayTeam") or {}
+    score = match.get("score") or {}
+    ft = score.get("fullTime") or {}
+    ht = score.get("halfTime") or {}
+    fd_status = match.get("status", "SCHEDULED")
+
+    from league_config import CURRENT_SEASON
+    season_val = match.get("season", {}) or {}
+    season_year = season_val.get("startYear") if isinstance(season_val, dict) else CURRENT_SEASON
+
+    return {
+        "fixture": {
+            "id": match.get("id"),
+            "date": match.get("utcDate", ""),
+            "season": season_year or CURRENT_SEASON,
+            "status": {
+                "short": _fd_status(fd_status),
+                "long": fd_status.replace("_", " ").title(),
+            },
+            "venue": {"name": match.get("venue", "")},
+        },
+        "league": {
+            "id": our_league_id,
+            "name": (match.get("competition") or {}).get("name", ""),
+            "season": season_year or CURRENT_SEASON,
+            "round": f"Matchday {match.get('matchday', '')}",
+        },
+        "teams": {
+            "home": {
+                "id": home.get("id"),
+                "name": home.get("name") or home.get("shortName") or "",
+                "logo": home.get("crest", ""),
+            },
+            "away": {
+                "id": away.get("id"),
+                "name": away.get("name") or away.get("shortName") or "",
+                "logo": away.get("crest", ""),
+            },
+        },
+        "goals": {
+            "home": ft.get("home"),
+            "away": ft.get("away"),
+        },
+        "score": {
+            "halftime": {"home": ht.get("home"), "away": ht.get("away")},
+        },
+        "events": [],
+        "stats": [],
+        "source": "football_data",
+    }
+
+
+def _normalize_fd_standing_row(row: dict, our_league_id: int) -> dict:
+    team = row.get("team") or {}
+    return {
+        "rank": row.get("position"),
+        "team": {
+            "id": team.get("id"),
+            "name": team.get("name") or team.get("shortName") or "",
+            "logo": team.get("crest", ""),
+        },
+        "points": row.get("points"),
+        "goalsDiff": row.get("goalDifference"),
+        "form": row.get("form", ""),
+        "all": {
+            "played": row.get("playedGames"),
+            "win":    row.get("won"),
+            "draw":   row.get("draw"),
+            "lose":   row.get("lost"),
+            "goals":  {
+                "for":     row.get("goalsFor"),
+                "against": row.get("goalsAgainst"),
+            },
+        },
+        "home": {"played": 0, "win": 0, "draw": 0, "lose": 0, "goals": {"for": 0, "against": 0}},
+        "away": {"played": 0, "win": 0, "draw": 0, "lose": 0, "goals": {"for": 0, "against": 0}},
+    }
+
+
+def _normalize_fd_team(fd_team: dict, our_league_id: int) -> dict:
+    return {
+        "team": {
+            "id": fd_team.get("id"),
+            "name": fd_team.get("name") or fd_team.get("shortName") or "",
+            "logo": fd_team.get("crest", ""),
+            "country": fd_team.get("area", {}).get("name", ""),
+        },
+        "venue": {
+            "name": fd_team.get("venue", ""),
+        },
+    }
+
+
+# ── Public API (mirrors api_client.py signatures) ─────────────────────────────
+
+def get_upcoming_fixtures(
+    league_id: int,
+    season: int | None = None,
+    next_n: int = 20,
+) -> list[dict]:
+    """
+    Return up to next_n upcoming (not-started) fixtures for the given league.
+    Results are normalised to API-Football fixture format.
+    Returns [] if FOOTBALL_DATA_KEY is not set or the competition is unsupported.
+    """
+    fd_comp = FD_COMP_MAP.get(league_id)
+    if not fd_comp or not FD_ENABLED:
+        return []
+
+    now_utc = datetime.now(timezone.utc)
+    date_from = now_utc.strftime("%Y-%m-%d")
+    date_to = (now_utc + timedelta(days=14)).strftime("%Y-%m-%d")
+
+    data = fd_get(f"competitions/{fd_comp}/matches", {
+        "dateFrom": date_from,
+        "dateTo":   date_to,
+        "status":   "SCHEDULED,TIMED",
+    })
+    matches = data.get("matches") or []
+    result = [_normalize_fd_match(m, league_id) for m in matches]
+    result.sort(key=lambda f: (f.get("fixture") or {}).get("date") or "")
+    return result[:next_n]
+
+
+def get_today_fixtures(league_id: int) -> list[dict]:
+    """Return today's matches for the given league."""
+    fd_comp = FD_COMP_MAP.get(league_id)
+    if not fd_comp or not FD_ENABLED:
+        return []
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    data = fd_get(f"competitions/{fd_comp}/matches", {"dateFrom": today, "dateTo": today})
+    matches = data.get("matches") or []
+    return [_normalize_fd_match(m, league_id) for m in matches]
+
+
+def get_standings(league_id: int, season: int | None = None) -> list[dict]:
+    """
+    Return the total standings table for the given league.
+    Normalised to API-Football standings row format.
+    Returns [] if unsupported.
+    """
+    fd_comp = FD_COMP_MAP.get(league_id)
+    if not fd_comp or not FD_ENABLED:
+        return []
+
+    params: dict = {}
+    if season:
+        params["season"] = season
+
+    data = fd_get(f"competitions/{fd_comp}/standings", params)
+    standings_blocks = data.get("standings") or []
+    # football-data returns TOTAL / HOME / AWAY blocks; we want TOTAL
+    total_block = next(
+        (b for b in standings_blocks if (b.get("type") or "").upper() == "TOTAL"),
+        standings_blocks[0] if standings_blocks else {},
+    )
+    table = total_block.get("table") or []
+    return [_normalize_fd_standing_row(row, league_id) for row in table]
+
+
+def get_teams(league_id: int, season: int | None = None) -> list[dict]:
+    """
+    Return all teams in the given competition/season.
+    Normalised to API-Football teams format.
+    """
+    fd_comp = FD_COMP_MAP.get(league_id)
+    if not fd_comp or not FD_ENABLED:
+        return []
+
+    params: dict = {}
+    if season:
+        params["season"] = season
+
+    data = fd_get(f"competitions/{fd_comp}/teams", params)
+    teams = data.get("teams") or []
+    return [_normalize_fd_team(t, league_id) for t in teams]
+
+
+def get_h2h(team_name_a: str, team_name_b: str, league_id: int, last: int = 10) -> list[dict]:
+    """
+    Approximate H2H by fetching recent finished matches for the competition
+    and filtering to those involving both teams (matched by name substring).
+    Returns normalised fixture list, newest first.
+
+    NOTE: football-data.org H2H requires a match ID, not team IDs.
+    This function scans recent results instead — accurate enough for analysis.
+    """
+    fd_comp = FD_COMP_MAP.get(league_id)
+    if not fd_comp or not FD_ENABLED:
+        return []
+
+    now_utc = datetime.now(timezone.utc)
+    # Free tier allows ~1 season; 420 days covers current + tail of previous
+    date_from = (now_utc - timedelta(days=420)).strftime("%Y-%m-%d")
+    date_to = now_utc.strftime("%Y-%m-%d")
+
+    data = fd_get(f"competitions/{fd_comp}/matches", {
+        "dateFrom": date_from,
+        "dateTo":   date_to,
+        "status":   "FINISHED",
+    })
+    matches = data.get("matches") or []
+
+    name_a = team_name_a.lower()
+    name_b = team_name_b.lower()
+
+    fixtures = []
+    for m in matches:
+        home_name = (m.get("homeTeam") or {}).get("name", "").lower()
+        away_name = (m.get("awayTeam") or {}).get("name", "").lower()
+        names = {home_name, away_name}
+        # Match if both team names appear (partial match ok for abbreviations)
+        if any(name_a in n or n in name_a for n in names) and \
+           any(name_b in n or n in name_b for n in names):
+            fixtures.append(_normalize_fd_match(m, league_id))
+
+    fixtures.sort(
+        key=lambda f: (f.get("fixture") or {}).get("date") or "",
+        reverse=True,
+    )
+    return fixtures[:last]
+
+
+def get_team_recent_matches(team_id: int, last: int = 20) -> list[dict]:
+    """
+    Fetch completed matches for a football-data.org team ID.
+    Returns normalised fixtures newest-first, suitable for form analysis.
+    """
+    if not FD_ENABLED:
+        return []
+    try:
+        now_utc = datetime.now(timezone.utc)
+        # Free tier: restrict to ~14 months (current + previous season overlap)
+        date_from = (now_utc - timedelta(days=420)).strftime("%Y-%m-%d")
+        date_to = now_utc.strftime("%Y-%m-%d")
+        data = fd_get(f"teams/{team_id}/matches", {
+            "dateFrom": date_from,
+            "dateTo":   date_to,
+            "status":   "FINISHED",
+        })
+        matches = data.get("matches") or []
+        # Determine league_id from the first match's competition
+        league_id_for_norm = None
+        if matches:
+            comp_id = (matches[0].get("competition") or {}).get("id")
+            for our_id, fd_id in FD_COMP_MAP.items():
+                if fd_id == comp_id:
+                    league_id_for_norm = our_id
+                    break
+        fixtures = [_normalize_fd_match(m, league_id_for_norm or 39) for m in matches]
+        fixtures.sort(key=lambda f: (f.get("fixture") or {}).get("date") or "", reverse=True)
+        return fixtures[:last]
+    except Exception:
+        return []
+
+
+def is_available() -> bool:
+    """Return True if FOOTBALL_DATA_KEY is set and the client can be used."""
+    return FD_ENABLED
+
+
+def supported_league_ids() -> list[int]:
+    """Return the API-Football league IDs supported by football-data.org free tier."""
+    return list(FD_COMP_MAP.keys())
