@@ -68,3 +68,5 @@ data/models/*.pkl
 tmp/
 tmp_work/
 .env
+.vite/
+cache/
