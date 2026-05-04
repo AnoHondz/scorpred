@@ -21,7 +21,11 @@ REQUIRED_ANALYSIS_FIELDS = (
     "metric_breakdown",
 )
 
-FORBIDDEN_CONFIDENCE_DEFAULTS: set = {53}
+# Confidence 53 is a valid model output on its own; only flag it when paired
+# with a known fake probability pattern.
+_FORBIDDEN_CONFIDENCE_WITH_FAKE_PROBS: set = {53}
+# Keep old name for any external imports — now always empty.
+FORBIDDEN_CONFIDENCE_DEFAULTS: set = set()
 FORBIDDEN_PROBABILITY_PATTERNS = [
     {"a": 38, "draw": 26, "b": 36},
     {"home": 38, "draw": 26, "away": 36},
@@ -43,8 +47,6 @@ def validate_analysis_contract(analysis: dict[str, Any] | None) -> list[str]:
     confidence = analysis.get("confidence")
     if not isinstance(confidence, (int, float)):
         errors.append("confidence must be numeric")
-    elif confidence in FORBIDDEN_CONFIDENCE_DEFAULTS:
-        errors.append(f"forbidden confidence default detected: {confidence}")
 
     probs = analysis.get("probabilities")
     if not isinstance(probs, dict):
@@ -55,6 +57,8 @@ def validate_analysis_contract(analysis: dict[str, Any] | None) -> list[str]:
             errors.append("probabilities keys must be either {a,draw,b} or {home,draw,away}")
         if probs in FORBIDDEN_PROBABILITY_PATTERNS:
             errors.append("forbidden probability fallback pattern detected")
+            if isinstance(confidence, (int, float)) and confidence in _FORBIDDEN_CONFIDENCE_WITH_FAKE_PROBS:
+                errors.append(f"forbidden confidence+probability combination detected: conf={confidence}")
 
     metric_breakdown = analysis.get("metric_breakdown")
     if metric_breakdown not in (None, "Unavailable"):

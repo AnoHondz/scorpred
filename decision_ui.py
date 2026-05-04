@@ -631,6 +631,9 @@ def build_decision_card(
     prob_a = normalize_percent(probabilities.get("a"), 0)
     prob_b = normalize_percent(probabilities.get("b"), 0)
     prob_draw = normalize_percent(probabilities.get("draw"), 0) if sport == "soccer" else 0
+    if prob_a == 0 and prob_b == 0 and (sport != "soccer" or prob_draw == 0):
+        prob_a, prob_b = (37.0, 37.0) if sport == "soccer" else (50.0, 50.0)
+        prob_draw = 26.0 if sport == "soccer" else 0
     recommended_side = str(analysis.get("recommended_side") or "").strip() or team_a
     recommended_side_l = recommended_side.lower()
     if " vs " in recommended_side_l or ("vs" in recommended_side_l and len(recommended_side) > 22):

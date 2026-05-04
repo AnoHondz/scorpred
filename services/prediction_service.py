@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
 
 from services import cache_service
+
+_logger = logging.getLogger(__name__)
 
 _FIXTURE_CARD_TTL = 900      # 15 min
 _MATCH_ANALYSIS_TTL = 1800   # 30 min
@@ -32,15 +35,23 @@ def get_match_analysis(match_id: str | int):
 
 
 def get_fixture_cards(league_id: int):
-    fixture_key = cache_service.make_key("fixtures", league_id)
-    payload = cache_service.get_json(fixture_key, ttl=_FIXTURE_CARD_TTL)
+    # Use a separate namespace from load_fixtures_cached to avoid cache shape collisions.
+    raw_key = cache_service.make_key("fixtures_raw", league_id)
+    payload = cache_service.get_json(raw_key, ttl=_FIXTURE_CARD_TTL)
     if payload is None:
         load_fn = _deps.get("load_fixtures")
         if not load_fn:
             return [], None, "Unavailable", "", ""
-        payload = load_fn(league_id)
-        cache_service.set_json(fixture_key, payload, ttl=_FIXTURE_CARD_TTL)
-    fixtures, load_error, source, marker = payload
+        try:
+            payload = load_fn(league_id)
+        except Exception:
+            _logger.warning("load_fixtures failed for league_id=%s", league_id, exc_info=True)
+            payload = ([], "Fixture loader unavailable", "degraded", "")
+        cache_service.set_json(raw_key, payload, ttl=_FIXTURE_CARD_TTL)
+    try:
+        fixtures, load_error, source, marker = payload
+    except (TypeError, ValueError):
+        fixtures, load_error, source, marker = [], "Cache shape error", "", ""
 
     build_fn = _deps.get("card_from_fixture")
     if not build_fn:
@@ -53,12 +64,14 @@ def get_fixture_cards(league_id: int):
         try:
             analysis = get_match_analysis(str(fixture_id))
         except Exception:
+            _logger.warning("get_match_analysis failed for fixture_id=%s", fixture_id, exc_info=True)
             analysis = None
         if not analysis:
             return None
         try:
             return build_fn(fixture, analysis)
         except Exception:
+            _logger.warning("card_from_fixture failed for fixture_id=%s", fixture_id, exc_info=True)
             return None
 
     cards: list[dict[str, Any]] = []
