@@ -35,9 +35,9 @@ _logger = logging.getLogger("football_data_client")
 
 FD_KEY: str = os.getenv("FOOTBALL_DATA_KEY", "").strip()
 FD_BASE = "https://api.football-data.org/v4"
-FD_TIMEOUT = float(os.getenv("EXTERNAL_API_TIMEOUT_SECONDS", "8"))
-FD_RETRY_ATTEMPTS = 2
-FD_RETRY_BACKOFF = 2.0
+FD_TIMEOUT = float(os.getenv("EXTERNAL_API_TIMEOUT_SECONDS", "4"))
+FD_RETRY_ATTEMPTS = 1
+FD_RETRY_BACKOFF = 0.0
 
 # True when a key is configured
 FD_ENABLED: bool = bool(FD_KEY)
@@ -229,7 +229,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
 
 _CIRCUIT_LOCK = threading.Lock()
 _CIRCUIT_FAILURES: list[float] = []  # timestamps of recent consecutive failures
-FD_CIRCUIT_THRESHOLD = int(os.getenv("FD_CIRCUIT_THRESHOLD", "4"))
+FD_CIRCUIT_THRESHOLD = int(os.getenv("FD_CIRCUIT_THRESHOLD", "2"))
 FD_CIRCUIT_RESET_SECONDS = int(os.getenv("FD_CIRCUIT_RESET_SECONDS", "300"))
 _CIRCUIT_OPEN_UNTIL: float = 0.0
 
