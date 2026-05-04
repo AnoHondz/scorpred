@@ -154,6 +154,19 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
     url = f"{FD_BASE}/{endpoint.lstrip('/')}"
     headers = {"X-Auth-Token": FD_KEY, "Accept": "application/json"}
 
+    # Circuit breaker: if the host has been unreachable recently, return stale
+    # data immediately rather than burning rate-limit tokens on doomed attempts.
+    if _circuit_is_open():
+        _logger.debug("fd circuit open — skipping live request for %s", endpoint)
+        if stale:
+            return stale["data"]
+        if disk_path.exists():
+            try:
+                return _load_json(disk_path)
+            except Exception:
+                pass
+        return {}
+
     # Rate-limit guard: football-data.org free tier = 10 req/min
     # We respect this by keeping a simple per-process token bucket.
     _rate_limit_wait()
@@ -181,9 +194,12 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
 
             resp.raise_for_status()
             result = resp.json()
+            _circuit_record_success()
             break
         except Exception as exc:
             _logger.warning("fd_get failed for %s (attempt %d): %s", endpoint, attempt + 1, exc)
+            _circuit_record_failure()
+            _rate_limit_revoke()
             if attempt < FD_RETRY_ATTEMPTS - 1:
                 time.sleep(FD_RETRY_BACKOFF)
                 continue
@@ -203,6 +219,55 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
             _MEM_CACHE[mem_key] = {"data": result, "ts": now}
 
     return result
+
+
+# ── Circuit breaker ───────────────────────────────────────────────────────────
+# Opens after FD_CIRCUIT_THRESHOLD consecutive connection failures and stays open
+# for FD_CIRCUIT_RESET_SECONDS. While open, fd_get returns stale cache or {}
+# instantly — no rate-limit waits, no retries — so one bad network environment
+# (e.g. Render blocking api.football-data.org) doesn't stall the whole app.
+
+_CIRCUIT_LOCK = threading.Lock()
+_CIRCUIT_FAILURES: list[float] = []  # timestamps of recent consecutive failures
+FD_CIRCUIT_THRESHOLD = int(os.getenv("FD_CIRCUIT_THRESHOLD", "4"))
+FD_CIRCUIT_RESET_SECONDS = int(os.getenv("FD_CIRCUIT_RESET_SECONDS", "300"))
+_CIRCUIT_OPEN_UNTIL: float = 0.0
+
+
+def _circuit_is_open() -> bool:
+    now = time.time()
+    with _CIRCUIT_LOCK:
+        global _CIRCUIT_OPEN_UNTIL
+        if _CIRCUIT_OPEN_UNTIL and now < _CIRCUIT_OPEN_UNTIL:
+            return True
+        if _CIRCUIT_OPEN_UNTIL and now >= _CIRCUIT_OPEN_UNTIL:
+            _CIRCUIT_OPEN_UNTIL = 0.0  # half-open: let one probe through
+        return False
+
+
+def _circuit_record_failure() -> None:
+    now = time.time()
+    with _CIRCUIT_LOCK:
+        global _CIRCUIT_OPEN_UNTIL
+        _CIRCUIT_FAILURES.append(now)
+        # Keep only recent failures within the reset window
+        cutoff = now - FD_CIRCUIT_RESET_SECONDS
+        while _CIRCUIT_FAILURES and _CIRCUIT_FAILURES[0] < cutoff:
+            _CIRCUIT_FAILURES.pop(0)
+        if len(_CIRCUIT_FAILURES) >= FD_CIRCUIT_THRESHOLD and not _CIRCUIT_OPEN_UNTIL:
+            _CIRCUIT_OPEN_UNTIL = now + FD_CIRCUIT_RESET_SECONDS
+            _logger.warning(
+                "fd circuit breaker OPEN after %d failures — skipping fd.org for %ds",
+                len(_CIRCUIT_FAILURES),
+                FD_CIRCUIT_RESET_SECONDS,
+            )
+
+
+def _circuit_record_success() -> None:
+    with _CIRCUIT_LOCK:
+        global _CIRCUIT_OPEN_UNTIL
+        _CIRCUIT_FAILURES.clear()
+        _CIRCUIT_OPEN_UNTIL = 0.0
 
 
 # ── Simple token bucket (10 req / 60 s) ──────────────────────────────────────
@@ -231,6 +296,14 @@ def _rate_limit_wait() -> None:
         _RATE_BUCKET_LOCK.release()
         time.sleep(wait)
         _RATE_BUCKET_LOCK.acquire()
+
+
+def _rate_limit_revoke() -> None:
+    """Remove the most recent rate-limit token — called when a connection fails
+    so that unreachable-host errors don't eat into the real request budget."""
+    with _RATE_BUCKET_LOCK:
+        if _RATE_CALL_TIMES:
+            _RATE_CALL_TIMES.pop()
 
 
 # ── Normalisers ───────────────────────────────────────────────────────────────
