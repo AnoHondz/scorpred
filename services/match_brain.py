@@ -73,6 +73,20 @@ class MatchBrain:
             return "upcoming"
         return "past"
 
+    @staticmethod
+    def _dq_to_completeness_static(data_quality: str | None) -> dict:
+        """Translate scorpred_engine's data_quality string into the data_completeness dict format."""
+        dq = str(data_quality or "").lower()
+        if "strong" in dq or "high" in dq:
+            tier = "strong"
+        elif "moderate" in dq or "partial" in dq:
+            tier = "moderate"
+        elif "limited" in dq or "low" in dq:
+            tier = "limited"
+        else:
+            tier = "partial"
+        return {"tier": tier}
+
     def canonical_from_fixture(self, fixture: dict[str, Any]) -> dict[str, Any] | None:
         teams = fixture.get("teams") or {}
         home = teams.get("home") or {}
@@ -84,9 +98,11 @@ class MatchBrain:
             return None
 
         self._fixture_index[str(fixture_id)] = fixture
-        raw_probs = (fixture.get("prediction") or {}).get("win_probabilities") or {}
-        best_pick = (fixture.get("prediction") or {}).get("best_pick") or {}
-        model_conf = (fixture.get("prediction") or {}).get("confidence_pct")
+        _pred = fixture.get("prediction") or {}
+        raw_probs = _pred.get("win_probabilities") or {}
+        best_pick = _pred.get("best_pick") or {}
+        # scorpred_predict returns "confidence" (str label) not "confidence_pct" (int)
+        model_conf = _pred.get("confidence_pct") or _pred.get("confidence")
         model_metrics = self.get_model_metrics()
         trust_score = model_metrics.get("trust_score")
         if isinstance(model_metrics.get("calibration_score"), str):
@@ -106,7 +122,7 @@ class MatchBrain:
                 },
                 "confidence": model_conf,
                 "recommended_side": best_pick.get("prediction") or best_pick.get("team") or home_name,
-                "data_completeness": (fixture.get("prediction") or {}).get("data_completeness") or {"tier": "partial"},
+                "data_completeness": _pred.get("data_completeness") or self._dq_to_completeness_static(_pred.get("data_quality")),
                 "strengths": [best_pick.get("reasoning")] if best_pick.get("reasoning") else [],
                 "risks": [],
                 "odds": (fixture.get("prediction") or {}).get("odds") or {},

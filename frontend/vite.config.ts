@@ -6,11 +6,19 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:5001',
-        changeOrigin: true,
-      },
+      // All API calls and auth routes go to Flask
+      '/api': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/health': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/login': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/signup': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/logout': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/admin': { target: 'http://127.0.0.1:5001', changeOrigin: true },
     },
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
   },
 })

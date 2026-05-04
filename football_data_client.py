@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 import os
+import re as _re
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -68,19 +69,22 @@ _CACHE_LOCK = threading.Lock()
 _MEM_CACHE: dict[str, dict] = {}   # {"key": {"data": ..., "ts": float}}
 
 _TTL: dict[str, int] = {
-    "competitions/%d/matches":    120,    # 2 min
-    "competitions/%d/standings":  300,    # 5 min
+    "competitions/%d/matches":    300,    # 5 min
+    "competitions/%d/standings":  1800,   # 30 min
     "competitions/%d/teams":      3600,   # 1 hr
-    "teams/%d/matches":           300,    # 5 min
+    "teams/%d/matches":           3600,   # 1 hr — form data rarely changes minute-to-minute
     "matches/%d/head2head":       3600,   # 1 hr
-    "matches/%d":                 120,    # 2 min
-    "default":                    300,
+    "matches/%d":                 300,    # 5 min
+    "default":                    600,
 }
 
 
 def _ttl_for(endpoint: str) -> int:
+    ep = endpoint.strip("/")
     for pattern, secs in _TTL.items():
-        if pattern.replace("%d", "").strip("/") in endpoint:
+        if pattern == "default":
+            continue
+        if _re.fullmatch(pattern.replace("%d", r"\d+"), ep):
             return secs
     return _TTL["default"]
 
@@ -210,23 +214,23 @@ _RATE_WINDOW = 60  # seconds
 
 
 def _rate_limit_wait() -> None:
-    with _RATE_BUCKET_LOCK:
+    """Serialising token-bucket: only one thread proceeds at a time so concurrent
+    callers can never all burst through together and trip the 10 req/min limit."""
+    _RATE_BUCKET_LOCK.acquire()
+    while True:
         now = time.time()
-        # Prune calls outside the window
         cutoff = now - _RATE_WINDOW
         while _RATE_CALL_TIMES and _RATE_CALL_TIMES[0] < cutoff:
             _RATE_CALL_TIMES.pop(0)
-        if len(_RATE_CALL_TIMES) >= _RATE_LIMIT:
-            wait = _RATE_WINDOW - (now - _RATE_CALL_TIMES[0]) + 0.1
-            _logger.debug("Rate-limit: sleeping %.2fs before fd_get", wait)
-            # Release lock while sleeping
-        else:
+        if len(_RATE_CALL_TIMES) < _RATE_LIMIT:
             _RATE_CALL_TIMES.append(now)
+            _RATE_BUCKET_LOCK.release()
             return
-
-    time.sleep(wait)
-    with _RATE_BUCKET_LOCK:
-        _RATE_CALL_TIMES.append(time.time())
+        wait = _RATE_WINDOW - (now - _RATE_CALL_TIMES[0]) + 0.05
+        _logger.debug("Rate-limit: sleeping %.2fs before fd_get", wait)
+        _RATE_BUCKET_LOCK.release()
+        time.sleep(wait)
+        _RATE_BUCKET_LOCK.acquire()
 
 
 # ── Normalisers ───────────────────────────────────────────────────────────────

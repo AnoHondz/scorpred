@@ -3,7 +3,7 @@ services:
     name: scorpred
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && npm --prefix frontend ci && npm --prefix frontend run build
     startCommand: gunicorn app:app --config gunicorn.conf.py
     healthCheckPath: /health
 

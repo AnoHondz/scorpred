@@ -84,6 +84,10 @@ API_KEY_BACKUP = os.getenv("API_FOOTBALL_KEY_BACKUP", "").strip()
 # Causes all subsequent requests to use the backup key until process restarts.
 _PRIMARY_KEY_EXHAUSTED: bool = False
 
+# Session-level flag: set to True when account is suspended so all future
+# API-Football calls are skipped immediately without making a network request.
+_API_FOOTBALL_SUSPENDED: bool = False
+
 # Auto-detect direct mode: either APISPORTS_KEY is set, or host is api-sports.io
 _USING_DIRECT_APISPORTS = bool(_APISPORTS_KEY) or "api-sports.io" in API_HOST
 
@@ -296,7 +300,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     GET request to API-Football with robust error handling, in-memory caching, rate-limit handling, and stale fallback.
     Returns the raw API-Football response dict (containing a "response" list) on success, or {} on failure.
     """
-    global RAPIDAPI_OK
+    global RAPIDAPI_OK, _API_FOOTBALL_SUSPENDED
     params = params or {}
     path = _cache_path(endpoint, params)
     force_refresh = force_refresh or FORCE_REFRESH
@@ -323,6 +327,12 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     if not api_key:
         _logger.error("Missing API_FOOTBALL_KEY / RAPIDAPI_KEY / APISPORTS_KEY environment variable.")
         RAPIDAPI_OK = False
+        return {}
+
+    if _API_FOOTBALL_SUSPENDED:
+        _logger.debug("Skipping API-Football call for %s (account suspended)", endpoint)
+        if stale_entry:
+            return stale_entry["data"] or {}
         return {}
 
     # 403 session suppression: if this endpoint was forbidden this process, skip the call
@@ -436,6 +446,14 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             data = resp.json()
             if data.get("errors"):
                 error_text = str(data.get("errors", "")).lower()
+                # Account suspended — suppress all API-Football calls for this session
+                if "suspended" in error_text:
+                    _API_FOOTBALL_SUSPENDED = True
+                    RAPIDAPI_OK = False
+                    _logger.error(
+                        "API-Football account suspended — skipping all API-Football calls for this session"
+                    )
+                    break
                 # Daily quota exhausted — switch to backup key and retry immediately
                 if "reached the request limit for the day" in error_text:
                     global _PRIMARY_KEY_EXHAUSTED
@@ -1016,20 +1034,9 @@ def get_teams(league_id: int = DEFAULT_LEAGUE_ID, season: int = CURRENT_SEASON) 
 
 
 def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
-    # 1. api-sports.io (has a real h2h endpoint)
-    try:
-        data = api_get("fixtures/headtohead", {"h2h": f"{id_a}-{id_b}"}, cache_hours=6)
-        resp = data.get("response", [])
-        if resp:
-            resp.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
-            return resp[:last]
-    except Exception:
-        pass
-
-    # 2. football-data.org: resolve names then scan by competition
+    # 1. football-data.org: resolve names then scan by competition
     if _FD_AVAILABLE:
         try:
-            # find team names by checking all supported leagues
             name_a = name_b = ""
             for lid in [DEFAULT_LEAGUE_ID, *SUPPORTED_LEAGUE_IDS]:
                 if name_a and name_b:
@@ -1047,6 +1054,16 @@ def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
                         return result
         except Exception:
             pass
+
+    # 2. api-sports.io (has a real h2h endpoint)
+    try:
+        data = api_get("fixtures/headtohead", {"h2h": f"{id_a}-{id_b}"}, cache_hours=6)
+        resp = data.get("response", [])
+        if resp:
+            resp.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
+            return resp[:last]
+    except Exception:
+        pass
 
     team_a_id = _resolve_team_id(id_a)
     team_b_id = _resolve_team_id(id_b)

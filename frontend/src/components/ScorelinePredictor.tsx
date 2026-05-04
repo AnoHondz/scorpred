@@ -282,7 +282,7 @@ function ScoreHeatmap({
   );
 }
 
-function TopScorelines({ scores, teamA, teamB }: { scores: TopScore[]; teamA: string; teamB: string }) {
+function TopScorelines({ scores, teamA: _teamA, teamB: _teamB }: { scores: TopScore[]; teamA: string; teamB: string }) {
   return (
     <div className="space-y-1">
       {scores.slice(0, 8).map((s, idx) => (

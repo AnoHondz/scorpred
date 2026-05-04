@@ -20,6 +20,7 @@ export interface Decision {
   homeId?: number | string;
   awayId?: number | string;
   leagueId?: number | string;
+  odds?: { implied_prob: number; decimal?: number; american?: string };
 }
 
 const ACTION_BADGE: Record<DecisionAction, string> = {

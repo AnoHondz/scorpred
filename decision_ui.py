@@ -960,16 +960,28 @@ def card_to_decision(card: dict) -> dict:
     action = str(card.get("action") or "CONSIDER").upper()
     if action not in {"BET", "CONSIDER", "SKIP"}:
         action = "CONSIDER"
+    team_a = card.get("team_a") or ""
+    team_b = card.get("team_b") or ""
+    rec_side = card.get("recommended_side") or team_a or ""
+    cta = card.get("cta_payload") or {}
     return {
         "action": action,
-        "side": card.get("recommended_side") or card.get("team_a") or "",
+        "side": rec_side,
+        "opponent": team_b if rec_side == team_a else team_a,
+        "teamA": team_a,
+        "teamB": team_b,
         "matchup": card.get("matchup") or "",
+        "matchDate": card.get("match_date") or "",
         "confidence": int(safe_float(card.get("confidence_pct") or card.get("confidence"), 0)),
         "reason": card.get("reason") or "",
         "data": normalize_data_label(
             (card.get("data_confidence") or {}).get("label") or card.get("data_quality")
         ),
         "support": card.get("competition") or "",
-        "logo": card.get("team_a_logo") if card.get("recommended_side") == card.get("team_a") else card.get("team_b_logo") or "",
+        "logo": card.get("team_a_logo") if rec_side == team_a else card.get("team_b_logo") or "",
         "leagueLogo": card.get("league_logo") or "",
+        "sport": card.get("sport") or "nba",
+        "homeId": card.get("team_a_id") or cta.get("team_a") or None,
+        "awayId": card.get("team_b_id") or cta.get("team_b") or None,
+        "leagueId": card.get("league_id") or None,
     }

@@ -25,7 +25,8 @@ try:
 except ImportError:  # pragma: no cover
     def load_dotenv(*_args, **_kwargs):
         return False
-from flask import Flask, jsonify, redirect, render_template as flask_render_template, request, session, url_for, g
+from pathlib import Path
+from flask import Flask, jsonify, redirect, render_template as flask_render_template, request, send_from_directory, session, url_for, g
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -225,6 +226,31 @@ _logger.info(
     "enabled" if _redis_ready else "local-fallback",
     "ready",
 )
+
+# ── React SPA integration ─────────────────────────────────────────────────────
+_SPA_DIST = Path(__file__).parent / "frontend" / "dist"
+_SPA_INDEX = _SPA_DIST / "index.html"
+
+# Prefixes that must always reach Flask — never intercepted for the SPA.
+_BACKEND_PREFIXES = (
+    "/api/", "/static/", "/health", "/status", "/admin/",
+    "/login", "/signup", "/logout",
+)
+
+
+@app.before_request
+def _serve_spa_for_page_routes():
+    """When the React build exists, serve index.html for all non-backend paths."""
+    if not _SPA_INDEX.exists():
+        return None  # no build yet — fall through to Jinja2 routes
+    path = request.path
+    if any(path.startswith(p) for p in _BACKEND_PREFIXES):
+        return None
+    # Static assets emitted by Vite (hashed filenames in /assets/)
+    if path.startswith("/assets/"):
+        filename = path[len("/assets/"):]
+        return send_from_directory(_SPA_DIST / "assets", filename)
+    return send_from_directory(_SPA_DIST, "index.html")
 
 # â”€â”€ Blueprints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _CRITICAL_API_KEYS = {"API_FOOTBALL_KEY", "ANTHROPIC_API_KEY"}
@@ -2413,7 +2439,7 @@ def load_fixtures_cached(league_id: int):
     _logger.debug("fixture_cache miss league_id=%s", league_id)
     data = _load_upcoming_fixtures(
         next_n=24,
-        max_deep_predictions=4,
+        max_deep_predictions=8,
         league=league_id,
         include_injuries=False,
         include_standings=True,
@@ -6763,7 +6789,14 @@ def api_scoreline_soccer():
             if _cached_sl is not None:
                 return jsonify({"status": "ok", "result": _cached_sl})
 
-            # Fetch all 6 data sources in parallel
+            # Fetch all 6 data sources in parallel; each future is resolved
+            # independently so an injury/ESPN failure doesn't kill form data.
+            def _safe_fut(fut, default=None):
+                try:
+                    return fut.result()
+                except Exception:
+                    return default
+
             try:
                 with ThreadPoolExecutor(max_workers=6) as _pool:
                     _fut_a        = _pool.submit(ac.get_team_fixtures, team_a_id, league_id, SEASON, 10)
@@ -6772,12 +6805,12 @@ def api_scoreline_soccer():
                     _fut_inj_a    = _pool.submit(ac.get_injuries, league_id, SEASON, team_a_id)
                     _fut_inj_b    = _pool.submit(ac.get_injuries, league_id, SEASON, team_b_id)
                     _fut_standings= _pool.submit(ac.get_standings, league_id, SEASON)
-                    raw_a      = _fut_a.result()
-                    raw_b      = _fut_b.result()
-                    raw_h2h    = _fut_h2h.result()
-                    raw_inj_a  = _fut_inj_a.result()
-                    raw_inj_b  = _fut_inj_b.result()
-                    standings  = _fut_standings.result()
+                    raw_a      = _safe_fut(_fut_a, [])
+                    raw_b      = _safe_fut(_fut_b, [])
+                    raw_h2h    = _safe_fut(_fut_h2h, [])
+                    raw_inj_a  = _safe_fut(_fut_inj_a, [])
+                    raw_inj_b  = _safe_fut(_fut_inj_b, [])
+                    standings  = _safe_fut(_fut_standings, [])
                 form_a = pred.extract_form(
                     pred.filter_recent_completed_fixtures(raw_a, current_season=SEASON), team_a_id
                 )[:6]
@@ -6835,6 +6868,9 @@ def api_scoreline_soccer():
 
 @app.errorhandler(404)
 def not_found(_):
+    # SPA deep-link: serve index.html so React Router handles the path
+    if _SPA_INDEX.exists() and not request.path.startswith("/api/"):
+        return send_from_directory(_SPA_DIST, "index.html")
     return _error_response(404, "Page not found.")
 
 

@@ -108,18 +108,23 @@ class DecisionEngine:
 
     def _confidence(self, match_data: dict[str, Any], probabilities: dict[str, float], side: str) -> int:
         raw_conf = match_data.get("confidence") or match_data.get("confidence_pct")
-        if raw_conf is not None:
-            # Handle string labels ("High"/"Medium"/"Low") from scorpred engine
-            if isinstance(raw_conf, str):
-                label_map = {"high": 80, "medium": 65, "low": 45}
-                mapped = label_map.get(raw_conf.lower())
-                if mapped is not None:
-                    return mapped
-                return 65  # fallback for unknown string
-            return int(max(0, min(100, round(float(raw_conf)))))
         side_key = "home" if side == match_data.get("home_name") else "away"
         if side.lower() == "draw":
             side_key = "draw"
+        side_prob = probabilities.get(side_key, 0.0)
+
+        if raw_conf is not None:
+            if isinstance(raw_conf, str):
+                label_map = {"high": 80, "medium": 65, "low": 45}
+                label_val = label_map.get(raw_conf.lower(), 65)
+                # When probabilities are meaningful (not the uniform 34/32/34 fallback),
+                # use the predicted side's win probability — it's more informative than a
+                # flat categorical label (e.g. Forest 87% vs Chelsea 5% gives real signal).
+                probs_meaningful = max(probabilities.values()) > 40
+                if probs_meaningful and side_prob > 0:
+                    return int(max(label_val - 10, min(98, round(side_prob))))
+                return label_val
+            return int(max(0, min(100, round(float(raw_conf)))))
         return int(max(0, min(100, round(probabilities.get(side_key, max(probabilities.values()))))))
 
     def _implied_probability(self, match_data: dict[str, Any], side: str) -> float | None:
