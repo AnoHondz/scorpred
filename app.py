@@ -6756,6 +6756,8 @@ def api_scoreline_soccer():
         injuries_b: list[dict] = []
         ml_prob_a: float | None = None
         ml_prob_b: float | None = None
+        opp_strength_a: float | None = None
+        opp_strength_b: float | None = None
         _sl_key: str = ""
 
         if team_a_id and team_b_id:
