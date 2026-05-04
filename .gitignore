@@ -25,13 +25,8 @@ env/
 venv313/
 ENV/
 
-# Transient HTTP/API response caches — never committed
-cache/football/
-cache/nba/
-cache/nba_public/
-cache/props/
-cache/prediction_tracking.json
-cache/prediction_history.json
+# Transient runtime cache — entirely generated, never committed
+cache/
 
 # IDE / OS
 .vscode/
