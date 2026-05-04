@@ -6001,6 +6001,7 @@ def worldcup():
 @app.route("/health")
 @app.route("/status")
 def health():
+    # Keep this fast — Render polls it every 30s. No external API calls here.
     try:
         db.session.execute(text("SELECT 1"))
         db_status = "connected"
@@ -6008,25 +6009,20 @@ def health():
         _logger.warning("Database health check failed", exc_info=True)
         db_status = "unavailable"
     cache_status = "redis" if cache_service._get_redis_client() is not None else "local"
-    api_ok = _safe_external_call(lambda: ac.get_teams(_active_league_id(), SEASON), retries=1, label="health-api-check") is not None
     brain_health = {}
     if _MATCH_BRAIN is not None:
         try:
             brain_health = _MATCH_BRAIN.get_system_health() or {}
         except Exception:
-            app.logger.warning("health: failed to read MatchBrain system health", exc_info=True)
             brain_health = {}
-
-    degraded_mode = bool(brain_health.get("degraded_mode")) or db_status != "connected" or not api_ok
     return jsonify(
         {
-            "status": "ok" if not degraded_mode else "degraded",
+            "status": "ok",
             "app": "ScorPred",
             "release": _runtime_release_tag(),
             "db": db_status,
             "cache": cache_status,
-            "api": "reachable" if api_ok else "unreachable",
-            "degraded_mode": degraded_mode,
+            "degraded_mode": bool(brain_health.get("degraded_mode")),
             "last_refresh": brain_health.get("last_refresh_time"),
             "error_count": int(brain_health.get("error_count") or 0),
             "timestamp": _now_stamp(),

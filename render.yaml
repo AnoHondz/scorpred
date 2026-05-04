@@ -6,18 +6,63 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --config gunicorn.conf.py
     healthCheckPath: /health
+
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.3"
+
+      # ── Flask ──────────────────────────────────────────────────────────────
       - key: SECRET_KEY
-        sync: false
+        sync: false                    # set in Render dashboard
       - key: SCORPRED_DATA_ROOT
-        value: /tmp/scorpred
+        value: /tmp/scorpred           # writable ephemeral storage on Render
+
+      # ── Football API (api-sports.io) ───────────────────────────────────────
+      - key: APISPORTS_KEY
+        sync: false
+      - key: APISPORTS_KEY_BACKUP
+        sync: false
       - key: API_FOOTBALL_KEY
         sync: false
+      - key: API_FOOTBALL_KEY_BACKUP
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: API_FOOTBALL_BASE_URL
+        value: https://v3.football.api-sports.io
+      - key: API_FOOTBALL_HOST
+        value: v3.football.api-sports.io
+      - key: API_FOOTBALL_FREE_MAX_SEASON
+        value: "2024"
+
+      # ── football-data.org (preferred free provider) ────────────────────────
+      - key: FOOTBALL_DATA_KEY
+        sync: false
+
+      # ── NBA API (RapidAPI) ─────────────────────────────────────────────────
       - key: NBA_API_KEY
         sync: false
+      - key: NBA_API_HOST
+        value: nba-api-free-data.p.rapidapi.com
+      - key: NBA_API_BASE_URL
+        value: https://nba-api-free-data.p.rapidapi.com
+
+      # ── Optional integrations ──────────────────────────────────────────────
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: ODDS_API_KEY
         sync: false
+
+      # ── Email alerts ───────────────────────────────────────────────────────
+      - key: ALERT_EMAIL
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
