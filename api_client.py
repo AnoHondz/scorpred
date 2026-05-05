@@ -265,7 +265,10 @@ def _cache_valid(path: Path, hours: int = CACHE_HOURS) -> bool:
 
 def _load(path: Path) -> Any:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        content = f.read().strip()
+    if not content:
+        raise ValueError(f"Empty cache file: {path}")
+    return json.loads(content)
 
 
 def _save(path: Path, data: Any) -> None:
@@ -1472,11 +1475,17 @@ def get_standings(
         team = entry.get("team") or {}
         stats = _espn_stat_map(entry.get("stats") or [])
         wins, draws, losses = _parse_record(str(stats.get("overall", "")))
-        played = _si(stats.get("gamesPlayed"))
-        goals_for = _si(stats.get("pointsFor"))
-        goals_against = _si(stats.get("pointsAgainst"))
+        # ESPN uses several key names; try each in order
+        played = (_si(stats.get("gamesPlayed")) or _si(stats.get("GP"))
+                  or _si(stats.get("played")) or (wins + draws + losses) or None)
+        goals_for = (_si(stats.get("pointsFor")) or _si(stats.get("GF"))
+                     or _si(stats.get("goals_for")))
+        goals_against = (_si(stats.get("pointsAgainst")) or _si(stats.get("GA"))
+                         or _si(stats.get("goals_against")))
+        rank = (_si(entry.get("rank")) or _si(stats.get("rank"))
+                or _si(stats.get("RK")) or _si(stats.get("rk")))
         rows.append({
-            "rank": _si(stats.get("rank")),
+            "rank": rank,
             "team": {
                 "id": _si(team.get("id")),
                 "name": team.get("displayName") or team.get("name") or "",

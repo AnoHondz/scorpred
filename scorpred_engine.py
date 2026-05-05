@@ -1179,9 +1179,11 @@ def build_opp_strengths_from_standings(standings: list) -> dict[str, float]:
         pos_score = (total - rank) / (total - 1) * 10 if total > 1 else 5.0
 
         # Standings data may include points, played, win/wins, and win percentage.
+        # ESPN rows nest these under s["all"]; api-football puts them at the top level.
+        _all = s.get("all") or {}
         points = s.get("points") or s.get("pts")
-        played = s.get("played") or s.get("matches_played") or s.get("games")
-        wins = s.get("win") or s.get("wins") or s.get("w")
+        played = s.get("played") or s.get("matches_played") or s.get("games") or _all.get("played")
+        wins = s.get("win") or s.get("wins") or s.get("w") or _all.get("win")
         win_pct = None
         if wins is not None and played:
             try:

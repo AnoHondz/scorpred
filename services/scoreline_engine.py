@@ -232,9 +232,11 @@ def _calibrate_lambdas(
     lam_a = (gf_a + ga_b) / 2.0
     lam_b = (gf_b + ga_a) / 2.0
 
-    # H2H blend (up to 25% weight)
-    if h2h and len(h2h) >= 2:
-        h2h_w = min(0.25, len(h2h) * 0.05)
+    # H2H blend: up to 25% weight normally; 60% when both form lists are empty
+    # (lower threshold to 1 match so any H2H data helps differentiate lambdas)
+    if h2h and len(h2h) >= 1:
+        no_form = not form_a and not form_b
+        h2h_w = 0.60 if no_form else min(0.25, len(h2h) * 0.05)
         h2h_gf_a = sum(float(m.get("gf") or 0) for m in h2h[:5]) / max(len(h2h[:5]), 1)
         h2h_gf_b = sum(float(m.get("ga") or 0) for m in h2h[:5]) / max(len(h2h[:5]), 1)
         lam_a = lam_a * (1 - h2h_w) + h2h_gf_a * h2h_w
