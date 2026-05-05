@@ -108,7 +108,10 @@ def _cache_valid(path: Path, ttl: int) -> bool:
 
 def _load_json(path: Path) -> Any:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        content = f.read().strip()
+    if not content:
+        raise ValueError(f"Empty cache file: {path}")
+    return json.loads(content)
 
 
 def _save_json(path: Path, data: Any) -> None:

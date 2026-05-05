@@ -70,7 +70,10 @@ def _cache_valid(path: Path, ttl_seconds: int) -> bool:
 
 def _load_cache(path: Path) -> Any:
     with open(path, encoding="utf-8") as file:
-        return json.load(file)
+        content = file.read().strip()
+    if not content:
+        raise ValueError(f"Empty cache file: {path}")
+    return json.loads(content)
 
 
 def _save_cache(path: Path, payload: Any) -> None:

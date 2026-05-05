@@ -62,7 +62,10 @@ def _save_cache(path: Path, data: dict) -> None:
 
 def _load_cache(path: Path) -> dict:
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        content = f.read().strip()
+    if not content:
+        raise ValueError(f"Empty cache file: {path}")
+    return json.loads(content)
 
 
 # ── Core request ───────────────────────────────────────────────────────────────
