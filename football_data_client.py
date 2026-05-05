@@ -233,7 +233,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
 _CIRCUIT_LOCK = threading.Lock()
 _CIRCUIT_FAILURES: list[float] = []  # timestamps of recent consecutive failures
 FD_CIRCUIT_THRESHOLD = int(os.getenv("FD_CIRCUIT_THRESHOLD", "2"))
-FD_CIRCUIT_RESET_SECONDS = int(os.getenv("FD_CIRCUIT_RESET_SECONDS", "300"))
+FD_CIRCUIT_RESET_SECONDS = int(os.getenv("FD_CIRCUIT_RESET_SECONDS", "3600"))
 _CIRCUIT_OPEN_UNTIL: float = 0.0
 
 

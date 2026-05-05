@@ -199,6 +199,12 @@ import threading
 _memory_cache: dict = {}
 _cache_lock = threading.Lock()
 
+# In-process team fixture cache — keyed by (team_id, league_id, season, last)
+# Avoids re-running the ESPN scoreboard scan on every scoreline request.
+_team_fixtures_cache: dict = {}   # key → {"data": list, "ts": float}
+_team_fixtures_lock = threading.Lock()
+_TEAM_FIXTURES_TTL = 7200  # 2 hours
+
 # ── TTL constants (seconds) — single source of truth ─────────────────────────
 _ENDPOINT_TTLS: dict[str, int] = {
     "fixtures":          120,   # 2 min  — match schedules change infrequently
@@ -1307,7 +1313,7 @@ def get_injuries(
 
 
 def _espn_scoreboard_team_fixtures(team_id: int, league_id: int, last: int = 10) -> list[dict]:
-    """Scan the last 8 weeks of ESPN scoreboard results for matches involving team_id.
+    """Scan the last 3 weeks of ESPN scoreboard results for matches involving team_id.
 
     Used as a last-resort fallback when the per-team schedule endpoint returns empty
     (e.g. cached-empty response on startup).  The scoreboard uses the same team IDs
@@ -1317,7 +1323,7 @@ def _espn_scoreboard_team_fixtures(team_id: int, league_id: int, last: int = 10)
     if not slug:
         return []
     now_utc = datetime.now(timezone.utc)
-    day_offsets = list(range(-56, 1))  # last 8 weeks including today
+    day_offsets = list(range(-21, 1))  # last 3 weeks (soccer plays weekly, 3 weeks = ~3 matchdays)
 
     def _fetch_day(day_offset: int) -> dict:
         target = now_utc + timedelta(days=day_offset)
@@ -1366,6 +1372,13 @@ def get_team_fixtures(
     season: int = CURRENT_SEASON,
     last: int = 10,
 ) -> list:
+    # Check in-process cache first (avoids re-running the ESPN scoreboard scan)
+    _cache_key_tf = (team_id, league_id, season, last)
+    with _team_fixtures_lock:
+        _entry = _team_fixtures_cache.get(_cache_key_tf)
+        if _entry and (time.time() - _entry["ts"]) < _TEAM_FIXTURES_TTL:
+            return _entry["data"]
+
     def _unique_fixtures(fixtures: list[dict]) -> list[dict]:
         seen = {}
         for fixture in fixtures:
@@ -1379,6 +1392,11 @@ def get_team_fixtures(
                 seen.setdefault(key, fixture)
         return list(seen.values())
 
+    def _cache_and_return(result: list) -> list:
+        with _team_fixtures_lock:
+            _team_fixtures_cache[_cache_key_tf] = {"data": result, "ts": time.time()}
+        return result
+
     logger = logging.getLogger("api_client")
     fixtures = []
 
@@ -1391,7 +1409,7 @@ def get_team_fixtures(
             fd_fixtures = _fdc.get_team_recent_matches(team_id, last=last)
             if fd_fixtures:
                 logger.debug(f"[API_CLIENT] team_id={team_id} returning {len(fd_fixtures)} fixtures from football-data.org")
-                return fd_fixtures
+                return _cache_and_return(fd_fixtures)
     except Exception:
         pass
 
@@ -1414,7 +1432,7 @@ def get_team_fixtures(
                 reverse=True,
             )
             logger.debug(f"[API_CLIENT] team_id={team_id} returning {len(fixtures[:last])} completed fixtures")
-            return fixtures[:last]
+            return _cache_and_return(fixtures[:last])
     except Exception as exc:
         logger.warning(f"[API_CLIENT] get_team_fixtures failed for team_id={team_id}: {exc}")
 
@@ -1430,13 +1448,13 @@ def get_team_fixtures(
     if fixtures:
         fixtures = _unique_fixtures(fixtures)
         fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
-        return fixtures[:last]
+        return _cache_and_return(fixtures[:last])
 
-    # Scoreboard scan: fetch the last 8 weeks of completed league results and
+    # Scoreboard scan: fetch the last 3 weeks of completed league results and
     # pick out any match involving team_id.  Reliable because it uses the same
     # ESPN team IDs that come from the upcoming-fixtures scoreboard, and avoids
     # the per-team schedule endpoint that can return an empty cached response.
-    return _espn_scoreboard_team_fixtures(team_id, league_id, last=last)
+    return _cache_and_return(_espn_scoreboard_team_fixtures(team_id, league_id, last=last))
 
 
 def get_standings(
