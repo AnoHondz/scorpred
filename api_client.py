@@ -1303,6 +1303,60 @@ def get_injuries(
     return []
 
 
+def _espn_scoreboard_team_fixtures(team_id: int, league_id: int, last: int = 10) -> list[dict]:
+    """Scan the last 8 weeks of ESPN scoreboard results for matches involving team_id.
+
+    Used as a last-resort fallback when the per-team schedule endpoint returns empty
+    (e.g. cached-empty response on startup).  The scoreboard uses the same team IDs
+    as the upcoming-fixtures endpoint so no ID translation is needed.
+    """
+    slug = _espn_slug(league_id)
+    if not slug:
+        return []
+    now_utc = datetime.now(timezone.utc)
+    day_offsets = list(range(-56, 1))  # last 8 weeks including today
+
+    def _fetch_day(day_offset: int) -> dict:
+        target = now_utc + timedelta(days=day_offset)
+        date_str = target.strftime("%Y%m%d")
+        try:
+            return _espn_get_json(
+                f"{ESPN_BASE}/{slug}/scoreboard?dates={date_str}",
+                f"scoreboard:{league_id}:{date_str}",
+                ttl_hours=6,
+            )
+        except Exception:
+            return {}
+
+    payloads: list[dict] = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        payloads = list(pool.map(_fetch_day, day_offsets))
+
+    seen_ids: set[str] = set()
+    fixtures: list[dict] = []
+    for payload in payloads:
+        for event in payload.get("events") or []:
+            competitions = event.get("competitions") or []
+            if not competitions:
+                continue
+            comp = competitions[0]
+            competitor_ids = {str(c.get("id") or "") for c in (comp.get("competitors") or [])}
+            if str(team_id) not in competitor_ids:
+                continue
+            fixture = _normalize_espn_fixture(event, league_id)
+            if not fixture or not _fixture_finished(fixture):
+                continue
+            fid = str((fixture.get("fixture") or {}).get("id") or "")
+            if fid and fid in seen_ids:
+                continue
+            if fid:
+                seen_ids.add(fid)
+            fixtures.append(fixture)
+
+    fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
+    return fixtures[:last]
+
+
 def get_team_fixtures(
     team_id: int,
     league_id: int = DEFAULT_LEAGUE_ID,
@@ -1361,7 +1415,7 @@ def get_team_fixtures(
     except Exception as exc:
         logger.warning(f"[API_CLIENT] get_team_fixtures failed for team_id={team_id}: {exc}")
 
-    # ESPN fallback
+    # ESPN fallback – try per-team schedule first, then scoreboard scan
     fixtures = []
     for season_year in (season, season - 1):
         try:
@@ -1375,7 +1429,11 @@ def get_team_fixtures(
         fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
         return fixtures[:last]
 
-    return []
+    # Scoreboard scan: fetch the last 8 weeks of completed league results and
+    # pick out any match involving team_id.  Reliable because it uses the same
+    # ESPN team IDs that come from the upcoming-fixtures scoreboard, and avoids
+    # the per-team schedule endpoint that can return an empty cached response.
+    return _espn_scoreboard_team_fixtures(team_id, league_id, last=last)
 
 
 def get_standings(
