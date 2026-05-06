@@ -82,17 +82,13 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
 
       {/* League switcher */}
       {leagues.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+        <div className="league-scroll">
           {leagues.map((lg) => (
             <button
               key={lg.id}
               type="button"
               onClick={() => { setSelectedLeagueId(lg.id); setSelectedDate(todayISO()); }}
-              className={`flex-shrink-0 flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-[12px] font-semibold transition
-                ${selectedLeagueId === lg.id
-                  ? 'border-teal-500/50 bg-teal-500/[0.12] text-teal-300'
-                  : 'border-white/[0.08] bg-white/[0.03] text-slate-500 hover:border-white/20 hover:text-slate-300'
-                }`}
+              className={`league-pill ${selectedLeagueId === lg.id ? 'league-pill-active' : ''}`}
             >
               <span>{lg.flag}</span>
               <span>{lg.name}</span>

@@ -59,15 +59,15 @@ export default function HomePage({ onSelectMatch }: { onSelectMatch: (d: Decisio
           </div>
 
           {/* Sport toggle */}
-          <div className="flex items-center gap-1 rounded-lg border border-white/[0.08] bg-white/[0.03] p-1">
+          <div className="flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.025] p-1">
             {(['All', 'Soccer', 'NBA'] as SportFilter[]).map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setSport(s)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider transition ${
+                className={`rounded-full px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-wider transition-all ${
                   sport === s
-                    ? 'bg-emerald-400/[0.12] text-emerald-300'
+                    ? 'bg-emerald-400/[0.14] text-emerald-300 shadow-sm'
                     : 'text-slate-500 hover:text-slate-300'
                 }`}
               >
