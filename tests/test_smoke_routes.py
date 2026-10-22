@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -10,13 +10,17 @@ import decision_ui as dui
 import nba_routes
 import security
 from db_models import db
+from db_models import User
+import user_auth
 from services import bets_service
 from services import cache_service
+from tests.source_contracts import fresh_source
 
 
 def _sample_fixture(match_id: int = 9001) -> dict:
     return {
-        "fixture": {"id": match_id, "date": "2026-04-24T15:00:00+00:00"},
+        "data_freshness": fresh_source(),
+        "fixture": {"id": match_id, "date": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
         "teams": {
             "home": {"id": 1, "name": "AFC Bournemouth", "logo": ""},
             "away": {"id": 2, "name": "Leeds", "logo": ""},
@@ -94,6 +98,10 @@ def client(monkeypatch):
     monkeypatch.setattr(nba_routes, "_prediction_inner", lambda: "NBA Prediction Smoke")
 
     with flask_app_module.app.test_client() as c:
+        with flask_app_module.app.app_context():
+            user_auth._save_user({"email": "smoke@example.test", "password_hash": user_auth._hash_password("example-password")})
+        with c.session_transaction() as sess:
+            sess[user_auth.USER_SESSION_KEY] = "smoke@example.test"
         yield c
 
 
@@ -312,7 +320,7 @@ def test_add_to_bets_persists_to_database(client):
         },
     )
     assert response.status_code == 200
-    bets = bets_service.list_bets()
+    bets = bets_service.list_bets(user_id=client.get("/api/session").get_json()["user"]["id"])
     assert len(bets) == 1
     assert bets[0]["match_id"] == "42"
 
@@ -352,12 +360,15 @@ def test_delete_bet_returns_404_for_missing_row(client):
 
 
 def test_health_degrades_gracefully_when_api_unreachable(client, monkeypatch):
-    monkeypatch.setattr(flask_app_module.ac, "get_teams", lambda *_args, **_kwargs: (_ for _ in ()).throw(Exception("down")))
+    # Readiness reports cached provider state; it must never call a live API.
+    monkeypatch.setattr(flask_app_module.ac, "get_teams", lambda *_args, **_kwargs: pytest.fail("Health must not call provider"))
+    monkeypatch.setattr(flask_app_module.MatchBrain, "get_system_health", lambda self: {"api_status": "degraded", "degraded_mode": True})
     response = client.get("/health")
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["status"] in {"ok", "degraded"}
-    assert payload["api"] == "unreachable"
+    assert payload["api"] == "degraded"
+    assert payload["degraded_mode"] is True
 
 
 def test_cache_service_redis_path(monkeypatch):

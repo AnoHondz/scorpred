@@ -211,22 +211,45 @@ def test_ml_features_h2h_two_entry_mixed_results():
 
 
 def test_ml_features_opp_ppg_computed_from_form():
-    """home_opp_avg_ppg_5 and away_opp_avg_ppg_5 must be non-default when form data is non-empty.
-
-    Naming convention:
-      home_opp_avg_ppg_5 = "avg PPG of the home team's *opponent*" = away team's PPG → uses form_b
-      away_opp_avg_ppg_5 = "avg PPG of the away team's *opponent*" = home team's PPG → uses form_a
-    """
-    # form_b has 5 wins → ppg = 3.0 → home_opp_avg_ppg_5 = 3.0
-    # form_a has 5 losses → ppg = 0.0 → away_opp_avg_ppg_5 = 0.0
+    """Each feature uses that team's historical opponents' pre-match snapshots."""
     features = sm._ml_features({
         "sport": "soccer",
-        "form_a": _form_rows(5, result="L", gf=0.0, ga=2.0),
-        "form_b": _form_rows(5, result="W", gf=2.0, ga=0.0),
+        "form_a": [{**row, "opp_ppg": 2.4} for row in _form_rows(5, result="L", gf=0.0, ga=2.0)],
+        "form_b": [{**row, "opp_ppg": 0.8} for row in _form_rows(5, result="W", gf=2.0, ga=0.0)],
         "h2h_form_a": [],
     })
-    assert features["home_opp_avg_ppg_5"] == 3.0, features["home_opp_avg_ppg_5"]
-    assert features["away_opp_avg_ppg_5"] == 0.0, features["away_opp_avg_ppg_5"]
+    assert features["home_opp_avg_ppg_5"] == 2.4
+    assert features["away_opp_avg_ppg_5"] == 0.8
+
+
+def test_ml_features_use_ten_match_history_and_target_fixture_date():
+    home_history = [
+        {"result": "W", "gf": 2.0, "ga": 0.0, "date": "2026-10-15"}
+        for _ in range(5)
+    ] + [
+        {"result": "L", "gf": 0.0, "ga": 2.0, "date": "2026-10-01"}
+        for _ in range(5)
+    ]
+    away_history = [
+        {"result": "D", "gf": 1.0, "ga": 1.0, "date": "2026-10-18"}
+        for _ in range(10)
+    ]
+
+    features = sm._ml_features({
+        "sport": "soccer",
+        "form_a": _form_rows(5, gf=1.0, ga=1.0),
+        "form_b": _form_rows(5, gf=1.0, ga=1.0),
+        "ml_form_a": home_history,
+        "ml_form_b": away_history,
+        "target_date": "2026-10-25T15:00:00Z",
+    })
+
+    assert features["home_avg_gf_5"] == 2.0
+    assert features["home_avg_gf_10"] == 1.0
+    assert features["home_gf_delta_5v10"] == 1.0
+    assert features["home_ppg_delta_5v10"] == 1.5
+    assert features["days_since_last_match_home"] == 10.0
+    assert features["days_since_last_match_away"] == 7.0
 
 
 def test_ml_features_defaults_when_context_is_empty():
@@ -234,5 +257,5 @@ def test_ml_features_defaults_when_context_is_empty():
     features = sm._ml_features({"sport": "soccer"})
     assert features["h2h_home_points_avg"] == 1.0
     assert features["h2h_goal_diff_avg"]   == 0.0
-    assert features["home_opp_avg_ppg_5"]  == 1.0
-    assert features["away_opp_avg_ppg_5"]  == 1.0
+    assert features["home_opp_avg_ppg_5"] is None
+    assert features["away_opp_avg_ppg_5"] is None

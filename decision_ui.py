@@ -305,20 +305,8 @@ def strength_for_prediction(
 
 
 def display_confidence(raw_pct: float, tier: str) -> int:
-    """Map raw confidence into a believable product-facing range.
-
-    The ranges intentionally avoid dead-flat 50/50 displays unless the input is
-    genuinely broken. They are still tied to the internal strength band.
-    """
-    if tier == "Best Bet":
-        return int(round(clamp(raw_pct or 72, 66, 88)))
-    if tier == "Strong Lean":
-        return int(round(clamp(raw_pct or 65, 60, 75)))
-    if tier == "Lean":
-        return int(round(clamp(raw_pct or 58, 54, 65)))
-    if tier == "Risky":
-        return int(round(clamp(raw_pct or 54, 53, 58)))
-    return 0
+    """Format the supplied score without promoting weak or missing evidence."""
+    return int(round(clamp(safe_float(raw_pct, 0), 0, 100)))
 
 
 def action_for_strength(*, tier: str, confidence_pct: float, data_state: str, no_pick: bool) -> str:
@@ -346,29 +334,8 @@ def _friendly_probability_rows(
     confidence_pct: float,
     draw_risk: bool,
 ) -> dict[str, float]:
-    """Fill missing or flat probabilities with evidence-shaped display values."""
-    a = probs.get("a", 0)
-    b = probs.get("b", 0)
-    draw = probs.get("draw", 0)
-    values = [a, b] + ([draw] if sport == "soccer" else [])
-    flat = bool(values) and (max(values) - min(values) <= 1.0)
-    missing = a == 0 and b == 0 and (sport != "soccer" or draw == 0)
-    placeholder = _probabilities_signal_placeholder(probs, sport=sport)
-    if not missing and not flat and not placeholder:
-        return probs
-
-    pick = selected_key if selected_key in {"a", "b"} else "a"
-    pick_pct = clamp(confidence_pct or 56, 54, 72)
-    if sport == "soccer":
-        draw_pct = 28 if draw_risk else (24 if pick_pct < 62 else 19)
-        other_pct = max(8, 100 - pick_pct - draw_pct)
-        if pick == "a":
-            return {"a": round(pick_pct, 1), "b": round(other_pct, 1), "draw": round(draw_pct, 1)}
-        return {"a": round(other_pct, 1), "b": round(pick_pct, 1), "draw": round(draw_pct, 1)}
-    other_pct = 100 - pick_pct
-    if pick == "a":
-        return {"a": round(pick_pct, 1), "b": round(other_pct, 1), "draw": 0}
-    return {"a": round(other_pct, 1), "b": round(pick_pct, 1), "draw": 0}
+    """Display only probabilities supplied by the prediction source."""
+    return probs
 
 
 def clean_reason(text: str | None) -> str:
@@ -603,7 +570,7 @@ def build_decision_card(
             "matchup": f"{team_a} vs {team_b}",
             "confidence": conf,
             "probabilities": {"a": probs.get("a"), "draw": probs.get("draw"), "b": probs.get("b")},
-            "action": prediction.get("play_type") or ("BET" if safe_float(conf, 0) >= 62 else "CONSIDER"),
+            "action": prediction.get("action") or prediction.get("play_type") or "SKIP",
             "recommended_side": best_pick.get("prediction") or best_pick.get("team") or team_a,
             "reason": best_pick.get("reasoning") or prediction.get("decision_summary") or prediction.get("matchup_reading") or "",
             "data_quality": "Strong Data" if tier == "strong" else ("Partial Data" if tier in {"moderate", "partial"} else "Limited Data"),
@@ -625,15 +592,14 @@ def build_decision_card(
 
     confidence = analysis["confidence"]
     raw_action = str(analysis.get("action") or "CONSIDER").upper()
-    action = "CONSIDER" if raw_action in {"SKIP", "AVOID", "NO PICK", "NOPICK"} else raw_action
+    action = "SKIP" if raw_action in {"AVOID", "NO PICK", "NOPICK"} else raw_action
+    if action not in ACTION_ORDER:
+        action = "SKIP"
     probabilities = analysis["probabilities"]
     sport = str(_.get("sport") or "soccer").lower()
     prob_a = normalize_percent(probabilities.get("a"), 0)
     prob_b = normalize_percent(probabilities.get("b"), 0)
     prob_draw = normalize_percent(probabilities.get("draw"), 0) if sport == "soccer" else 0
-    if prob_a == 0 and prob_b == 0 and (sport != "soccer" or prob_draw == 0):
-        prob_a, prob_b = (37.0, 37.0) if sport == "soccer" else (50.0, 50.0)
-        prob_draw = 26.0 if sport == "soccer" else 0
     recommended_side = str(analysis.get("recommended_side") or "").strip() or team_a
     recommended_side_l = recommended_side.lower()
     if " vs " in recommended_side_l or ("vs" in recommended_side_l and len(recommended_side) > 22):
@@ -746,14 +712,6 @@ def sort_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def assign_opportunity_ranks(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
     playable = sort_cards(_playable_cards(cards))
-    if playable and not any(card.get("action") == "BET" for card in playable):
-        best = playable[0]
-        if safe_float(best.get("confidence_pct"), 0) >= 62:
-            best["action"] = "BET"
-            best["action_label"] = "BET"
-            best["action_class"] = "bet"
-            best["support_note"] = "Best available edge on this slate."
-            best["support_text"] = best["support_note"]
     for index, card in enumerate(playable, start=1):
         card["opportunity_rank"] = index
     return cards
@@ -959,27 +917,46 @@ def normalize_data_label(raw: str | None) -> str:
 def card_to_decision(card: dict) -> dict:
     action = str(card.get("action") or "CONSIDER").upper()
     if action not in {"BET", "CONSIDER", "SKIP"}:
-        action = "CONSIDER"
+        action = "SKIP"
     team_a = card.get("team_a") or ""
     team_b = card.get("team_b") or ""
     rec_side = card.get("recommended_side") or team_a or ""
     cta = card.get("cta_payload") or {}
+    probabilities = card.get("probabilities") or {}
+    def side_name(value):
+        return str(value).lower().removesuffix("!").removesuffix(" win").strip()
+    is_home = side_name(rec_side) == side_name(team_a)
+    side_key = "draw" if side_name(rec_side) == "draw" else ("a" if is_home else "b")
+    probability = probabilities.get(side_key)
     return {
+        "matchId": str(card.get("match_id") or cta.get("event_id") or ""),
+        "winProbability": normalize_percent(probability, 0) if probability is not None and card.get("sport") != "nfl" else None,
+        "drawProbability": normalize_percent(probabilities.get("draw"), 0) if probabilities.get("draw") is not None and card.get("sport") != "nfl" else None,
+        "scenarioShare": normalize_percent(probability, 0) if probability is not None and card.get("sport") == "nfl" else None,
+        "tiedScenarioShare": normalize_percent(probabilities.get("draw"), 0) if probabilities.get("draw") is not None and card.get("sport") == "nfl" else None,
+        "modelSource": card.get("model_source") or "weighted_rules",
         "action": action,
         "side": rec_side,
-        "opponent": team_b if rec_side == team_a else team_a,
+        "opponent": team_b if is_home else team_a,
         "teamA": team_a,
         "teamB": team_b,
         "matchup": card.get("matchup") or "",
-        "matchDate": card.get("match_date") or "",
+        "matchDate": card.get("game_date") or card.get("match_date") or cta.get("event_date") or "",
+        "slateDate": card.get("slate_date") or "",
+        "eventStatus": card.get("event_status"),
+        "dataFreshness": card.get("data_freshness") or {},
+        "confidenceMeasure": "scenario_share" if card.get("sport") == "nfl" else "rule_confidence",
         "confidence": int(safe_float(card.get("confidence_pct") or card.get("confidence"), 0)),
         "reason": card.get("reason") or "",
         "data": normalize_data_label(
             (card.get("data_confidence") or {}).get("label") or card.get("data_quality")
         ),
         "support": card.get("competition") or "",
-        "logo": card.get("team_a_logo") if rec_side == team_a else card.get("team_b_logo") or "",
+        "logo": card.get("team_a_logo") if is_home else card.get("team_b_logo") or "",
         "leagueLogo": card.get("league_logo") or "",
+        "teamALogo": card.get("team_a_logo") or "",
+        "teamBLogo": card.get("team_b_logo") or "",
+        "market": card.get("market") if card.get("sport") == "nfl" and isinstance(card.get("market"), dict) else None,
         "sport": card.get("sport") or "nba",
         "homeId": card.get("team_a_id") or cta.get("team_a") or None,
         "awayId": card.get("team_b_id") or cta.get("team_b") or None,

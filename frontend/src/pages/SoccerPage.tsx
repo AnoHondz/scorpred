@@ -1,6 +1,12 @@
-import { useEffect, useState } from 'react';
+import { navigate, useLocation, localToday } from '../navigation';
+import RequestError from '../components/RequestError';
 import { useFetch } from '../hooks/useFetch';
+import { useNow } from '../hooks/useNow';
+import { decisionAt } from '../decisionLifecycle';
+import { slatePlan } from '../slate';
 import { CardSkeleton, DateTabs, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
+import DataStatus from '../components/DataStatus';
+import { MatchupStage } from '../components/immersive/CommandCenter';
 
 interface SoccerData {
   slate: Decision[];
@@ -9,6 +15,7 @@ interface SoccerData {
   availableDates?: string[];
   selectedDate?: string;
   error?: string | null;
+  last_updated?: string | null;
 }
 
 interface League {
@@ -30,41 +37,29 @@ function SoccerWatermark() {
   );
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = localToday;
 
 export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decision) => void }) {
-  const [selectedLeagueId, setSelectedLeagueId] = useState<number>(39);
-  const [leagues, setLeagues] = useState<League[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>(todayISO());
-
-  useEffect(() => {
-    fetch('/api/leagues')
-      .then((r) => r.json())
-      .then((json) => { if (json.leagues) setLeagues(json.leagues); })
-      .catch(() => {});
-  }, []);
-
-  const url = `/api/dashboard/soccer?league_id=${selectedLeagueId}&date=${selectedDate}`;
-  const { data, loading, error } = useFetch<SoccerData>(url, [selectedLeagueId, selectedDate]);
-
+  const now = useNow();
+  const location = useLocation();
+  const params = new URLSearchParams(location.split('?')[1]);
+  const selectedLeagueId = Number(params.get('league_id') || 39);
+  const requestedDate = params.get('date') || '';
+  const leagueData = useFetch<{ leagues: League[] }>('/api/leagues');
+  const leagues = leagueData.data?.leagues ?? [];
+  const url = `/api/dashboard/soccer?league_id=${selectedLeagueId}&date=${requestedDate}`;
+  const { data, loading, error, retry } = useFetch<SoccerData>(url);
   const availableDates = data?.availableDates ?? [];
-  // Sync to the date the server actually served (handles fallback when today has no games)
-  useEffect(() => {
-    if (data?.selectedDate && data.selectedDate !== selectedDate) {
-      setSelectedDate(data.selectedDate);
-    } else if (availableDates.length && !availableDates.includes(selectedDate)) {
-      setSelectedDate(availableDates[0]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.selectedDate, availableDates.join(',')]);
+  const selectedDate = requestedDate || data?.selectedDate || todayISO();
+  const setSelectedDate = (date: string) => navigate(`/soccer?league_id=${selectedLeagueId}&date=${date}`);
 
   const isTBD = (d: Decision) =>
     !d.teamA || !d.teamB || d.teamA === 'TBD' || d.teamB === 'TBD' ||
     (d.matchup || '').includes('TBD');
 
-  const slate = (data?.slate ?? []).filter(d => !isTBD(d));
-  const top   = (data?.topOpportunities ?? []).filter(d => !isTBD(d));
-  const plan  = data?.plan ?? { bet: 0, consider: 0, skip: 0 };
+  const slate = (data?.slate ?? []).map(card => decisionAt(card, now)).filter(d => !isTBD(d));
+  const top = (data?.topOpportunities ?? []).map(card => decisionAt(card, now)).filter(d => !isTBD(d) && d.action !== 'SKIP');
+  const plan = slatePlan(slate);
   const selectedLeague = leagues.find((l) => l.id === selectedLeagueId);
 
   return (
@@ -76,18 +71,23 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
         </p>
         <h1 className="page-title">Soccer Predictions</h1>
         <p className="mt-3 max-w-xl text-slate-400 text-sm leading-relaxed">
-          Strongest actions first — scan top picks, then browse the full slate.
+          Browse confirmed fixtures, compare matchup context, and review available estimates.
         </p>
       </section>
 
+      <MatchupStage sport="soccer" decision={slate[0]} onSelect={onSelectMatch} label="THE MATCHDAY PERSPECTIVE" />
+
       {/* League switcher */}
+      {leagueData.error && <RequestError message={leagueData.error} onRetry={leagueData.retry} />}
+      {error && <RequestError message={error} onRetry={retry} />}
+      {data?.error && <RequestError message={data.error} onRetry={retry} />}
       {leagues.length > 0 && (
         <div className="league-scroll">
           {leagues.map((lg) => (
             <button
               key={lg.id}
               type="button"
-              onClick={() => { setSelectedLeagueId(lg.id); setSelectedDate(todayISO()); }}
+              onClick={() => navigate(`/soccer?league_id=${lg.id}`)}
               className={`league-pill ${selectedLeagueId === lg.id ? 'league-pill-active' : ''}`}
             >
               <span>{lg.flag}</span>
@@ -97,15 +97,39 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
         </div>
       )}
 
-      {/* 3-day date tabs */}
       <DateTabs
-        dates={availableDates.length ? availableDates.slice(0, 3) : [todayISO()]}
+        dates={[...new Set([...(availableDates.length ? availableDates : [todayISO()]), selectedDate])].sort()}
         selected={selectedDate}
         onSelect={setSelectedDate}
       />
 
-      <PlanStrip bet={plan.bet} consider={plan.consider} skip={plan.skip} />
+      <PlanStrip bet={plan.bet} consider={plan.consider} skip={plan.skip} loading={loading} />
+      <DataStatus cards={slate} updated={data?.last_updated} loading={loading} />
 
+      <section className="section">
+        <div className="section-header">
+          <p className="section-label">Full Slate</p>
+          <div className="section-divider" />
+        </div>
+        {loading ? (
+          <div className="grid-2">
+            {[0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)}
+          </div>
+        ) : slate.length > 0 ? (
+          <div className="grid-2">
+            {slate.map((decision) => (
+              <DecisionCard
+                key={`${decision.action}-${decision.side}-${decision.matchup}`}
+                decision={decision}
+                onAnalyze={onSelectMatch}
+              />
+            ))}
+          </div>
+        ) : !loading && !error && !data?.error ? (
+          <EmptyState title="No fixtures" body="No matches found for this date and league." />
+        ) : null}
+      </section>
+      {top.length > 0 && (
       <section className="section">
         <div className="section-header">
           <p className="section-label">Top Opportunities</p>
@@ -135,30 +159,7 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
           <EmptyState title="No top picks for this day" body="Try another date or check back when fixtures are confirmed." />
         )}
       </section>
-
-      <section className="section">
-        <div className="section-header">
-          <p className="section-label">Full Slate</p>
-          <div className="section-divider" />
-        </div>
-        {loading ? (
-          <div className="grid-2">
-            {[0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)}
-          </div>
-        ) : slate.length > 0 ? (
-          <div className="grid-2">
-            {slate.map((decision) => (
-              <DecisionCard
-                key={`${decision.action}-${decision.side}-${decision.matchup}`}
-                decision={decision}
-                onAnalyze={onSelectMatch}
-              />
-            ))}
-          </div>
-        ) : !loading ? (
-          <EmptyState title="No fixtures" body="No matches found for this date and league." />
-        ) : null}
-      </section>
+      )}
     </div>
   );
 }

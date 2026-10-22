@@ -1,0 +1,21 @@
+{
+  "verified_at": "2026-10-22T02:14:35.054057+00:00",
+  "candidate_urls": 27,
+  "accessible_repositories": 25,
+  "bounded_suitable_data_repositories": 7,
+  "gap_rows": 39,
+  "source_scores_and_classifications": "passed",
+  "response_hashes": "passed",
+  "required_source_fields": "passed",
+  "local_report_links": "passed",
+  "preservation": {
+    "verified_at": "2026-10-22T02:14:35.052670+00:00",
+    "files_checked": 207,
+    "changed_files": [],
+    "frozen_export_hashes_unchanged": true,
+    "database_writes_by_research": 0,
+    "sports_records_imported": 0,
+    "sealed_outcomes_read": 0
+  },
+  "application_tests": "not rerun for research-only changes; preceding launch735backend/25browser/build evidence is distinct"
+}

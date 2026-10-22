@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import math
 
 
 class ValidationError(ValueError):
@@ -12,7 +13,9 @@ class ValidationError(ValueError):
 
 
 def validate_bet_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
-    data = payload or {}
+    if not isinstance(payload, dict):
+        raise ValidationError("payload must be an object")
+    data = dict(payload)
     match_id = str(data.get("match_id") or "").strip()
     recommended_side = str(data.get("recommended_side") or "").strip()
     action = str(data.get("action") or "").strip().upper()
@@ -31,7 +34,7 @@ def validate_bet_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
         confidence = float(confidence_raw)
     except (TypeError, ValueError) as exc:
         raise ValidationError("confidence must be numeric") from exc
-    if confidence < 0 or confidence > 100:
+    if not math.isfinite(confidence) or confidence < 0 or confidence > 100:
         raise ValidationError("confidence must be between 0 and 100")
 
     data["match_id"] = match_id

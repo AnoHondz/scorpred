@@ -16,6 +16,8 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from datetime import UTC, datetime
+from services.prediction_lifecycle import is_pregame, parse_kickoff
 
 import requests
 
@@ -23,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 _ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "")
 _ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-_CACHE_TTL = 600  # 10 minutes
+_CACHE_TTL = 300
+_QUOTE_TTL = 900
 _CACHE_DIR = Path(os.environ.get("SCORPRED_DATA_ROOT", "")) / "cache" / "odds" if os.environ.get("SCORPRED_DATA_ROOT") else Path("cache") / "odds"
 
 # Sport keys used by The Odds API
@@ -45,7 +48,7 @@ def _load_cached(cache_key: str) -> dict | None:
         return None
     try:
         data = json.loads(path.read_text())
-        if time.time() - data.get("_cached_at", 0) < _CACHE_TTL:
+        if 0 <= time.time() - data.get("_cached_at", 0) < _CACHE_TTL:
             return data.get("payload")
     except Exception:
         pass
@@ -68,8 +71,9 @@ def fetch_match_odds(
     *,
     markets: str = "h2h",
     regions: str = "uk,eu,us",
+    kickoff: str | None = None,
 ) -> dict[str, Any]:
-    """Fetch best available odds for a specific match from The Odds API.
+    """Fetch a fresh, complete bookmaker quote for a specific upcoming match.
 
     Returns:
         {
@@ -77,10 +81,12 @@ def fetch_match_odds(
             "home_odds": float | None,    # decimal odds for team_a (home)
             "away_odds": float | None,    # decimal odds for team_b (away)
             "draw_odds": float | None,    # decimal odds for draw (soccer only)
-            "bookmaker": str | None,      # bookmaker name with the best line
+            "bookmaker": str | None,      # all returned prices belong to this book
             "source": "live" | "cache" | "unavailable",
         }
     """
+    if kickoff and not is_pregame(kickoff):
+        return _unavailable("Pregame odds are unavailable after kickoff.")
     if not _ODDS_API_KEY:
         return _unavailable("No ODDS_API_KEY set")
 
@@ -88,9 +94,9 @@ def fetch_match_odds(
     if not sport_key:
         return _unavailable(f"Unsupported sport: {sport}")
 
-    cache_key = f"{sport_key}_{team_a}_{team_b}"
+    cache_key = f"{sport_key}_{team_a}_{team_b}_{kickoff}_{markets}_{regions}"
     cached = _load_cached(cache_key)
-    if cached is not None:
+    if cached is not None and _current(cached, kickoff):
         cached["source"] = "cache"
         return cached
 
@@ -106,17 +112,27 @@ def fetch_match_odds(
         resp.raise_for_status()
         games = resp.json()
     except Exception as exc:
-        logger.warning("odds_fetcher: API call failed — %s", exc)
-        return _unavailable(str(exc))
+        logger.warning("odds_fetcher: API call failed (%s)", type(exc).__name__)
+        return _unavailable("The odds provider could not refresh prices.")
 
-    result = _find_match(games, team_a, team_b)
+    result = _find_match(games, team_a, team_b, kickoff=kickoff)
     _save_cached(cache_key, result)
     result["source"] = "live"
     return result
 
 
-def _find_match(games: list[dict], team_a: str, team_b: str) -> dict[str, Any]:
-    """Scan API response for the matching game and extract best odds."""
+def _current(result, kickoff=None):
+    now = datetime.now(UTC)
+    event_time = parse_kickoff(result.get("commence_time"))
+    updated = parse_kickoff(result.get("updated_at"))
+    expected = parse_kickoff(kickoff) if kickoff else None
+    return bool(result.get("available") and event_time and is_pregame(event_time, now=now)
+                and updated and 0 <= (now - updated).total_seconds() <= _QUOTE_TTL
+                and (not expected or abs((event_time - expected).total_seconds()) <= 300))
+
+
+def _find_match(games: list[dict], team_a: str, team_b: str, *, kickoff=None) -> dict[str, Any]:
+    """Match participants and kickoff; preserve a complete single-book quote."""
     a_norm = _norm(team_a)
     b_norm = _norm(team_b)
 
@@ -125,39 +141,40 @@ def _find_match(games: list[dict], team_a: str, team_b: str) -> dict[str, Any]:
         away = _norm(game.get("away_team", ""))
         if not (_teams_match(a_norm, home) and _teams_match(b_norm, away)):
             continue
-
-        # Collect h2h outcomes across bookmakers and pick best (highest) odds
-        best: dict[str, float] = {}
-        best_book: dict[str, str] = {}
+        event_time = parse_kickoff(game.get("commence_time"))
+        expected = parse_kickoff(kickoff) if kickoff else None
+        if not event_time or not is_pregame(event_time) or (expected and abs((event_time - expected).total_seconds()) > 300):
+            continue
 
         for bm in game.get("bookmakers", []):
             bm_name = bm.get("title", "")
             for market in bm.get("markets", []):
                 if market.get("key") != "h2h":
                     continue
+                updated = market.get("last_update") or bm.get("last_update")
+                quote_time = parse_kickoff(updated)
+                if not quote_time or not 0 <= (datetime.now(UTC) - quote_time).total_seconds() <= _QUOTE_TTL:
+                    continue
+                best: dict[str, float] = {}
                 for outcome in market.get("outcomes", []):
                     name = _norm(outcome.get("name", ""))
-                    price = float(outcome.get("price", 0) or 0)
-                    if price <= 1.0:
+                    try:
+                        price = float(outcome.get("price", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if not 1.0 < price < float("inf"):
                         continue
                     if name == home and price > best.get("home", 0):
                         best["home"] = price
-                        best_book["home"] = bm_name
                     elif name == away and price > best.get("away", 0):
                         best["away"] = price
-                        best_book["away"] = bm_name
                     elif "draw" in name and price > best.get("draw", 0):
                         best["draw"] = price
-                        best_book["draw"] = bm_name
 
-        if best:
-            return {
-                "available": True,
-                "home_odds": best.get("home"),
-                "away_odds": best.get("away"),
-                "draw_odds": best.get("draw"),
-                "bookmaker": best_book.get("home") or best_book.get("away"),
-            }
+                if best.get("home") and best.get("away") and ("draw" in best or not game.get("sport_key", "").startswith("soccer")):
+                    return {"available": True, "home_odds": best.get("home"), "away_odds": best.get("away"),
+                            "draw_odds": best.get("draw"), "bookmaker": bm_name, "updated_at": updated,
+                            "commence_time": event_time.isoformat()}
 
     return _unavailable("Match not found in current odds feed")
 

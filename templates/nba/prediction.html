@@ -191,5 +191,9 @@
   </div>
 {% else %}
   {{ ui.empty_state('Prediction data could not be generated', 'Choose another game or try again when NBA data refreshes.') }}
+  <section class="sp-info-card"><h2>Limited Data</h2>
+    <p>Current-season stats: {{ 'available' if season_context.stats_current_available else 'limited' }}</p>
+    <p>A fresh scheduled game and sufficient current-season form are required for a pregame recommendation.</p>
+  </section>
 {% endif %}
 {% endblock %}

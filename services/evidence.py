@@ -10,8 +10,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from services.data_freshness import from_records, worst
+from services.prediction_lifecycle import freshness_state, unavailable_reason
 
-_UPCOMING_FIXTURE_CACHE_TTL_SECONDS = 600
+_UPCOMING_FIXTURE_CACHE_TTL_SECONDS = 120
 _TEAM_FORM_CACHE_TTL_SECONDS = 900
 _H2H_CACHE_TTL_SECONDS = 900
 _INJURY_CACHE_TTL_SECONDS = 900
@@ -29,7 +31,13 @@ def _cache_get(cache: dict[tuple[Any, ...], dict[str, Any]], key: tuple[Any, ...
     if not entry:
         return None
     if entry.get("expires_at") and entry["expires_at"] > now:
-        return deepcopy(entry.get("value"))
+        value = deepcopy(entry.get("value"))
+        def current(item):
+            if isinstance(item, dict):
+                meta = item.get("data_freshness") or item.get("_scorpred_source")
+                return (not meta or freshness_state(meta, now) == "fresh") and all(current(v) for k, v in item.items() if k not in {"data_freshness", "_scorpred_source"})
+            return all(current(v) for v in item) if isinstance(item, (list, tuple)) else True
+        return value if current(value) else None
     return None
 
 
@@ -37,7 +45,8 @@ def _cache_get_stale(cache: dict[tuple[Any, ...], dict[str, Any]], key: tuple[An
     entry = cache.get(key)
     if not entry:
         return None
-    return deepcopy(entry.get("value"))
+    # Expired evidence must be re-observed by a provider before it can be scored.
+    return None
 
 
 def _cache_set(
@@ -431,6 +440,11 @@ def load_upcoming_fixtures(
     deep_fixtures = []
     shallow_fixtures = []
     for idx, fixture in enumerate(normalized[:next_n]):
+        info = fixture.get("fixture") or {}
+        blocked = unavailable_reason(info.get("date"), info.get("status"), fixture.get("data_freshness"))
+        if blocked:
+            fixture["prediction"] = {"action": "SKIP", "confidence_pct": 0, "best_pick": {}, "win_probabilities": {}, "reason": blocked}
+            continue
         teams = fixture.get("teams") or {}
         home = teams.get("home") or {}
         away = teams.get("away") or {}
@@ -494,7 +508,7 @@ def load_upcoming_fixtures(
                     prefetched[idx] = {}
 
     # Build all predictions in original order
-    all_items: dict[int, dict] = {}
+    all_items: dict[int, dict] = {idx: fixture for idx, fixture in enumerate(normalized[:next_n]) if "prediction" in fixture and unavailable_reason((fixture.get("fixture") or {}).get("date"), (fixture.get("fixture") or {}).get("status"), fixture.get("data_freshness"))}
 
     for idx, fixture, home_id, away_id, home_name, away_name, reason in shallow_fixtures:
         prediction = _limited_prediction(
@@ -511,6 +525,10 @@ def load_upcoming_fixtures(
         try:
             form_home, fixtures_home = data.get("form_home") or ([], [])
             form_away, fixtures_away = data.get("form_away") or ([], [])
+            fixture["data_freshness"] = worst([fixture.get("data_freshness"), from_records(fixtures_home), from_records(fixtures_away), from_records(standings)])
+            if unavailable_reason((fixture.get("fixture") or {}).get("date"), (fixture.get("fixture") or {}).get("status"), fixture.get("data_freshness")):
+                all_items[idx] = {**fixture, "prediction": {"action": "SKIP", "confidence_pct": 0, "best_pick": {}, "win_probabilities": {}}}
+                continue
             h2h_result = data.get("h2h") or ([], [], [])
             _, h2h_home, h2h_away = h2h_result
             injuries_home = (data.get("inj_home") or []) if include_injuries else []

@@ -41,7 +41,7 @@ PROPS_LIVE_TTL     = 60            # 60 seconds — live context
 
 
 def _cache_path(key: str) -> Path:
-    h = hashlib.md5(key.encode()).hexdigest()
+    h = hashlib.md5(("verified-stat-contract-v2:" + key).encode()).hexdigest()
     PROPS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     return PROPS_CACHE_DIR / f"{h}.json"
 
@@ -113,15 +113,15 @@ SOCCER_FIXTURE_STAT_PATH: dict[str, tuple[str, str] | None] = {
     "shots_total":        ("shots",    "total"),
     "shots_on_target":    ("shots",    "on"),
     "key_passes":         ("passes",   "key"),
-    "chances_created":    ("passes",   "key"),         # same field as key_passes
+    "chances_created":    None,                        # broader definition not verified
     "dribbles":           ("dribbles", "success"),
     "touches_opp_box":    None,                        # not in standard endpoint
     "anytime_goalscorer": ("goals",    "total"),       # same as goals (binary use)
-    "passes_completed":   ("passes",   "total"),
+    "passes_completed":   None,                        # total passes != verified completions
     "tackles":            ("tackles",  "total"),
     "interceptions":      ("tackles",  "interceptions"),
-    "clearances":         ("tackles",  "blocks"),      # best available approximation
-    "aerial_duels_won":   ("duels",    "won"),
+    "clearances":         None,                        # blocks are a different statistic
+    "aerial_duels_won":   None,                        # total duels lack aerial separation
     "yellow_cards":       ("cards",    "yellow"),
     "minutes":            ("games",    "minutes"),
 }
@@ -134,15 +134,15 @@ SOCCER_SEASON_STAT_PATH: dict[str, tuple[str, str] | None] = {
     "shots_total":        ("shots",    "total"),
     "shots_on_target":    ("shots",    "on"),
     "key_passes":         ("passes",   "key"),
-    "chances_created":    ("passes",   "key"),
+    "chances_created":    None,
     "dribbles":           ("dribbles", "success"),
     "touches_opp_box":    None,
     "anytime_goalscorer": ("goals",    "total"),
-    "passes_completed":   ("passes",   "total"),
+    "passes_completed":   None,
     "tackles":            ("tackles",  "total"),
     "interceptions":      ("tackles",  "interceptions"),
-    "clearances":         ("tackles",  "blocks"),
-    "aerial_duels_won":   ("duels",    "won"),
+    "clearances":         None,
+    "aerial_duels_won":   None,
     "yellow_cards":       ("cards",    "yellow"),
     "minutes":            ("games",    "minutes"),
 }
@@ -230,13 +230,13 @@ def _nba_game_value(record: dict, market_key: str) -> float | None:
     stats = record.get("statistics", [{}])
     s = stats[0] if stats else {}
     if market_key in ("pra", "double_double", "triple_double"):
-        pts = _sf(s.get("points"))
-        reb = _sf(s.get("rebounds"))
-        ast = _sf(s.get("assists"))
+        pts = _stat_count(s.get("points"))
+        reb = _stat_count(s.get("rebounds"))
+        ast = _stat_count(s.get("assists"))
         if market_key == "pra":
-            return pts + reb + ast if (pts or reb or ast) else None
+            return pts + reb + ast if all(v is not None for v in (pts, reb, ast)) else None
         return None   # probability markets handled separately
-    return _sf(s.get(market_key)) if s.get(market_key) is not None else None
+    return _stat_count(s.get(market_key))
 
 
 def _nba_has_played(record: dict) -> bool:
@@ -317,13 +317,30 @@ def _soccer_fixture_player_stats(player_stats_list: list, player_id) -> dict | N
     if not isinstance(player_stats_list, list):
         return None
     for team_entry in player_stats_list:
+        if not isinstance(team_entry, dict) or not isinstance(team_entry.get("players"), list):
+            continue
         for player_entry in (team_entry.get("players") or []):
+            if not isinstance(player_entry, dict):
+                continue
             p = player_entry.get("player") or {}
+            if not isinstance(p, dict):
+                continue
             if str(p.get("id")) != str(player_id):
                 continue
             stats_list = player_entry.get("statistics") or [{}]
-            return stats_list[0] if stats_list else {}
+            return stats_list[0] if isinstance(stats_list, list) and stats_list and isinstance(stats_list[0], dict) else None
     return None
+
+
+def _stat_count(value):
+    """Provider counts/minutes: a missing, malformed or negative value is unknown."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
 
 
 def _soccer_fixture_player_value(player_stats_list: list, player_id, market_key: str) -> float | None:
@@ -334,9 +351,12 @@ def _soccer_fixture_player_value(player_stats_list: list, player_id, market_key:
 
     # Computed: goal_or_assist = goals + assists
     if market_key == "goal_or_assist":
-        goals = _sf((stats.get("goals") or {}).get("total"))
-        assists = _sf((stats.get("goals") or {}).get("assists"))
-        return goals + assists
+        goals_section = stats.get("goals")
+        if not isinstance(goals_section, dict):
+            return None
+        goals = _stat_count(goals_section.get("total"))
+        assists = _stat_count(goals_section.get("assists"))
+        return goals + assists if goals is not None and assists is not None else None
 
     # touches_opp_box not available in standard endpoint
     if market_key == "touches_opp_box":
@@ -347,8 +367,10 @@ def _soccer_fixture_player_value(player_stats_list: list, player_id, market_key:
         return None
     section, key = path
     section_data = stats.get(section) or {}
+    if not isinstance(section_data, dict):
+        return None
     raw = section_data.get(key)
-    return _sf(raw) if raw is not None else None
+    return _stat_count(raw)
 
 
 def _collect_soccer_samples(
@@ -863,16 +885,16 @@ def _soccer_season_avg(season_stats: dict, market_key: str) -> float | None:
     API-Football returns season totals; we normalise by appearances to get
     per-game rates, and by minutes/90 for per-90 markets.
     """
-    if not season_stats:
+    if not isinstance(season_stats, dict) or not season_stats:
         return None
 
     # Computed market: goal_or_assist = season goals + season assists
     if market_key == "goal_or_assist":
         goals_avg   = _soccer_season_avg(season_stats, "goals")
         assists_avg = _soccer_season_avg(season_stats, "assists")
-        if goals_avg is None and assists_avg is None:
+        if goals_avg is None or assists_avg is None:
             return None
-        return round((goals_avg or 0) + (assists_avg or 0), 3)
+        return round(goals_avg + assists_avg, 3)
 
     if market_key == "touches_opp_box":
         return None
@@ -882,11 +904,15 @@ def _soccer_season_avg(season_stats: dict, market_key: str) -> float | None:
         return None
     section, key = path
     section_data = season_stats.get(section) or {}
+    if not isinstance(section_data, dict):
+        return None
     raw = section_data.get(key)
     if raw is None:
         return None
 
-    total = _sf(raw)
+    total = _stat_count(raw)
+    if total is None:
+        return None
 
     # Normalise by games played (appearances) for per-game markets
     games_data    = season_stats.get("games") or {}
@@ -900,9 +926,9 @@ def _soccer_season_avg(season_stats: dict, market_key: str) -> float | None:
         # Return average minutes per appearance directly
         return round(total / appearances, 1) if appearances > 0 else None
 
-    if per_90 and minutes_total > 0:
-        # Per-90 normalisation: total / (minutes / 90)
-        return round(total / minutes_total * 90, 3)
+    if per_90:
+        # Never silently replace a per-90 rate with a per-appearance rate.
+        return round(total / minutes_total * 90, 3) if minutes_total > 0 else None
 
     # Per-game normalisation
     if appearances > 0:
@@ -1769,9 +1795,13 @@ def generate_props(
     Returns:
         dict with keys: player, opponent, sport, is_home, props, bet_slip, errors
     """
-    from datetime import datetime
     if season is None:
-        season = datetime.now().year if sport == "nba" else 2024
+        if sport == "nba":
+            from nba_live_client import NBA_SEASON
+            season = NBA_SEASON
+        else:
+            from league_config import CURRENT_SEASON
+            season = CURRENT_SEASON
 
     errors: list[str] = []
 
@@ -1805,7 +1835,11 @@ def generate_props(
         errors.append(samples["error"])
 
     # ── Fetch opponent defensive context ──────────────────────────────────────
-    if sport == "nba":
+    coverage_missing = sport == "nba" and not samples.get("full_season_log")
+    if coverage_missing:
+        errors.append("Verified real-player NBA game-log coverage is unavailable; no prop estimates generated.")
+        opponent_stats = None
+    elif sport == "nba":
         opponent_stats = _fetch_nba_opponent_stats(opponent_team_id, season)
     else:
         opponent_stats = _fetch_soccer_opponent_stats(opponent_team_id, league, season)
@@ -1816,6 +1850,11 @@ def generate_props(
         valid_set = set(NBA_MARKETS) if sport == "nba" else set(SOCCER_MARKETS)
         if market_key not in valid_set:
             errors.append(f"Unknown market '{market_key}' for sport '{sport}'")
+            continue
+        if coverage_missing:
+            continue
+        if sport == "soccer" and market_key in {"clearances", "aerial_duels_won", "passes_completed", "chances_created", "touches_opp_box"}:
+            errors.append(f"Unsupported source definition for {market_key}; no estimate generated.")
             continue
         try:
             card = _build_prop_card(
@@ -1852,10 +1891,12 @@ def generate_props(
         "props":       prop_cards,
         "bet_slip":    bet_slip,
         "data_notes": {
-            "nba":    "Per-game statistics from API-NBA (RapidAPI). Career vs opponent built from multi-season H2H game logs.",
+            "nba":    "Legacy NBA game-log adapter. Verified real-player coverage is required; no synthetic fallback.",
             "soccer": "Season aggregates from API-Football. Per-game stats fetched from fixture/players endpoint and cached.",
         }.get(sport, ""),
         "errors":      errors,
+        "coverage": {"available": not coverage_missing, "source": "legacy NBA player game logs" if sport == "nba" else "API-Football fixture/player statistics",
+                     "reason": "No verified real-player game logs" if coverage_missing else None},
     }
 
 

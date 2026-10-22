@@ -6,21 +6,26 @@ import json
 import logging
 import os
 import time
+import copy
+import threading
+import uuid
 from pathlib import Path
 from typing import Any
 
-from cachetools import TTLCache
+from cachetools import TLRUCache
+from runtime_paths import cache_dir
 
 _logger = logging.getLogger(__name__)
 
-_local_cache = TTLCache(maxsize=2000, ttl=3600)
+_local_cache = TLRUCache(maxsize=2000, ttu=lambda _key, entry, _now: entry["expires_at"], timer=time.time)
+_cache_lock = threading.RLock()
 _redis_client = None
 
 # Bump this when canonical payload schema changes so stale shapes are evicted.
-_CACHE_SCHEMA_VERSION = "v3"
+_CACHE_SCHEMA_VERSION = "v5"
 
 # Disk persistence: compiled dashboard/fixture responses survive Flask restarts
-_DISK_CACHE_DIR = Path(__file__).parent.parent / "cache" / "service"
+_DISK_CACHE_DIR = cache_dir("service")
 _DISK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -68,22 +73,32 @@ def _disk_get(key: str, ttl: int) -> Any:
     try:
         if not path.exists():
             return None
-        age = time.time() - path.stat().st_mtime
-        if age > ttl:
-            return None
-        with path.open() as f:
-            return json.load(f)
+        with path.open(encoding="utf-8") as f:
+            entry = json.load(f)
+        return entry if _fresh(entry, ttl) else None
     except Exception:
         return None
 
 
 def _disk_set(key: str, value: Any) -> None:
     path = _disk_path(key)
+    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
     try:
-        with path.open("w") as f:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with temporary.open("w", encoding="utf-8") as f:
             json.dump(value, f, separators=(",", ":"))
+        temporary.replace(path)
     except Exception as exc:
         _logger.debug("Disk cache write failed key=%s: %s", key, exc)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _fresh(entry: Any, ttl: int) -> bool:
+    if not isinstance(entry, dict) or "expires_at" not in entry or "created_at" not in entry:
+        return False
+    now = time.time()
+    return now < min(entry["expires_at"], entry["created_at"] + ttl)
 
 
 def make_key(*parts: Any) -> str:
@@ -94,9 +109,10 @@ def make_key(*parts: Any) -> str:
 
 
 def invalidate_pattern(prefix: str) -> int:
-    to_delete = [k for k in list(_local_cache.keys()) if str(k).startswith(prefix)]
+    with _cache_lock:
+        to_delete = [k for k in list(_local_cache.keys()) if str(k).startswith(prefix)]
     for k in to_delete:
-        _local_cache.pop(k, None)
+        delete(k)
     return len(to_delete)
 
 
@@ -106,36 +122,44 @@ def get_json(key: str, ttl: int = 3600) -> Any:
         try:
             value = client.get(key)
             if value is not None:
-                return json.loads(value)
+                entry = json.loads(value)
+                if _fresh(entry, ttl):
+                    return entry["value"]
         except Exception as exc:
             _logger.warning("Redis get failed key=%s: %s", key, exc)
 
-    value = _local_cache.get(key)
-    if value is not None:
-        return value
+    with _cache_lock:
+        entry = _local_cache.get(key)
+        if _fresh(entry, ttl):
+            return copy.deepcopy(entry["value"])
+        _local_cache.pop(key, None)
 
     # Disk fallback: serves cold-start restarts without recomputing
-    value = _disk_get(key, ttl)
-    if value is not None:
-        _local_cache[key] = value
+    entry = _disk_get(key, ttl)
+    if entry is not None:
+        with _cache_lock:
+            _local_cache[key] = entry
         _logger.debug("Disk cache hit for key=%s", key)
-        return value
+        return copy.deepcopy(entry["value"])
 
     return None
 
 
 def set_json(key: str, value: Any, ttl: int) -> None:
-    if value is None:
+    if value is None or ttl <= 0:
         return
+    now = time.time()
+    entry = {"value": copy.deepcopy(value), "created_at": now, "expires_at": now + ttl}
     client = _get_redis_client()
     if client is not None:
         try:
-            client.setex(key, ttl, json.dumps(value))
+            client.setex(key, ttl, json.dumps(entry))
             return
         except Exception as exc:
             _logger.warning("Redis set failed key=%s: %s", key, exc)
-    _local_cache[key] = value
-    _disk_set(key, value)
+    with _cache_lock:
+        _local_cache[key] = entry
+    _disk_set(key, entry)
 
 
 def delete(key: str) -> None:
@@ -145,7 +169,8 @@ def delete(key: str) -> None:
             client.delete(key)
         except Exception as exc:
             _logger.warning("Redis delete failed key=%s: %s", key, exc)
-    _local_cache.pop(key, None)
+    with _cache_lock:
+        _local_cache.pop(key, None)
     path = _disk_path(key)
     try:
         path.unlink(missing_ok=True)

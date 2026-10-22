@@ -16,10 +16,11 @@ class DecisionEngine:
         side = self._pick_side(match_data, probabilities)
         confidence = self._confidence(match_data, probabilities, side)
         confidence = self._apply_feature_feedback(confidence, match_data.get("feature_attribution"))
-        model_probability = round(max(0.0, min(1.0, confidence / 100.0)), 4)
+        side_key = self._side_key(match_data, side)
+        model_probability = round(max(0.0, min(1.0, probabilities.get(side_key, 0.0) / 100.0)), 4)
         implied = self._implied_probability(match_data, side)
         edge_score = None if implied is None else round(model_probability - implied, 4)
-        expected_value = None if edge_score is None else round(edge_score * 100.0, 4)
+        expected_value = None if implied is None else round(model_probability / implied - 1.0, 4)
         data_quality = self._data_quality(match_data)
         # When raw probabilities were absent (fallback used), cap quality as Limited
         _raw = match_data.get("probabilities") or match_data.get("win_probabilities") or {}
@@ -108,9 +109,7 @@ class DecisionEngine:
 
     def _confidence(self, match_data: dict[str, Any], probabilities: dict[str, float], side: str) -> int:
         raw_conf = match_data.get("confidence") or match_data.get("confidence_pct")
-        side_key = "home" if side == match_data.get("home_name") else "away"
-        if side.lower() == "draw":
-            side_key = "draw"
+        side_key = self._side_key(match_data, side)
         side_prob = probabilities.get(side_key, 0.0)
 
         if raw_conf is not None:
@@ -134,11 +133,7 @@ class DecisionEngine:
             if raw in (None, ""):
                 return None
             return max(0.01, min(0.99, float(raw)))
-        side_key = "home"
-        if side.lower() == "draw":
-            side_key = "draw"
-        elif side == match_data.get("away_name") or side.lower().startswith("away"):
-            side_key = "away"
+        side_key = self._side_key(match_data, side)
         odd = odds.get(side_key)
         try:
             odd_f = float(odd)
@@ -150,6 +145,15 @@ class DecisionEngine:
         if raw in (None, ""):
             return None
         return max(0.01, min(0.99, float(raw)))
+
+    @staticmethod
+    def _side_key(match_data, side):
+        clean = lambda value: str(value or "").lower().removesuffix("!").removesuffix(" win").strip()
+        if clean(side) == "draw":
+            return "draw"
+        if clean(side) == clean(match_data.get("away_name")) or clean(side) in {"away", "b"}:
+            return "away"
+        return "home"
 
     def _data_quality(self, match_data: dict[str, Any]) -> int:
         raw = match_data.get("data_quality")
@@ -193,8 +197,6 @@ class DecisionEngine:
         if self._risk_rank(risk_level) > self._risk_rank(max_risk_allowed):
             return "SKIP"
         if missing_market:
-            if confidence >= bet_min_confidence and data_quality >= 70 and risk_level != "HIGH":
-                return "BET"
             if confidence >= consider_min_confidence:
                 return "CONSIDER"
             return "SKIP"

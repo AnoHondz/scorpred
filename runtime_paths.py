@@ -128,6 +128,12 @@ def trained_model_path() -> Path:
     return data_dir() / "model.pkl"
 
 
+def model_dir() -> Path:
+    """Immutable deploy artifacts are separate from persistent runtime history."""
+    configured = os.getenv("SCORPRED_MODEL_DIR", "").strip()
+    return Path(configured).expanduser().resolve() if configured else repo_root() / "data" / "models"
+
+
 def clean_soccer_dataset_path() -> Path:
     """Clean pre-match feature dataset (no target leakage)."""
     return data_dir() / "processed" / "soccer_training_data_clean.csv"
@@ -135,22 +141,22 @@ def clean_soccer_dataset_path() -> Path:
 
 def clean_soccer_model_path() -> Path:
     """Random Forest trained on clean pre-match features."""
-    return data_dir() / "models" / "soccer_random_forest_clean.pkl"
+    return model_dir() / "soccer_random_forest_clean.pkl"
 
 
 def ensemble_soccer_model_path() -> Path:
     """Stacking ensemble (LR + RF + XGBoost + LightGBM) trained on clean pre-match features."""
-    return data_dir() / "models" / "soccer_ensemble_stack.pkl"
+    return model_dir() / "soccer_ensemble_stack.pkl"
 
 
 def league_model_path(league_id: int | str) -> Path:
     """Per-league stacking ensemble, trained and evaluated on that league only."""
-    return data_dir() / "models" / f"soccer_ensemble_league_{league_id}.pkl"
+    return model_dir() / f"soccer_ensemble_league_{league_id}.pkl"
 
 
 def nba_model_path() -> Path:
     """Calibrated Random Forest model for NBA home/away win prediction."""
-    return data_dir() / "models" / "nba_random_forest.pkl"
+    return model_dir() / "nba_random_forest.pkl"
 
 
 def elo_state_path() -> Path:
