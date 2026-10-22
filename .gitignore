@@ -49,3 +49,6 @@ persistent/
 tmp/
 tmp_work/
 .vite/
+
+# Third-party odds files; scripts/evaluate_against_market.py downloads them on demand.
+data/raw/football_data_odds/

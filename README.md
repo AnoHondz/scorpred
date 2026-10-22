@@ -1,206 +1,193 @@
-# ScorPred — Sports Decision Intelligence Platform
+# ScorPred
 
-> AI-powered match outcome prediction with explainability, walk-forward backtesting, and a hybrid ML + rule-based engine.
+ScorPred is a soccer, NBA and NFL analysis app with a React dashboard, Flask API,
+weighted rule predictions, and a separately evaluated soccer machine-learning pipeline.
+It is an experimental analysis tool. Profitable betting performance has not been established.
 
-![Python](https://img.shields.io/badge/Python-3.11-blue) ![Flask](https://img.shields.io/badge/Flask-3.x-lightgrey) ![scikit-learn](https://img.shields.io/badge/scikit--learn-Pipeline-orange) ![License](https://img.shields.io/badge/license-MIT-green)
+## What the app currently does
 
----
+- Soccer and NBA slates with BET, CONSIDER, and SKIP decisions.
+- NFL schedules and experimental recent-scoring scenarios, with CONSIDER/SKIP decisions.
+  See [NFL coverage and limitations](docs/NFL.md).
+  [nflverse import, feature store and research-model setup](docs/NFLVERSE.md).
+  Optional market context and recommended feeds: [NFL data connections](docs/NFL_DATA_APIS.md).
+- Shareable match-analysis URLs, league/date filters, and browser back/refresh support.
+- Research-informed scoring forecasts for soccer, NBA and NFL, with score ranges,
+  chronological test results and research references. See [scoring methods and setup](docs/SCORING_MODELS.md).
+- Owner-scoped saved picks, authenticated mutations, CSRF protection, and rate limits.
+- Prediction tracking with locked, atomic writes and grading of recorded predictions.
+- Explicit provider errors, request timeouts, and retry controls.
 
-## Overview
+Soccer, NBA and NFL dashboard APIs use public provider data where available.
+NBA team identities and schedules share ESPN IDs; unavailable estimates remain
+visible as SKIP with no invented probabilities. `NBA_API_KEY` is optional for the
+legacy standings integration, not required for public NBA schedules or form.
 
-ScorPred is a full-stack sports analytics platform that predicts soccer and NBA match outcomes, explains *why* each prediction was made, and gives users a clean dashboard experience built for decision-making — not just raw numbers.
+Dashboard recommendations currently use the weighted rule engine. The calibrated
+Random Forest is available through the ML inference layer and legacy analysis paths;
+its offline evaluation is not an accuracy claim for every dashboard recommendation.
+Predictions are unavailable when sufficient source data cannot be obtained. The app
+does not create predictions from team-name hashes or reconstruct picks after results.
 
-It combines a **machine learning pipeline** (Logistic Regression → Random Forest → XGBoost → LightGBM → Stacking Ensemble) with a **deterministic rule engine** (form, home advantage, goal rates, H2H) into a calibrated **hybrid signal**, then evaluates it across 7 seasons of data using strict walk-forward backtesting.
+## Current offline model evaluation
 
----
+The production artifact is a 60-feature Random Forest with sigmoid calibration.
+Training, calibration, and evaluation use separate chronological windows; dates are
+kept together, and preprocessing is fitted on the training window only.
 
-## Features
+The bundled historical dataset ends on **2026-04-19**. The evaluation generated on
+2026-10-16 reports:
 
-| Feature | Description |
+| Measurement | Value |
+|---|---:|
+| Training matches | 4,540 |
+| Calibration matches | 1,528 |
+| Test matches | 1,518 |
+| Test accuracy | 52.04% |
+| Training-majority baseline accuracy on test matches | 43.68% |
+| Brier score, averaged across three classes | 0.1995 |
+| Expected calibration error | 0.0216 |
+
+See [the machine-readable evaluation](data/validation/production_model.json).
+These are historical holdout results, not live returns or current-season validation.
+The calibrated model selected no draws as its top class in this test window; draw
+selection remains a limitation.
+Older walk-forward reports describe experimental models and different feature schemas.
+
+### Compared with bookmaker odds
+
+`python scripts/evaluate_against_market.py` matches every test-window match to
+football-data.co.uk closing and pre-weekend prices (top five leagues, 1,518 of 1,518
+matched, no result disagreements) and writes
+[market_evaluation.json](data/validation/market_evaluation.json):
+
+| Measurement | Model | Bookmakers |
+|---|---:|---:|
+| Winners picked | 52.0% | 54.2% |
+| Log loss (lower is better) | 1.003 | 0.973 |
+
+The model's probabilities are worse than the market's in every league (log-loss gap
+0.029, 95% interval 0.021–0.037). Flat stakes on every model pick at pre-weekend
+prices returned −3.9% (95% interval −9.2% to +1.4%); bets where the model saw a 5%+
+edge over the odds returned −17.3% (−25.1% to −8.9%). No betting edge is established.
+
+The Insights **Track record** view shows these results with the verified record of
+published rule-engine picks. Only picks first recorded before a known kickoff count.
+Picks are frozen at kickoff and later records are reported as exclusions.
+
+## Run locally
+
+For the existing Windows installation, start both services with:
+
+```powershell
+.\Start-ScorPred.ps1
+```
+
+Open **http://127.0.0.1:5173**. Running the launcher again reuses both services.
+Use `-Restart` to reload changed backend code or `-Stop` to stop the app.
+The independent NFL collector is left running. Research models stay disabled.
+See [local startup and verification](docs/LOCAL_APP_READINESS.md) for checks,
+measurements, logs, and troubleshooting.
+
+For a fresh environment, install the dependencies first:
+
+Use Python 3.11 or 3.12 and Node 22. Create a virtual environment and install the
+pinned model dependency version:
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
+Copy-Item .env.example .env
+.\.venv\Scripts\python scripts/model_artifacts.py
+npm --prefix frontend ci
+npm --prefix frontend run build
+.\.venv\Scripts\python app.py
+```
+
+Open http://127.0.0.1:5000. On macOS/Linux, use `.venv/bin/python` instead of the
+Windows interpreter path. Generate SECRET_KEY with Python's `secrets.token_hex(32)`.
+Provider keys enable their associated integrations; public fallbacks can have gaps.
+
+For frontend development, run Flask with PORT=5001, then `npm --prefix frontend run dev`.
+Vite serves http://127.0.0.1:5173 and proxies API and authentication requests to Flask.
+
+## Routes
+
+| Route | Purpose |
 |---|---|
-| **Dashboard** | Live KPIs, upcoming matches, top confidence picks, confidence tier charts |
-| **Soccer Predictions** | Premier League + 10 other competitions via ESPN fallback |
-| **NBA Predictions** | Game predictions with team form, standings, and injury context |
-| **Hybrid Engine** | ML × 0.65 + Rules × 0.35 blended prediction signal |
-| **Strategy Lab** | Live hit rate vs offline accuracy, sport/confidence breakdown |
-| **Backtesting** | Walk-forward evaluation across 5 chronological folds, 3,790+ test matches |
-| **ML vs Rules Compare** | Side-by-side accuracy of each model against the rule baseline |
-| **Explainability** | Feature attribution analysis — which signals drive correct vs incorrect calls |
-| **Performance Tracker** | Track real predictions, grade results, calibration chart |
-| **Alerts** | High-confidence opportunity alerts |
-| **Watchlist** | Monitor specific teams across upcoming fixtures |
-| **Match Analysis** | Deep per-match analysis with decision card, win probabilities, risk level |
+| `/`, `/soccer`, `/nba`, `/nfl`, `/insights` | React dashboards |
+| `/match-analysis?match_id=...&sport=soccer&league_id=39` | Reloadable match analysis |
+| `/login`, `/signup` | Session authentication |
+| `/my-bets` | Signed-in user's saved picks |
+| `/api/session` | Current user and CSRF token |
+| `/api/bets` | Authenticated GET/POST/DELETE for the current user's picks |
+| `/api/bets/<id>` | Authenticated DELETE, scoped to the current user |
+| `/api/matches/<id>` | Match decision; refreshes from the current slate when necessary |
+| `/api/dashboard/soccer`, `/api/dashboard/nba`, `/api/dashboard/nfl`, `/api/dashboard/insights` | Dashboard data |
+| `/api/nfl/matches/<id>/analysis?date=YYYY-MM-DD` | Event-bound NFL scoring scenarios |
+| `/health` | Database readiness; returns 503 when unavailable |
+| `/live` | Process liveness |
+| `/api/health` | Background-pipeline freshness and failure status |
 
----
+Mutation requests require `X-CSRF-Token` from `/api/session`. The read-only scoreline
+calculations also accept GET. Former Strategy Lab/backtesting/comparison pages are
+retired and redirect to Insights; they are not part of the current React navigation.
 
-## Tech Stack
+## Verify changes
 
-```
-Backend        Flask 3.x · SQLAlchemy (SQLite/PostgreSQL-ready)
-ML Pipeline    scikit-learn · XGBoost · LightGBM · joblib
-Data           pandas · numpy · 7 seasons Premier League CSV
-Frontend       Jinja2 templates · Chart.js · Custom design system
-API Data       ESPN public feeds (soccer) · RapidAPI NBA
-Security       CSRF protection · rate limiting · session management
-Testing        pytest (30+ test files)
-```
+See [pregame validity and freshness policies](docs/PREDICTION_LIFECYCLE.md) for
+kickoff expiry, source-age limits, shared training/live features and ET calendars.
 
----
-
-## Architecture
-
-```
-scorpred/
-├── app.py                             # Flask app (routes + middleware)
-├── nba_routes.py                      # NBA blueprint routes
-├── scorpred_engine.py                 # Core prediction orchestrator
-├── decision_ui.py                     # Card builder + sort/filter utilities
-├── ml_pipeline.py                     # sklearn model comparison & reporting
-├── ml_service.py                      # Rule engine + ML inference + hybrid blend
-├── train_model.py                     # Training pipeline entry point
-├── walk_forward_backtest.py           # Chronological fold evaluation
-├── generate_ml_report.py              # Offline model report generator
-├── api_client.py                      # API-Football / ESPN data layer
-├── nba_client.py                      # NBA API data layer
-├── model_tracker.py                   # Prediction tracking & grading
-├── services/
-│   ├── strategy_lab.py                # Strategy Lab view model builder
-│   ├── calibration_service.py         # Confidence calibration analysis
-│   ├── feature_attribution_engine.py  # Feature impact attribution
-│   ├── evidence.py                    # Evidence aggregation
-│   ├── match_brain.py                 # Match intelligence orchestrator
-│   └── prediction_service.py         # Fixture card pipeline
-├── templates/
-│   ├── base.html                      # Shell + sidebar + nav
-│   ├── soccer.html                    # Soccer picks
-│   ├── strategy_lab.html              # Strategy Lab
-│   ├── backtesting.html               # Walk-forward results
-│   ├── compare.html                   # ML vs Rules side-by-side
-│   ├── explainability.html            # Feature attribution
-│   ├── performance.html               # Prediction tracker
-│   └── nba/                          # NBA-specific templates
-├── data/
-│   ├── raw/E0_20{18-25}.csv          # Premier League data (7 seasons)
-│   ├── processed/                     # Cleaned training set + ELO state
-│   ├── models/                        # Saved joblib model pipelines
-│   └── backtests/                     # Walk-forward report JSON
-└── tests/                             # pytest test suite (30+ files)
+```text
+python -m pytest tests -q
+npm --prefix frontend run lint
+npm --prefix frontend run build
 ```
 
----
+For browser regressions, install Chromium with `npx playwright install chromium`
+from `frontend`, then run `npm --prefix frontend run test:e2e`. The tests start Vite
+and use controlled API responses. Set PLAYWRIGHT_CHANNEL=chrome to use installed Chrome.
+Backend tests isolate their database and history, block live requests, and disable jobs.
 
-## ML Pipeline
+## Train and publish models
 
-### Training
-
-```bash
-python prepare_dataset.py       # Feature engineering, ELO, form windows
-python train_model.py           # Train + save model pipeline
-python generate_ml_report.py    # Generate offline comparison report
-python walk_forward_backtest.py # Chronological fold evaluation
+```text
+python production_model.py
+python scripts/model_artifacts.py --create
+python scripts/model_artifacts.py
 ```
 
-### Pipeline Architecture
+Inference follows the artifact's declared feature order, including compatible older
+schemas. It rejects invalid metadata rather than silently using another feature count.
+The default serving artifact is the calibrated Random Forest; experimental ensembles
+must be selected explicitly. scikit-learn is pinned to the artifact's training version.
 
-```
-Raw CSV → Feature Engineering → sklearn Pipeline
-                                    ├── SimpleImputer (median)
-                                    ├── StandardScaler
-                                    └── Classifier (LR / RF / XGB / LGBM)
-                                         ↓
-                               CalibratedClassifierCV (isotonic)
-                                         ↓
-                               Stacking Ensemble (meta-LR on OOF)
-                                         ↓
-                               Hybrid Blend: ML×0.65 + Rules×0.35
-```
+The weekly model-release workflow trains and tests the production model, publishes an
+immutable GitHub release, then commits a checksum-pinned manifest and its matching
+evaluation. Builds verify or download that exact artifact. Publishing failure stops the
+workflow; it does not update the release pointer. Updating workflow files locally does
+not publish a release or deploy the app.
 
-**Features (40+):** recent form (5/10 game windows), PPG delta, goal scored/conceded rates, goal difference, home/away ELO, H2H record, shot proxies, form trajectory.
+## Storage and deployment
 
-**Target:** 3-class outcome — HomeWin / Draw / AwayWin
+The supplied Render Blueprint configures a paid single-instance service with a 1 GB
+persistent disk. Runtime state lives under `/var/data/scorpred`; model releases live
+with the application build so a persistent cache cannot pin an old model after deploy.
+This configuration has been schema-validated but has not been deployed here.
 
-**Evaluation:** Walk-forward with 5 expanding folds, strict no-look-ahead constraints.
+Production requires a stable SECRET_KEY and durable auth storage. DATABASE_URL can
+select PostgreSQL; the included deployment uses SQLite on the persistent disk.
+Prediction history remains a single-disk JSON store with process/thread locking and
+atomic replacement. Keep one Gunicorn worker and one service instance with this
+configuration. Redis can share cache/rate-limit state, but does not make JSON history
+safe for multiple service instances.
 
-### Model Results (Walk-Forward, 5 folds, 3,790 test matches)
+Provider response caches (`football`, `nba`, `nba_public`, `props`, `odds`, `service`)
+are pruned every six hours, and on demand with `flask --app app prune-cache`. Files
+older than `SCORPRED_CACHE_MAX_AGE_DAYS` (7) go first, then the oldest files until the
+total fits under `SCORPRED_CACHE_MAX_MB` (300). Archives, the NFL feature store and
+prediction history are never pruned.
 
-| Model | Mean Accuracy | Brier Score |
-|---|---|---|
-| Stacking Ensemble | 51.0% | 0.2024 |
-| Random Forest | 50.9% | 0.2013 |
-| Logistic Regression | 50.0% | 0.2018 |
-| XGBoost | 48.8% | 0.2127 |
-| LightGBM | 47.4% | 0.2172 |
-| **Hybrid (ML+Rules)** | **49.2%** | — |
-
-> **High-confidence tier (70%+): 70.7% accuracy** across 539 test matches. The model's confidence scores are genuinely calibrated — higher stated confidence correlates with higher real accuracy.
-
----
-
-## How to Run Locally
-
-```bash
-git clone https://github.com/AnoHondz/scorpred
-cd scorpred
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env          # add your API keys
-python app.py
-```
-
-### Environment Variables
-
-| Variable | Description |
-|---|---|
-| `SECRET_KEY` | Flask session secret |
-| `API_FOOTBALL_KEY` | RapidAPI key for API-Football |
-| `NBA_API_KEY` | RapidAPI key for NBA data |
-| `DATABASE_URL` | PostgreSQL URL (optional, defaults to SQLite) |
-
-```bash
-# Run the test suite
-pytest tests/ -v
-```
-
----
-
-## Pages
-
-| URL | Description |
-|---|---|
-| `/` | Dashboard |
-| `/soccer` | Soccer predictions |
-| `/nba/` | NBA predictions |
-| `/strategy-lab` | Strategy Lab — live vs offline accuracy |
-| `/backtesting` | Walk-forward backtest results with charts |
-| `/compare` | ML vs Rules side-by-side comparison |
-| `/explainability` | Feature attribution & signal analysis |
-| `/performance` | Prediction tracking & calibration |
-| `/insights` | Cross-sport insights |
-| `/prediction` | Match analysis |
-| `/alerts` | High-confidence alerts |
-
-### API Endpoints
-
-```
-GET  /api/dashboard/summary       Dashboard KPIs
-GET  /api/dashboard/picks         Top opportunities
-GET  /api/dashboard/performance   Performance metrics
-GET  /health                      Health check
-```
-
----
-
-## Resume Bullet Points
-
-- Built a **full-stack sports decision intelligence platform** in Flask with a two-layer hybrid prediction engine (ML × 0.65 + rules × 0.35) evaluated on 7 seasons of Premier League data
-- Engineered a **scikit-learn Pipeline** (SimpleImputer → StandardScaler → Classifier) wrapped in `CalibratedClassifierCV`, assembled into a stacking ensemble, and persisted with joblib for zero-drift inference
-- Implemented **walk-forward backtesting** across 5 chronological folds (3,790 test matches) with strict no-look-ahead constraints; 70.7% accuracy in the high-confidence tier (70%+)
-- Built a **feature attribution engine** that quantifies which signals drive correct vs incorrect predictions using mean-delta analysis across graded outcomes, surfaced through an interactive explainability dashboard
-- Designed a premium dark analytics UI with Chart.js visualizations across strategy lab, backtesting, ML vs rules comparison, and explainability pages
-- Integrated ESPN public API + RapidAPI with in-memory caching, disk fallback, 403/429 suppression, and per-request deduplication for production reliability
-
----
-
-## License
-
-MIT
+Read [migration and operational notes](docs/HARDENING_MIGRATION.md) before deployment.
+Older audit and implementation reports in `docs/` are historical snapshots, not the
+current feature or deployment specification.

@@ -384,3 +384,35 @@ def test_evaluation_dashboard_builds_series_breakdowns_and_failures(tracking_fil
     assert failures
     assert failures[0]["matchup"] == "Liverpool vs Everton"
     assert failures[0]["recommendation"] == "Everton ML"
+
+
+def _save(kickoff, winner="A", game_date="2030-01-01"):
+    return mt.save_prediction(sport="soccer", team_a="Home", team_b="Away", predicted_winner=winner,
+                              win_probs={"a": 50, "draw": 25, "b": 25}, confidence="Medium",
+                              game_date=game_date, kickoff=kickoff)
+
+
+def test_pick_is_not_created_after_kickoff(tracking_file):
+    assert _save("2020-01-01T15:00:00Z", game_date="2020-01-01") == ""
+    assert _load_predictions(tracking_file) == []
+
+
+def test_pick_is_frozen_once_kickoff_passes(tracking_file):
+    pred_id = _save("2030-01-01T15:00:00Z", winner="A")
+    assert _load_predictions(tracking_file)[0]["kickoff_at"] == "2030-01-01T15:00:00Z"
+    _set_prediction_fields(tracking_file, pred_id, {"kickoff_at": "2020-01-01T15:00:00Z"})
+    assert _save("2030-01-01T15:00:00Z", winner="B") == pred_id
+    assert _load_predictions(tracking_file)[0]["predicted_winner"] == "A"
+
+
+def test_pick_can_be_revised_before_kickoff(tracking_file):
+    pred_id = _save("2030-01-01T15:00:00Z", winner="A")
+    assert _save("2030-01-01T15:00:00Z", winner="B") == pred_id
+    assert _load_predictions(tracking_file)[0]["predicted_winner"] == "B"
+
+
+def test_verified_pregame_requires_precise_kickoff_after_creation():
+    assert mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "kickoff_at": "2026-10-20T23:00:00Z"})
+    assert not mt.verified_pregame({"created_at": "2026-10-21T00:10:00Z", "kickoff_at": "2026-10-20T23:00:00Z"})
+    assert not mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "date": "2026-10-20"})
+    assert not mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "kickoff_at": "2026-10-20"})

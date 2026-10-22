@@ -16,6 +16,7 @@ import uuid
 import re
 from runtime_paths import prediction_tracking_path
 from utils.parsing import normalize_date
+from utils.atomic import atomic_write_json, transaction
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,32 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware_datetime(value: Any) -> datetime | None:
+    """Parse a kickoff timestamp; date-only or naive values are not precise enough to freeze picks."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and "T" in value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+
+
+def _isoformat_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def verified_pregame(prediction: dict) -> bool:
+    """True only when the pick was first recorded before a known, precise kickoff."""
+    kickoff = _aware_datetime(prediction.get("kickoff_at"))
+    created = _aware_datetime(prediction.get("created_at"))
+    return kickoff is not None and created is not None and created < kickoff
+
+
+@transaction(lambda: _TRACKING_FILE)
 def _ensure_tracking_file() -> None:
     """Create tracking file if it doesn't exist."""
     if os.path.exists(_TRACKING_FILE):
@@ -35,20 +62,22 @@ def _ensure_tracking_file() -> None:
     folder = os.path.dirname(_TRACKING_FILE)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder, exist_ok=True)
-    with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-        json.dump({"predictions": []}, f, indent=2)
+    atomic_write_json(_TRACKING_FILE, {"predictions": []})
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _migrate_predictions() -> None:
     """Migrate existing predictions to add status field if missing."""
     try:
         with open(_TRACKING_FILE, "r", encoding="utf-8") as f:
             try:
                 data = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                data = {"predictions": []}
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Prediction history is corrupt; restore a backup before writing.") from exc
 
         predictions = data.get("predictions", [])
+        if not isinstance(data, dict) or not isinstance(data.get("predictions"), list):
+            raise RuntimeError("Prediction history has an invalid schema")
         migrated = False
 
         for pred in predictions:
@@ -133,12 +162,13 @@ def _migrate_predictions() -> None:
                     migrated = True
 
         if migrated:
-            with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-                json.dump({"predictions": predictions}, f, indent=2)
+            atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
     except Exception:
         logger.warning("Prediction migration failed", exc_info=True)
+        raise
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _load_predictions() -> list[dict]:
     """Load all tracked predictions."""
     _ensure_tracking_file()
@@ -151,21 +181,22 @@ def _load_predictions() -> list[dict]:
             if pred.get("status") == "completed":
                 changed = _apply_grading(pred) or changed
         if changed:
-            with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-                json.dump({"predictions": predictions}, f, indent=2)
+            atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
         return predictions
     except Exception:
-        return []
+        logger.error("Unable to read prediction history", exc_info=True)
+        raise
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _save_predictions(predictions: list[dict]) -> None:
     """Save predictions to file."""
     try:
         _ensure_tracking_file()
-        with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-            json.dump({"predictions": predictions}, f, indent=2)
+        atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
     except Exception:
         logger.error("Failed to save predictions to %s", _TRACKING_FILE, exc_info=True)
+        raise
 
 
 def _get_game_key(
@@ -595,6 +626,7 @@ def _apply_grading(pred: dict[str, Any]) -> bool:
     return changed
 
 
+@transaction(lambda: _TRACKING_FILE)
 def save_prediction(
     sport: str,
     team_a: str,
@@ -619,6 +651,7 @@ def save_prediction(
     implied_probability: float | None = None,  # market implied probability (reserved)
     form_a_length: int | None = None,          # home team's form list length (for recency_bias detection)
     elo_diff: float | None = None,             # home_elo - away_elo (for popular_team_overrating)
+    kickoff: str | datetime | None = None,     # scheduled start; picks are frozen from this moment
 ) -> str:
     """
     Save or update a prediction in the tracking file.
@@ -647,8 +680,10 @@ def save_prediction(
     game_date_normalized = normalize_date(game_date)
     if not game_date_normalized:
         return ""
-    game_key = _get_game_key(sport, game_date_normalized, team_a, team_b)
-    
+    game_key = _get_game_key(sport, game_date_normalized, team_a, team_b, league_id)
+    kickoff_at = _aware_datetime(kickoff)
+    started = kickoff_at is not None and kickoff_at <= _utc_now()
+
     # Check for existing prediction with same game key
     for existing in predictions:
         existing_key = _get_game_key(
@@ -659,7 +694,9 @@ def save_prediction(
             existing.get("league_id"),
         )
         if existing_key == game_key:
-            if existing.get("status") != "completed":
+            stored_kickoff = _aware_datetime(existing.get("kickoff_at"))
+            frozen = started or (stored_kickoff is not None and stored_kickoff <= _utc_now())
+            if existing.get("status") != "completed" and not frozen:
                 existing["predicted_winner"] = normalized_pick
                 existing["predicted_pick_label"] = predicted_pick_label
                 existing["prob_a"] = round(win_probs.get("a", 0), 1)
@@ -683,10 +720,15 @@ def save_prediction(
                 existing["fixture_id"] = fixture_id_value
                 existing["prediction_notes"] = prediction_notes
                 existing["model_factors"] = model_factors if isinstance(model_factors, dict) else {}
+                if kickoff_at is not None:
+                    existing["kickoff_at"] = _isoformat_z(kickoff_at)
                 existing["updated_at"] = _utc_now().isoformat().replace("+00:00", "Z")
                 _save_predictions(predictions)
             return existing.get("id", "")
-    
+
+    if started:
+        return ""
+
     pred_id = str(uuid.uuid4())[:8]
     now = _utc_now().isoformat().replace("+00:00", "Z")
     
@@ -723,6 +765,8 @@ def save_prediction(
         "created_at": now,
         "updated_at": now,
     }
+    if kickoff_at is not None:
+        prediction["kickoff_at"] = _isoformat_z(kickoff_at)
     if team_a_id is not None:
         prediction["team_a_id"] = str(team_a_id)
     if team_b_id is not None:
@@ -745,6 +789,7 @@ def save_prediction(
     return pred_id
 
 
+@transaction(lambda: _TRACKING_FILE)
 def clean_duplicate_predictions() -> int:
     """
     Remove duplicate predictions, keeping the most recent one for each game.
@@ -779,6 +824,7 @@ def clean_duplicate_predictions() -> int:
     return removed
 
 
+@transaction(lambda: _TRACKING_FILE)
 def update_prediction_result(
     pred_id: str,
     actual_result: str,
