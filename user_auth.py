@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import re
-import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from hmac import compare_digest
 from urllib.parse import urlparse
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for, jsonify, g
 from sqlalchemy.exc import IntegrityError
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from db_models import User, db
+from extensions import limiter
 
 user_auth_bp = Blueprint("user_auth", __name__)
 
@@ -57,19 +58,41 @@ def _login_user(email: str, *, persistent: bool = True) -> None:
     session.modified = True
 
 
-def _hash_password(password: str, salt: str | None = None) -> str:
-    if not salt:
-        salt = secrets.token_hex(16)
+def _hash_password(password: str) -> str:
+    return generate_password_hash(password)
+
+
+def _legacy_hash_password(password: str, salt: str) -> str:
     hash_ = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100_000)
     return f"{salt}${hash_.hex()}"
 
 
+def _is_legacy_hash(hashed: str) -> bool:
+    # Werkzeug hashes are "method:params$salt$hash"; legacy ones are "salt$hash".
+    return ":" not in hashed.split("$", 1)[0]
+
+
 def _verify_password(password: str, hashed: str) -> bool:
     try:
-        salt, _hashval = hashed.split("$", 1)
-        return compare_digest(_hash_password(password, salt), hashed)
+        if _is_legacy_hash(hashed):
+            salt, _hashval = hashed.split("$", 1)
+            return compare_digest(_legacy_hash_password(password, salt), hashed)
+        return check_password_hash(hashed, password)
     except Exception:
         return False
+
+
+def _upgrade_legacy_hash(email: str, password: str, hashed: str) -> None:
+    if not _is_legacy_hash(hashed):
+        return
+    try:
+        db_user = User.query.filter_by(email=_normalize_email(email)).first()
+        if db_user is not None:
+            db_user.password_hash = _hash_password(password)
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.warning("Password hash upgrade failed.", exc_info=True)
 
 
 def _serialize_user(user: User, *, include_password_hash: bool = False) -> dict:
@@ -92,7 +115,7 @@ def _save_user(user: dict) -> None:
     if not normalized_email:
         raise AuthStorageError("Email is required.")
 
-    created_at_raw = user.get("created_at") or datetime.utcnow().isoformat() + "Z"
+    created_at_raw = user.get("created_at") or datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z"
     created_at = (
         created_at_raw
         if isinstance(created_at_raw, datetime)
@@ -132,8 +155,13 @@ def current_user() -> dict | None:
     email = _normalize_email(session.get(USER_SESSION_KEY))
     if not email:
         return None
+    cached = g.get("_auth_user_cache")
+    if cached is not None and cached[0] == email:
+        return cached[1]
     try:
-        return _load_user(email)
+        user = _load_user(email)
+        g._auth_user_cache = (email, user)
+        return user
     except Exception:
         current_app.logger.warning("Failed to load current user session.", exc_info=True)
         session.pop(USER_SESSION_KEY, None)
@@ -153,7 +181,33 @@ def login_required(view_func):
     return wrapped
 
 
+def api_login_required(view_func):
+    from functools import wraps
+
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        user = current_user()
+        if not user:
+            return jsonify({"status": "error", "error": "Authentication required"}), 401
+        g.current_user = user
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
+def admin_required(view_func):
+    from functools import wraps
+
+    @wraps(view_func)
+    @api_login_required
+    def wrapped(*args, **kwargs):
+        if not g.current_user.get("is_admin"):
+            return jsonify({"status": "error", "error": "Administrator access required"}), 403
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
 @user_auth_bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     next_url = _safe_next_url()
     if request.method == "POST":
@@ -162,6 +216,7 @@ def login():
         remember = bool(request.form.get("remember"))
         user = _load_user(email, include_password_hash=True)
         if user and _verify_password(password, user["password_hash"]):
+            _upgrade_legacy_hash(email, password, user["password_hash"])
             _login_user(email, persistent=remember)
             flash("Signed in successfully.", "success")
             return redirect(next_url)
@@ -170,6 +225,7 @@ def login():
 
 
 @user_auth_bp.route("/signup", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def signup():
     next_url = _safe_next_url()
     if request.method == "POST":
@@ -191,7 +247,7 @@ def signup():
         user = {
             "email": email,
             "password_hash": _hash_password(password),
-            "created_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
             "saved_picks": [],
             "history": [],
         }

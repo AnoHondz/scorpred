@@ -12,10 +12,12 @@ import threading
 
 import re
 import unicodedata
+import click
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError, as_completed
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
+from inspect import unwrap
 from typing import Any, Callable
 from urllib.parse import urlparse
 from sqlalchemy import text
@@ -27,9 +29,8 @@ except ImportError:  # pragma: no cover
         return False
 from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template as flask_render_template, request, send_from_directory, session, url_for, g
+from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 
 import api_client as ac
@@ -57,9 +58,13 @@ from services import calibration_service
 from services import model_trust_service
 from services import prediction_service
 from services import validators
+from services import decision_store
+from services.data_freshness import from_records, worst
+from services.prediction_lifecycle import calendar_date, freshness_state, is_pregame, sanitize_decision, unavailable_reason
 from services.decision_engine import DecisionEngine
 from services.match_brain import MatchBrain
-from db_models import db
+from db_models import db, migrate_schema
+from extensions import limiter
 from decision_ui import build_decision_card, sort_cards_by_kickoff, top_opportunities, plan_summary
 
 try:
@@ -83,6 +88,7 @@ from league_config import (
     SUPPORTED_LEAGUE_IDS,
 )
 from nba_routes import nba_bp, nba_api_bp
+from nfl_routes import nfl_api_bp
 from cachetools import TTLCache
 
 try:
@@ -130,6 +136,9 @@ _EMPTY_METRICS = {
 _FIXTURE_INDEX: dict[str, dict[str, Any]] = {}
 _local_match_analysis_cache = TTLCache(maxsize=500, ttl=300)
 _local_fixture_cache = TTLCache(maxsize=50, ttl=120)
+_SOCCER_CARD_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="soccer-api")
+_SOCCER_CARD_FLIGHTS = {}
+_SOCCER_CARD_LOCK = threading.Lock()
 _local_league_cache = TTLCache(maxsize=20, ttl=300)
 _local_scoreline_cache: TTLCache = TTLCache(maxsize=200, ttl=300)
 _API_CIRCUIT: dict[str, dict[str, Any]] = {}
@@ -154,17 +163,23 @@ if _is_production and not _secret_key:
         "SECRET_KEY environment variable must be set in production. "
         "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
     )
+if _is_production and (len(_secret_key) < 32 or _secret_key in {"change-me-to-a-long-random-string", "dev-insecure-key-change-me"}):
+    raise RuntimeError("Production SECRET_KEY must be a generated secret of at least 32 characters.")
 if not _secret_key:
     _logger.warning("SECRET_KEY not set â€” using an insecure default. Set SECRET_KEY for production.")
     _secret_key = "dev-insecure-key-change-me"
 
 # --- Persistent session config ---
 app = Flask(__name__)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+app.config["TESTING"] = os.getenv("SCORPRED_TESTING") == "1"
+if _is_production:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 configure_security(app, _secret_key)
 _database_url = (os.getenv("DATABASE_URL") or "").strip()
 if _database_url.startswith("postgres://"):
     _database_url = _database_url.replace("postgres://", "postgresql://", 1)
+if _database_url.startswith("postgresql://"):
+    _database_url = _database_url.replace("postgresql://", "postgresql+psycopg://", 1)
 if not _database_url:
     _database_url = f"sqlite:///{auth_db_path().as_posix()}"
 app.config["SQLALCHEMY_DATABASE_URI"] = _database_url
@@ -180,6 +195,7 @@ db.init_app(app)
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 with app.app_context():
     db.create_all()
+    migrate_schema(db.engine)
 
 
 def render_template(template_name: str, **context):
@@ -193,6 +209,8 @@ def render_template(template_name: str, **context):
         return flask_render_template("error.html", **_page_context(msg="An internal error occurred. Please try again.")), 500
 
 _auth_storage = auth_storage_diagnostics()
+if _is_production and not _auth_storage["durable"]:
+    raise RuntimeError("Production requires DATABASE_URL or a persistent disk for accounts and tracking.")
 if _auth_storage["durable"]:
     _logger.info(
         "Auth storage ready at %s (%s).",
@@ -207,18 +225,15 @@ else:
     )
 
 try:
-    _db_ready = bool(db.session.execute(text("SELECT 1")).scalar())
+    with app.app_context():
+        _db_ready = bool(db.session.execute(text("SELECT 1")).scalar())
 except Exception:
     _logger.warning("Database connectivity check failed at startup", exc_info=True)
     _db_ready = False
 _redis_ready = cache_service._get_redis_client() is not None
 _redis_url = os.getenv("REDIS_URL", "").strip()
-limiter = Limiter(
-    key_func=get_remote_address,
-    app=app,
-    default_limits=[],
-    storage_uri=_redis_url or "memory://",
-)
+app.config["RATELIMIT_STORAGE_URI"] = _redis_url or "memory://"
+limiter.init_app(app)
 _logger.info(
     "startup_summary env=%s db=%s redis=%s api=%s",
     "production" if _is_production else "development",
@@ -236,12 +251,13 @@ _BACKEND_PREFIXES = (
     "/api/", "/static/", "/health", "/status", "/admin/",
     "/login", "/signup", "/logout",
 )
+_SPA_PAGE_PATHS = {"/", "/soccer", "/nba", "/nba/", "/nfl", "/nfl/", "/match-analysis", "/prediction", "/insights"}
 
 
 @app.before_request
 def _serve_spa_for_page_routes():
     """When the React build exists, serve index.html for all non-backend paths."""
-    if not _SPA_INDEX.exists():
+    if not app.config.get("SERVE_SPA", True) or not _SPA_INDEX.exists() or request.method not in {"GET", "HEAD"}:
         return None  # no build yet — fall through to Jinja2 routes
     path = request.path
     if any(path.startswith(p) for p in _BACKEND_PREFIXES):
@@ -250,12 +266,16 @@ def _serve_spa_for_page_routes():
     if path.startswith("/assets/"):
         filename = path[len("/assets/"):]
         return send_from_directory(_SPA_DIST / "assets", filename)
-    return send_from_directory(_SPA_DIST, "index.html")
+    if path in _SPA_PAGE_PATHS:
+        return send_from_directory(_SPA_DIST, "index.html")
+    return None
 
 # â”€â”€ Blueprints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-_CRITICAL_API_KEYS = {"API_FOOTBALL_KEY", "ANTHROPIC_API_KEY"}
+_CRITICAL_API_KEYS: set[str] = set()
 _OPTIONAL_API_KEYS = {
-    "NBA_API_KEY": "NBA live data will be unavailable",
+    "API_FOOTBALL_KEY": "configured soccer provider is unavailable; public fallbacks may still work",
+    "ANTHROPIC_API_KEY": "AI assistant chat will be unavailable",
+    "NBA_API_KEY": "legacy NBA standings are unavailable; public schedules and form remain usable",
     "ODDS_API_KEY": "betting odds and edge badges will be unavailable",
 }
 _FEATURE_NOTES = {
@@ -305,6 +325,7 @@ _validate_api_keys()
 
 app.register_blueprint(nba_bp)
 app.register_blueprint(nba_api_bp)
+app.register_blueprint(nfl_api_bp)
 app.register_blueprint(user_auth.user_auth_bp)
 
 
@@ -316,6 +337,8 @@ def inject_user():
 
 @app.after_request
 def _log_request_duration(response):
+    if request.path.startswith(("/api/bets", "/api/session", "/my-bets", "/login", "/signup")):
+        response.headers["Cache-Control"] = "no-store"
     started = getattr(g, "_request_started_at", None)
     if started is None:
         return response
@@ -358,18 +381,10 @@ def handle_400(exc):
 
 @app.errorhandler(Exception)
 def handle_unhandled_exception(exc):
+    if isinstance(exc, HTTPException):
+        return _error_response(exc.code or 500, exc.description or exc.name)
     _logger.error("Unhandled exception in route %s: %s", request.path, exc, exc_info=True)
     return _error_response(500, "Something went wrong. Please try again or go back to the home page.")
-
-
-@app.errorhandler(404)
-def handle_404(exc):
-    return _error_response(404, "Page not found.")
-
-
-@app.errorhandler(429)
-def handle_429(exc):
-    return jsonify({"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."}), 429
 
 
 LEAGUE = DEFAULT_LEAGUE_ID
@@ -2001,11 +2016,11 @@ def _league_context(league_id: int | None = None) -> dict:
 
 
 def _tracking_window_dates() -> tuple[set[str], list[str]]:
+    # Picks are only recorded for games that have not started; finished games are graded, never predicted.
     today = date.today()
-    yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
     tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
-    required = {yesterday, today.strftime("%Y-%m-%d")}
-    return required, [yesterday, today.strftime("%Y-%m-%d"), tomorrow]
+    required = {today.strftime("%Y-%m-%d")}
+    return required, [today.strftime("%Y-%m-%d"), tomorrow]
 
 
 def _tracking_is_complete() -> bool:
@@ -2083,7 +2098,11 @@ def _bootstrap_model_tracking() -> dict[str, int]:
 
     standings_cache: dict[int, list[dict]] = {}
     for fixture in soccer_fixtures:
-        fixture_date = str((fixture.get("fixture") or {}).get("date") or "")[:10]
+        fixture_info = fixture.get("fixture") or {}
+        kickoff = str(fixture_info.get("date") or "")
+        if not is_pregame(kickoff, (fixture_info.get("status") or {}).get("short")):
+            continue
+        fixture_date = kickoff[:10]
         home = (fixture.get("teams") or {}).get("home", {})
         away = (fixture.get("teams") or {}).get("away", {})
         home_id = home.get("id")
@@ -2189,6 +2208,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                 totals_pick=((_extract_totals_leg(prediction) or {}).get("pick")),
                 totals_line=((_extract_totals_leg(prediction) or {}).get("line")),
                 totals_market=((_extract_totals_leg(prediction) or {}).get("market")),
+                kickoff=kickoff,
             )
             predictions_generated += 1
             if existing:
@@ -2204,14 +2224,8 @@ def _bootstrap_model_tracking() -> dict[str, int]:
     nba_games: list[dict] = []
 
     if nc is not None and np_nba is not None:
-        try:
-            nba_games.extend(nc.get_scoreboard_games(date.today()))
-        except Exception:
-            _logger.warning("Failed to fetch NBA scoreboard games for today during tracking", exc_info=True)
-        try:
-            nba_games.extend(nc.get_scoreboard_games(date.today() - timedelta(days=1)))
-        except Exception:
-            _logger.warning("Failed to fetch NBA scoreboard games for yesterday during tracking", exc_info=True)
+        import nba_routes
+
         try:
             nba_games.extend(nc.get_upcoming_games(next_n=40, days_ahead=1))
         except Exception:
@@ -2228,31 +2242,15 @@ def _bootstrap_model_tracking() -> dict[str, int]:
 
         nba_fetched = len(unique_nba_games)
 
-        nba_standings = {}
         try:
-            raw_standings = nc.get_standings()
-            flat: list = []
-            if isinstance(raw_standings, dict):
-                for group in raw_standings.values():
-                    if isinstance(group, list):
-                        flat.extend(group)
-            else:
-                flat = list(raw_standings or [])
-
-            ranked = []
-            for i, entry in enumerate(flat):
-                if not isinstance(entry, dict):
-                    continue
-                team_info = entry.get("team") or entry
-                name = team_info.get("name") or team_info.get("nickname", "")
-                rank = entry.get("rank") or entry.get("conference", {}).get("rank") or (i + 1)
-                if name:
-                    ranked.append({"team": {"name": name}, "rank": rank})
-
-            nba_standings = se.build_opp_strengths_from_standings(ranked)
+            team_map = {str(team["id"]): team for team in (nc.get_teams() or [])}
+        except Exception:
+            team_map = {}
+        try:
+            nba_opp_strengths = nba_routes._build_nba_opp_strengths(nc.get_standings() or {})
         except Exception:
             _logger.warning("Failed to build NBA opponent strengths from standings during tracking", exc_info=True)
-            nba_standings = {}
+            nba_opp_strengths = {}
 
         for game in unique_nba_games:
             teams_block = game.get("teams") or {}
@@ -2261,51 +2259,18 @@ def _bootstrap_model_tracking() -> dict[str, int]:
 
             home_name = home_team.get("name") or home_team.get("nickname", "Home")
             away_name = away_team.get("name") or away_team.get("nickname", "Away")
-            fixture_date = str((game.get("date") or {}).get("start") or "")[:10]
+            kickoff = str((game.get("date") or {}).get("start") or "")
+            fixture_date = kickoff[:10]
+            if not is_pregame(kickoff, game.get("status")):
+                continue
 
+            # Track exactly what the NBA dashboard publishes; SKIP cards are not tracked picks.
             try:
-                h2h_raw = []
-                form_home_raw = []
-                form_away_raw = []
-                injuries_home = []
-                injuries_away = []
-
-                try:
-                    h2h_raw = nc.get_h2h(str(home_team.get("id", "")), str(away_team.get("id", "")))
-                except Exception:
-                    _logger.warning("Failed to fetch NBA H2H for %s vs %s during tracking", home_name, away_name, exc_info=True)
-                try:
-                    form_home_raw = nc.get_team_recent_form(str(home_team.get("id", "")))
-                except Exception:
-                    _logger.warning("Failed to fetch NBA home form for %s during tracking", home_name, exc_info=True)
-                try:
-                    form_away_raw = nc.get_team_recent_form(str(away_team.get("id", "")))
-                except Exception:
-                    _logger.warning("Failed to fetch NBA away form for %s during tracking", away_name, exc_info=True)
-                try:
-                    injuries_home = nc.get_team_injuries(str(home_team.get("id", "")))
-                except Exception:
-                    _logger.warning("Failed to fetch NBA home injuries for %s during tracking", home_name, exc_info=True)
-                try:
-                    injuries_away = nc.get_team_injuries(str(away_team.get("id", "")))
-                except Exception:
-                    _logger.warning("Failed to fetch NBA away injuries for %s during tracking", away_name, exc_info=True)
-
-                prediction = se.scorpred_predict(
-                    form_a=np_nba.extract_recent_form(form_home_raw, str(home_team.get("id", "")), n=5),
-                    form_b=np_nba.extract_recent_form(form_away_raw, str(away_team.get("id", "")), n=5),
-                    h2h_form_a=np_nba.extract_recent_form(h2h_raw, str(home_team.get("id", "")), n=5),
-                    h2h_form_b=np_nba.extract_recent_form(h2h_raw, str(away_team.get("id", "")), n=5),
-                    injuries_a=injuries_home,
-                    injuries_b=injuries_away,
-                    team_a_is_home=True,
-                    team_a_name=home_name,
-                    team_b_name=away_name,
-                    sport="nba",
-                    opp_strengths=nba_standings,
-                )
+                prediction = nba_routes._build_upcoming_prediction_card(game, team_map, nba_opp_strengths).get("prediction")
             except Exception:
                 _logger.warning("NBA prediction engine failed for %s vs %s during tracking", home_name, away_name, exc_info=True)
+                continue
+            if not prediction:
                 continue
 
             best_pick = prediction.get("best_pick", {})
@@ -2333,6 +2298,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                     totals_pick=((_extract_totals_leg(prediction) or {}).get("pick")),
                     totals_line=((_extract_totals_leg(prediction) or {}).get("line")),
                     totals_market=((_extract_totals_leg(prediction) or {}).get("market")),
+                    kickoff=kickoff,
                 )
                 predictions_generated += 1
                 if existing:
@@ -2377,7 +2343,7 @@ def _ensure_model_tracking():
 
 @app.before_request
 def _bootstrap_tracking_daily():
-    if request.endpoint in {None, "static", "health"}:
+    if app.config.get("TESTING") or request.endpoint in {None, "static", "health", "liveness", "api_health", "api_session"}:
         return
     today_str = date.today().strftime("%Y-%m-%d")
     if app.config.get("TRACKING_LAST_BOOTSTRAP") == today_str:
@@ -2401,6 +2367,28 @@ def _resolve_provider_team_by_name(name: str, teams: list[dict]) -> dict | None:
 
 def _selected_fixture() -> dict:
     return bootstrap_services.selected_fixture(session)
+
+
+def _soccer_unavailable_page(team_a, team_b, selected, *, template, inputs=()):
+    """Apply the same validity policy to the retained HTML analysis routes."""
+    fixture = _FIXTURE_INDEX.get(str((selected or {}).get("fixture_id"))) or {}
+    info = fixture.get("fixture") or {}
+    kickoff = info.get("date") or (selected or {}).get("date")
+    status = info.get("status") or (selected or {}).get("status")
+    source = worst([fixture.get("data_freshness"), from_records(inputs)])
+    reason = unavailable_reason(kickoff, status, source) if kickoff else None
+    if not reason and source and freshness_state(source) != "fresh":
+        reason = "Recent form needs a fresh provider update before a pregame recommendation is available."
+    if not reason:
+        return None
+    analysis = {"match_id": str((selected or {}).get("fixture_id") or ""),
+                "matchup": f'{team_a["name"]} vs {team_b["name"]}', "action": "SKIP", "confidence": 0,
+                "recommended_side": "Unavailable", "probabilities": {"a": None, "draw": None, "b": None}, "metric_breakdown": None,
+                "data_quality": "Limited Data", "reason": reason}
+    scorpred = {"decision_card": dui.build_decision_card(analysis=analysis), "play_type": "SKIP", "confidence_pct": 0,
+                "win_probabilities": {}, "best_pick": {"prediction": "Unavailable", "reasoning": reason}}
+    return render_template(template, **_page_context(team_a=team_a, team_b=team_b, selected_fixture=selected,
+                           scorpred=scorpred, prediction={"ui_prediction": scorpred}, **_league_context(_active_league_id())))
 
 
 
@@ -2428,14 +2416,20 @@ def _load_upcoming_fixtures(
 
 
 def load_fixtures_cached(league_id: int):
+    def fresh(data):
+        return bool(data) and all(not f.get("data_freshness") or freshness_state(f["data_freshness"]) == "fresh" for f in data[0] or [])
     redis_key = cache_service.make_key("fixtures", league_id)
     redis_cached = cache_service.get_json(redis_key)
-    if redis_cached is not None:
+    if redis_cached is not None and fresh(redis_cached):
         _logger.debug("fixture_cache hit(redis) league_id=%s", league_id)
-        return tuple(redis_cached)
-    if league_id in _local_fixture_cache:
+        data = tuple(redis_cached)
+        _restore_fixture_index(data[0])
+        return data
+    if league_id in _local_fixture_cache and fresh(_local_fixture_cache[league_id]):
         _logger.debug("fixture_cache hit league_id=%s", league_id)
-        return _local_fixture_cache[league_id]
+        data = _local_fixture_cache[league_id]
+        _restore_fixture_index(data[0])
+        return data
     _logger.debug("fixture_cache miss league_id=%s", league_id)
     data = _load_upcoming_fixtures(
         next_n=24,
@@ -2446,14 +2440,27 @@ def load_fixtures_cached(league_id: int):
     )
     fixtures = (data or ([], None, _football_data_source(), ""))[0]
     load_error = (data or ([], None, _football_data_source(), ""))[1]
+    source_meta = from_records(fixtures)
+    health = ({"status": "success" if freshness_state(source_meta) == "fresh" else "degraded", **source_meta} if source_meta else {})
+    if not fixtures and hasattr(ac, "get_last_refresh_status"):
+        health = ac.get_last_refresh_status(league_id)
+        if isinstance(health, dict) and health.get("status") == "success":
+            load_error = None
+    if data and health:
+        data = (fixtures, load_error, data[2], health)
+    _restore_fixture_index(fixtures)
+    if fixtures and not load_error:
+        _local_fixture_cache[league_id] = data
+        cache_service.set_json(redis_key, list(data), ttl=120)
+    return data
+
+
+def _restore_fixture_index(fixtures):
+    """Rehydrate the analysis lookup after any disk/Redis cache hit."""
     for fixture in fixtures or []:
         fixture_id = (fixture.get("fixture") or {}).get("id")
         if fixture_id is not None:
             _FIXTURE_INDEX[str(fixture_id)] = fixture
-    if fixtures and not load_error:
-        _local_fixture_cache[league_id] = data
-        cache_service.set_json(redis_key, list(data), ttl=900)
-    return data
 
 
 def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
@@ -2470,6 +2477,7 @@ def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
         "league": canonical.get("league", ""),
         "kickoff": canonical.get("kickoff", ""),
         "status": canonical.get("status", "scheduled"),
+        "data_freshness": canonical.get("data_freshness") or fixture.get("data_freshness") or {},
         "prediction": pred_block,
         "recommended_side": canonical.get("recommended_side"),
         "action": canonical.get("action", "SKIP"),
@@ -2567,117 +2575,27 @@ def _analysis_from_prediction_payload(
 
 def cached_analyze_match(match_id: str | int):
     key = str(match_id)
+    def guard(result):
+        fixture = _FIXTURE_INDEX.get(key)
+        if fixture:
+            info = fixture.get("fixture") or {}
+            result = dict(result, kickoff=info.get("date"), game_date=info.get("date"), event_status=info.get("status"),
+                          data_freshness=worst([result.get("data_freshness"), fixture.get("data_freshness")]))
+        return sanitize_decision(result)
     redis_key = cache_service.make_key("match-analysis", key)
     redis_cached = cache_service.get_json(redis_key)
     if redis_cached is not None:
         _logger.debug("match_analysis_cache hit(redis) match_id=%s", key)
-        return redis_cached
+        return guard(redis_cached)
     if key in _local_match_analysis_cache:
         _logger.debug("match_analysis_cache hit match_id=%s", key)
-        return _local_match_analysis_cache[key]
+        return guard(_local_match_analysis_cache[key])
     _logger.debug("match_analysis_cache miss match_id=%s", key)
     result = analyze_match(key)
     if result:
         _local_match_analysis_cache[key] = result
         cache_service.set_json(redis_key, result, ttl=300)
-    return result
-    fixtures_with_pred = []
-    data_source = _football_data_source()
-
-    try:
-        upcoming = ac.get_upcoming_fixtures(selected_league_id, SEASON, next_n=next_n)
-    except Exception as exc:
-        upcoming = []
-        load_error = str(exc)
-        app.logger.error("Upcoming fixtures fetch failed: %s", exc)
-
-    standings_cache: dict[int, list[dict]] = {}
-
-    for fixture in upcoming:
-        try:
-            home_id = fixture["teams"]["home"]["id"]
-            away_id = fixture["teams"]["away"]["id"]
-            home_name = fixture["teams"]["home"]["name"]
-            away_name = fixture["teams"]["away"]["name"]
-            fixture_league_id = _safe_int((fixture.get("league") or {}).get("id"), selected_league_id)
-            if fixture_league_id not in standings_cache:
-                try:
-                    standings_cache[fixture_league_id] = ac.get_standings(fixture_league_id, SEASON)
-                except Exception as exc:
-                    standings_cache[fixture_league_id] = []
-                    app.logger.warning("Standings unavailable for league=%s: %s", fixture_league_id, exc)
-
-            h2h_raw = []
-            fixtures_home = []
-            fixtures_away = []
-            injuries_home = []
-            injuries_away = []
-
-            try:
-                h2h_raw = ac.get_h2h(home_id, away_id, last=10)
-            except Exception:
-                app.logger.debug("Upcoming fixture h2h missing for %s vs %s", home_name, away_name)
-            try:
-                fixtures_home = _recent_team_fixtures_all_comps(home_id, fixture_league_id, season=SEASON, last=10)
-            except Exception:
-                app.logger.debug("Upcoming fixture home team form missing for %s", home_name)
-            try:
-                fixtures_away = _recent_team_fixtures_all_comps(away_id, fixture_league_id, season=SEASON, last=10)
-            except Exception:
-                app.logger.debug("Upcoming fixture away team form missing for %s", away_name)
-            try:
-                injuries_home = _clean_injuries(ac.get_injuries(fixture_league_id, SEASON, home_id))
-            except Exception:
-                app.logger.debug("Upcoming fixture home injuries missing for %s", home_name)
-            try:
-                injuries_away = _clean_injuries(ac.get_injuries(fixture_league_id, SEASON, away_id))
-            except Exception:
-                app.logger.debug("Upcoming fixture away injuries missing for %s", away_name)
-
-            h2h_raw = pred.filter_recent_completed_fixtures(h2h_raw, current_season=SEASON, seasons_back=5)
-
-            form_home = pred.extract_form(fixtures_home, home_id)[:5]
-            form_away = pred.extract_form(fixtures_away, away_id)[:5]
-            h2h_form_home = pred.extract_form(h2h_raw, home_id)[:5]
-            h2h_form_away = pred.extract_form(h2h_raw, away_id)[:5]
-
-            prediction = se.scorpred_predict(
-                form_a=form_home,
-                form_b=form_away,
-                h2h_form_a=h2h_form_home,
-                h2h_form_b=h2h_form_away,
-                injuries_a=injuries_home,
-                injuries_b=injuries_away,
-                team_a_is_home=True,
-                team_a_name=home_name,
-                team_b_name=away_name,
-                sport="soccer",
-                opp_strengths=_build_opp_strengths(standings_cache.get(fixture_league_id, [])),
-            )
-        except Exception as exc:
-            app.logger.warning(
-                "Upcoming fixture prediction failed for %s vs %s: %s",
-                fixture.get("fixture", {}).get("id"),
-                exc,
-            )
-            prediction = se.scorpred_predict(
-                form_a=[],
-                form_b=[],
-                h2h_form_a=[],
-                h2h_form_b=[],
-                injuries_a=[],
-                injuries_b=[],
-                team_a_is_home=True,
-                team_a_name=fixture.get("teams", {}).get("home", {}).get("name", "Home"),
-                team_b_name=fixture.get("teams", {}).get("away", {}).get("name", "Away"),
-                sport="soccer",
-                opp_strengths={},
-            )
-
-        fixtures_with_pred.append({**fixture, "prediction": prediction})
-
-
-    return fixtures_with_pred, load_error, data_source, ""
+    return guard(result) if result else result
 
 
 def _prediction_confidence_rank(item: dict) -> tuple[int, float]:
@@ -2736,6 +2654,8 @@ def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[s
         card["team_b_initials"] = dui.initials(team_b)
         card["league_logo"] = league_block.get("logo") or ""
         card["game_date"] = fixture_block.get("date") or ""
+        card["event_status"] = fixture_block.get("status")
+        card["data_freshness"] = worst([fixture.get("data_freshness"), analysis.get("data_freshness")])
         card["matchup"] = f"{team_a} vs {team_b}"
         card["competition"] = league_block.get("name") or "Soccer"
         card["action_label"] = card.get("action")
@@ -2760,7 +2680,7 @@ def _soccer_card_from_fixture_analysis(fixture: dict[str, Any], analysis: dict[s
             card["recommended_side_key"] = "b"
         else:
             card["recommended_side_key"] = "a"  # default to home team
-    return card
+    return sanitize_decision(card) if card else None
 
 
 def _soccer_cards_from_fixtures(fixtures: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2790,20 +2710,19 @@ _MATCH_BRAIN = MatchBrain(
 
 
 prediction_service.configure(
+    get_fixture=_fixture_by_id,
     analyze_match=analyze_match,
     load_fixtures=load_fixtures_cached,
     card_from_fixture=_soccer_card_from_fixture_analysis,
     top_opportunities=lambda cards, limit: dui.top_opportunities(cards, limit=limit),
     plan_summary=dui.plan_summary,
+    restore_fixtures=_restore_fixture_index,
 )
 
 # Start background pipeline scheduler: proactive fixture refresh + ML + health monitoring
 _pipeline_alerter = EmailAlerter()
 _pipeline_monitor = PipelineMonitor(alerter=_pipeline_alerter)
-if not app.config.get("TESTING"):
-    _pipeline_scheduler = _sched_module.start(
-        app, prediction_service, ac, nc, _pipeline_monitor
-    )
+_pipeline_scheduler = None
 
 
 def _warm_slate_cache() -> None:
@@ -2827,8 +2746,22 @@ def _warm_slate_cache() -> None:
     threading.Thread(target=_run, daemon=True).start()
 
 
-if not app.config.get("TESTING"):
-    _warm_slate_cache()
+def start_background_services():
+    """Called after the worker starts, never while preloading/importing."""
+    global _pipeline_scheduler
+    if app.config.get("TESTING") or os.getenv("SCORPRED_SCHEDULER_ENABLED", "1") != "1":
+        return
+    if _pipeline_scheduler is None:
+        _pipeline_scheduler = _sched_module.start(
+            app, prediction_service, ac, nc, _pipeline_monitor, match_brain=_MATCH_BRAIN
+        )
+        _warm_slate_cache()
+
+
+def stop_background_services():
+    global _pipeline_scheduler
+    _sched_module.stop()
+    _pipeline_scheduler = None
 
 
 def _load_grouped_upcoming_fixtures_all_leagues(
@@ -2892,16 +2825,6 @@ def _load_grouped_upcoming_fixtures_all_leagues(
 def _require_teams():
 
     return bootstrap_services.require_teams(session)
-
-
-def _team_form_payload(team_id: int) -> dict:
-    return evidence_services.team_form_payload(
-        ac,
-        pred,
-        team_id=team_id,
-        league=LEAGUE,
-        season=SEASON,
-    )
 
 
 def _run_parallel(tasks: dict[str, tuple[Callable[[], Any], Any, str]]) -> dict[str, Any]:
@@ -3398,85 +3321,6 @@ def _resolve_record_logos(record: dict[str, Any], *, sport: str, team_a: str, te
     return logo_a, logo_b, league_logo
 
 
-def _stable_match_value(*parts: Any) -> int:
-    seed = "|".join(str(part or "") for part in parts).encode("utf-8", errors="ignore")
-    return int(hashlib.sha256(seed).hexdigest()[:10], 16)
-
-
-def _live_prediction_payload(
-    *,
-    sport: str,
-    team_a: str,
-    team_b: str,
-    date_key: str = "",
-    league_key: str = "",
-    data_tier: str = "partial",
-) -> tuple[dict[str, Any], str]:
-    seed = _stable_match_value(sport, team_a, team_b, date_key, league_key)
-    side_key = "a" if seed % 5 in {0, 2, 3} else "b"
-    selected = team_a if side_key == "a" else team_b
-    base_confidence = 55 + (seed % 15)
-    if seed % 17 == 0:
-        base_confidence += 5
-    confidence_pct = int(dui.clamp(base_confidence, 54, 76))
-
-    if sport == "soccer":
-        draw = 20 + ((seed // 7) % 8)
-        selected_prob = confidence_pct
-        other_prob = max(10, 100 - selected_prob - draw)
-        if side_key == "a":
-            probabilities = {"a": selected_prob, "b": other_prob, "draw": draw}
-        else:
-            probabilities = {"a": other_prob, "b": selected_prob, "draw": draw}
-    else:
-        selected_prob = confidence_pct
-        other_prob = max(24, 100 - selected_prob)
-        probabilities = {"a": selected_prob, "b": other_prob} if side_key == "a" else {"a": other_prob, "b": selected_prob}
-
-    lead_reason = [
-        f"{selected} carries the cleaner form and matchup profile.",
-        f"{selected} shows the stronger venue-adjusted read.",
-        f"{selected} grades ahead on attack stability and game context.",
-        f"{selected} owns the better side of a competitive matchup.",
-    ][seed % 4]
-    support = [
-        "Confidence is shaped from current slate context, team identity, and available matchup signals.",
-        "The edge is playable, with lineup and late-news context still worth checking.",
-        "Available data supports the side without making the matchup look artificially flat.",
-    ][(seed // 5) % 3]
-
-    picked_components = {
-        "form": 60 + (seed % 24),
-        "attack": 58 + ((seed // 3) % 25),
-        "defense": 53 + ((seed // 5) % 20),
-        "venue": 57 + ((seed // 11) % 22),
-    }
-    other_components = {
-        "form": 48 + ((seed // 13) % 18),
-        "attack": 47 + ((seed // 17) % 18),
-        "defense": 48 + ((seed // 19) % 17),
-        "venue": 45 + ((seed // 23) % 18),
-    }
-
-    return (
-        {
-            "best_pick": {
-                "prediction": selected,
-                "team": side_key,
-                "reasoning": lead_reason,
-                "confidence": "High" if confidence_pct >= 66 else "Medium",
-            },
-            "win_probabilities": probabilities,
-            "confidence_pct": confidence_pct,
-            "data_completeness": {"tier": data_tier},
-            "components_a": picked_components if side_key == "a" else other_components,
-            "components_b": picked_components if side_key == "b" else other_components,
-            "decision_summary": lead_reason,
-        },
-        support,
-    )
-
-
 def _nba_team_from_game(game: dict[str, Any], side: str) -> dict[str, Any]:
     teams = game.get("teams") if isinstance(game.get("teams"), dict) else {}
     key = "home" if side == "home" else "visitors"
@@ -3485,49 +3329,7 @@ def _nba_team_from_game(game: dict[str, Any], side: str) -> dict[str, Any]:
 
 
 def _decision_card_from_nba_game(game: dict[str, Any]) -> dict[str, Any] | None:
-    home = _nba_team_from_game(game, "home")
-    away = _nba_team_from_game(game, "away")
-    home_name = home.get("name") or home.get("nickname") or "Home"
-    away_name = away.get("name") or away.get("nickname") or "Away"
-    if home_name == "Home" or away_name == "Away":
-        return None
-    prediction, support = _live_prediction_payload(
-        sport="nba",
-        team_a=home_name,
-        team_b=away_name,
-        date_key=(game.get("date") or {}).get("start") or "",
-        league_key=str(game.get("id") or ""),
-        data_tier="partial",
-    )
-    card = dui.build_decision_card(
-        sport="nba",
-        team_a=home_name,
-        team_b=away_name,
-        prediction=prediction,
-        competition="NBA",
-        match_date=(game.get("date") or {}).get("start") or "",
-        venue=(game.get("venue") or {}).get("name") or "",
-        team_a_logo=_espn_nba_logo_from_team(home),
-        team_b_logo=_espn_nba_logo_from_team(away),
-        cta_url="/nba/select-game",
-        cta_label="View Matchup",
-        cta_method="post",
-        cta_payload={
-            "team_a": home.get("id") or "",
-            "team_b": away.get("id") or "",
-            "team_a_name": home_name,
-            "team_b_name": away_name,
-            "team_a_logo": _espn_nba_logo_from_team(home),
-            "team_b_logo": _espn_nba_logo_from_team(away),
-            "event_id": game.get("id") or "",
-            "event_date": (game.get("date") or {}).get("start") or "",
-            "event_status": (game.get("status") or {}).get("long") or "",
-            "venue_name": (game.get("venue") or {}).get("name") or "",
-            "short_name": game.get("short_name") or f"{away_name} @ {home_name}",
-        },
-        support_text=support,
-    )
-    return card
+    return (game.get("prediction") or {}).get("decision_card")
 
 
 def _dedupe_decision_cards(cards: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
@@ -3621,179 +3423,12 @@ def _tracker_result_rows(limit: int = 6) -> list[dict[str, Any]]:
     return rows[:limit]
 
 
-def _result_prediction_record(
-    *,
-    sport: str,
-    team_a: dict[str, Any],
-    team_b: dict[str, Any],
-    competition: str,
-    event_id: Any,
-    event_date: str,
-    score_a: int,
-    score_b: int,
-    data_tier: str = "partial",
-) -> dict[str, Any]:
-    team_a_name = team_a.get("name") or team_a.get("displayName") or "Home"
-    team_b_name = team_b.get("name") or team_b.get("displayName") or "Away"
-    prediction, _ = _live_prediction_payload(
-        sport=sport,
-        team_a=team_a_name,
-        team_b=team_b_name,
-        date_key=event_date,
-        league_key=str(event_id or competition),
-        data_tier=data_tier,
-    )
-    side_key = str(((prediction.get("best_pick") or {}).get("team") or "a")).lower()
-    if score_a == score_b:
-        is_correct = False
-        is_push = True
-    else:
-        actual_key = "a" if score_a > score_b else "b"
-        is_correct = side_key == actual_key
-        is_push = False
-    probs = prediction.get("win_probabilities") or {}
-    return {
-        "id": f"live-{sport}-{event_id}",
-        "sport": sport,
-        "team_a": team_a_name,
-        "team_b": team_b_name,
-        "home_team": team_a_name,
-        "away_team": team_b_name,
-        "team_a_id": team_a.get("id") or "",
-        "team_b_id": team_b.get("id") or "",
-        "team_a_logo": _logo_from_team_payload(team_a),
-        "team_b_logo": _logo_from_team_payload(team_b),
-        "league_name": competition,
-        "competition": competition,
-        "game_date": event_date,
-        "date": event_date,
-        "final_score_display": f"{score_a}-{score_b}",
-        "predicted_pick_label": team_a_name if side_key == "a" else team_b_name,
-        "predicted_winner": side_key,
-        "prob_a": probs.get("a"),
-        "prob_b": probs.get("b"),
-        "prob_draw": probs.get("draw"),
-        "confidence_pct": prediction.get("confidence_pct"),
-        "confidence": (prediction.get("best_pick") or {}).get("confidence"),
-        "reasoning": (prediction.get("best_pick") or {}).get("reasoning"),
-        "data_completeness": prediction.get("data_completeness"),
-        "is_correct": is_correct,
-        "is_push": is_push,
-        "result": "push" if is_push else ("correct" if is_correct else "incorrect"),
-    }
-
-
 def _recent_nba_result_records(limit: int = 10) -> list[dict[str, Any]]:
-    if not nc:
-        return []
-    records: list[dict[str, Any]] = []
-    target_dates = [datetime.now() - timedelta(days=offset) for offset in range(0, 18)]
-
-    def _fetch_day(target: datetime) -> list[dict[str, Any]]:
-        try:
-            return nc.get_scoreboard_games(target, request_profile="page")
-        except Exception:
-            _logger.warning("Failed to fetch NBA scoreboard games for date=%s in recent results", target, exc_info=True)
-            return []
-
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        future_map = {pool.submit(_fetch_day, target): target for target in target_dates}
-        for future in as_completed(future_map):
-            for game in future.result() or []:
-                if (game.get("status") or {}).get("state") != "post":
-                    continue
-                scores = game.get("scores") or {}
-                home_score = ((scores.get("home") or {}).get("points"))
-                away_score = ((scores.get("visitors") or {}).get("points"))
-                if home_score is None or away_score is None:
-                    continue
-                record = _result_prediction_record(
-                    sport="nba",
-                    team_a=_nba_team_from_game(game, "home"),
-                    team_b=_nba_team_from_game(game, "away"),
-                    competition="NBA",
-                    event_id=game.get("id") or "",
-                    event_date=(game.get("date") or {}).get("start") or "",
-                    score_a=int(home_score),
-                    score_b=int(away_score),
-                    data_tier="partial",
-                )
-                records.append(record)
-    records.sort(key=lambda item: str(item.get("game_date") or ""), reverse=True)
-    return records[:limit]
+    return [row for row in mt.get_completed_predictions(limit=5000) if row.get("sport") == "nba"][:limit]
 
 
 def _recent_soccer_result_records(limit: int = 50) -> list[dict[str, Any]]:
-    records: list[dict[str, Any]] = []
-    league_ids = list(SUPPORTED_LEAGUE_IDS)
-    target_dates = [datetime.now(timezone.utc) - timedelta(days=offset) for offset in range(0, 24)]
-
-    def _fetch_league_day(league_id: int, target: datetime) -> list[dict[str, Any]]:
-        slug = getattr(ac, "ESPN_SLUG_BY_LEAGUE", {}).get(league_id)
-        if not slug:
-            return []
-        date_str = target.strftime("%Y%m%d")
-        try:
-            payload = ac._espn_get_json(  # type: ignore[attr-defined]
-                f"{ac.ESPN_BASE}/{slug}/scoreboard?dates={date_str}",
-                f"results:{league_id}:{date_str}",
-                ttl_hours=0.5,
-            )
-        except Exception:
-            _logger.warning("Failed to fetch ESPN scoreboard for league_id=%s date=%s", league_id, date_str, exc_info=True)
-            return []
-        rows = []
-        for event in payload.get("events") or []:
-            fixture = ac._normalize_espn_fixture(event, league_id)  # type: ignore[attr-defined]
-            if not fixture:
-                continue
-            status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
-            if status != "FT":
-                continue
-            goals = fixture.get("goals") or {}
-            home_score = goals.get("home")
-            away_score = goals.get("away")
-            if home_score is None or away_score is None:
-                continue
-            home = (fixture.get("teams") or {}).get("home") or {}
-            away = (fixture.get("teams") or {}).get("away") or {}
-            competition = (LEAGUE_BY_ID.get(league_id) or {}).get("name") or ((fixture.get("league") or {}).get("name")) or "Soccer"
-            rows.append(
-                _result_prediction_record(
-                    sport="soccer",
-                    team_a=home,
-                    team_b=away,
-                    competition=competition,
-                    event_id=(fixture.get("fixture") or {}).get("id") or "",
-                    event_date=(fixture.get("fixture") or {}).get("date") or "",
-                    score_a=int(home_score),
-                    score_b=int(away_score),
-                    data_tier="partial",
-                )
-            )
-        return rows
-
-    tasks = [(league_id, target) for league_id in league_ids for target in target_dates]
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        future_map = {pool.submit(_fetch_league_day, league_id, target): (league_id, target) for league_id, target in tasks}
-        for future in as_completed(future_map):
-            records.extend(future.result() or [])
-    records.sort(key=lambda item: str(item.get("game_date") or ""), reverse=True)
-    seen: set[tuple[str, str, str]] = set()
-    deduped = []
-    for record in records:
-        key = (
-            str(record.get("sport")),
-            str(record.get("game_date"))[:10],
-            dui.initials(str(record.get("team_a"))) + dui.initials(str(record.get("team_b"))) + str(record.get("final_score_display")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(record)
-        if len(deduped) >= limit:
-            break
-    return deduped
+    return [row for row in mt.get_completed_predictions(limit=5000) if row.get("sport") == "soccer"][:limit]
 
 
 def _completed_result_rows(limit: int = 200) -> list[dict[str, Any]]:
@@ -4572,8 +4207,8 @@ def results():
     return redirect(url_for("insights"))
 
 
-@limiter.limit("60/hour")
 @app.route("/api/results/live")
+@limiter.limit("60/hour")
 def api_results_live():
     rows = _completed_result_rows(limit=200)
     summary = dui.results_summary(rows)
@@ -4713,6 +4348,9 @@ def matchup():
     if not team_a:
         return _selection_error_redirect("soccer", "Match Analysis could not be opened because no soccer fixture is selected.")
     selected_fixture = _selected_fixture()
+    blocked = _soccer_unavailable_page(team_a, team_b, selected_fixture, template="matchup.html")
+    if blocked is not None:
+        return blocked
     league_id = _set_active_league(_active_league_id())
 
     id_a, id_b = team_a["id"], team_b["id"]
@@ -4814,8 +4452,10 @@ def matchup():
             _logger.warning("Failed to enrich H2H fixture fixture_id=%s", (fixture.get("fixture") or {}).get("id"), exc_info=True)
             h2h_enriched.append({**fixture, "events": [], "stats": []})
 
-    form_a = pred.extract_form(fixtures_a, id_a)[:5]
-    form_b = pred.extract_form(fixtures_b, id_b)[:5]
+    ml_form_a = pred.extract_form(fixtures_a, id_a)[:10]
+    ml_form_b = pred.extract_form(fixtures_b, id_b)[:10]
+    form_a = ml_form_a[:5]
+    form_b = ml_form_b[:5]
     split_a = pred.home_away_split(form_a)
     split_b = pred.home_away_split(form_b)
     h2h_rec = pred.h2h_record(h2h_raw, id_a, id_b)
@@ -4863,7 +4503,10 @@ def matchup():
     opp_strengths = _build_opp_strengths(standings_for_opp)
 
     # â”€â”€ Fetch live odds (graceful no-op when ODDS_API_KEY is unset) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    odds_result = odds_fetcher.fetch_match_odds("soccer", team_a["name"], team_b["name"])
+    blocked = _soccer_unavailable_page(team_a, team_b, selected_fixture, template="matchup.html", inputs=fixtures_a + fixtures_b)
+    if blocked is not None:
+        return blocked
+    odds_result = odds_fetcher.fetch_match_odds("soccer", team_a["name"], team_b["name"], kickoff=selected_fixture.get("date"))
     odds_ctx: dict[str, Any] | None = None
     if odds_result.get("available"):
         odds_ctx = {
@@ -4880,8 +4523,12 @@ def matchup():
             "team_a_is_home": True,
             "form_a": form_a,
             "form_b": form_b,
+            "ml_form_a": ml_form_a,
+            "ml_form_b": ml_form_b,
+            "target_date": selected_fixture.get("date"),
             "h2h_form_a": h2h_form_a,
             "h2h_form_b": h2h_form_b,
+            "historical_matches": fixtures_a + fixtures_b + h2h_raw,
             "injuries_a": injuries_a_raw,
             "injuries_b": injuries_b_raw,
             "opp_strengths": opp_strengths,
@@ -4951,6 +4598,7 @@ def matchup():
             win_probs=scorpred.get("win_probabilities", {}),
             confidence=best_pick.get("confidence", "Low"),
             game_date=(selected_fixture or {}).get("date") or None,
+            kickoff=(selected_fixture or {}).get("date") or None,
             team_a_id=team_a["id"],
             team_b_id=team_b["id"],
             league_id=LEAGUE,
@@ -5358,6 +5006,9 @@ def prediction():
     if not team_a:
         return _selection_error_redirect("soccer", "Match Analysis could not be opened because no soccer fixture is selected.")
     selected_fixture = _selected_fixture()
+    blocked = _soccer_unavailable_page(team_a, team_b, selected_fixture, template="prediction.html")
+    if blocked is not None:
+        return blocked
     league_id = _set_active_league(_active_league_id())
 
     id_a, id_b = team_a["id"], team_b["id"]
@@ -5414,8 +5065,10 @@ def prediction():
 
     # â”€â”€ Unified Scorpred Engine Model (ONLY prediction source) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Extract form data from fixtures
-    form_a = pred.extract_form(fixtures_a, id_a)[:5]
-    form_b = pred.extract_form(fixtures_b, id_b)[:5]
+    ml_form_a = pred.extract_form(fixtures_a, id_a)[:10]
+    ml_form_b = pred.extract_form(fixtures_b, id_b)[:10]
+    form_a = ml_form_a[:5]
+    form_b = ml_form_b[:5]
     
     # H2H form from each team's perspective
     h2h_form_a = pred.extract_form(h2h, id_a)[:5]
@@ -5435,6 +5088,9 @@ def prediction():
     except (TypeError, ValueError):
         _odds = None
 
+    blocked = _soccer_unavailable_page(team_a, team_b, selected_fixture, template="prediction.html", inputs=fixtures_a + fixtures_b)
+    if blocked is not None:
+        return blocked
     # Single unified prediction from ScorMastermind
     mastermind = sm.predict_match(
         {
@@ -5444,6 +5100,9 @@ def prediction():
             "team_a_is_home": True,
             "form_a": form_a,
             "form_b": form_b,
+            "ml_form_a": ml_form_a,
+            "ml_form_b": ml_form_b,
+            "target_date": selected_fixture.get("date"),
             "h2h_form_a": h2h_form_a,
             "h2h_form_b": h2h_form_b,
             "injuries_a": injuries_a,
@@ -5454,6 +5113,7 @@ def prediction():
                 "b": {"form": form_b},
             },
             "odds": _odds,
+            "historical_matches": fixtures_a + fixtures_b + h2h,
         }
     )
     prediction = mastermind.get("ui_prediction") or {}
@@ -5498,6 +5158,7 @@ def prediction():
             win_probs=probs,
             confidence=conf,
             game_date=(selected_fixture or {}).get("date") or None,
+            kickoff=(selected_fixture or {}).get("date") or None,
             team_a_id=team_a["id"],
             team_b_id=team_b["id"],
             league_id=LEAGUE,
@@ -5707,8 +5368,8 @@ def chat_clear():
     return jsonify({"status": "cleared", "last_updated": _now_stamp()})
 
 
-@limiter.limit("60/hour")
 @app.route("/api/football/leagues", methods=["GET"])
+@limiter.limit("60/hour")
 def api_football_leagues():
     current_league_id = _set_active_league(_active_league_id())
     return jsonify(
@@ -5720,8 +5381,8 @@ def api_football_leagues():
     )
 
 
-@limiter.limit("60/hour")
 @app.route("/api/football/teams", methods=["GET"])
+@limiter.limit("60/hour")
 def api_football_teams():
     league_id = _set_active_league(_coerce_league_id(request.args.get("league", _active_league_id())))
     try:
@@ -5732,8 +5393,8 @@ def api_football_teams():
     return jsonify({"teams": teams or [], "league": league_id, "season": SEASON})
 
 
-@limiter.limit("30/hour")
 @app.route("/api/football/squad", methods=["GET"])
+@limiter.limit("30/hour")
 def api_football_squad():
     try:
         team_id = validators.positive_int(request.args.get("team_id"), "team_id")
@@ -5748,8 +5409,8 @@ def api_football_squad():
     return jsonify({"team_id": team_id, "league": league_id, "squad": squad or []})
 
 
-@limiter.limit("30/hour")
 @app.route("/api/football/team-form", methods=["GET"])
+@limiter.limit("30/hour")
 def api_football_team_form():
     try:
         team_id = validators.positive_int(request.args.get("team_id"), "team_id")
@@ -5766,8 +5427,8 @@ def api_football_team_form():
     return jsonify({**payload, "league": league_id})
 
 
-@limiter.limit("30/hour")
 @app.route("/api/player-stats", methods=["GET"])
+@limiter.limit("30/hour")
 def api_player_stats():
     try:
         player_id = validators.positive_int(
@@ -5791,8 +5452,8 @@ def api_player_stats():
     return jsonify({"player_id": player_id, "stats": stats or []})
 
 
-@limiter.limit("20/hour")
 @app.route("/today-soccer-predictions", methods=["GET"])
+@limiter.limit("20/hour")
 def today_soccer_predictions():
     """Show soccer predictions for today's fixtures or next available fixtures."""
     _set_data_refresh()
@@ -5865,8 +5526,8 @@ def today_soccer_predictions():
     )
 
 
-@limiter.limit("60/hour")
 @app.route("/top-picks-today", methods=["GET"])
+@limiter.limit("60/hour")
 def top_picks_today():
     """Fold legacy top-picks traffic into the Soccer workspace."""
     return redirect(url_for("soccer"))
@@ -5892,6 +5553,7 @@ def _refresh_soccer_cache(league_id: int | None = None) -> dict[str, Any]:
 
 
 @app.route("/admin/refresh-cache", methods=["POST"])
+@user_auth.admin_required
 def refresh_cache():
     league_id = _coerce_league_id(request.args.get("league", _active_league_id()))
     return jsonify(_refresh_soccer_cache(league_id))
@@ -5901,6 +5563,26 @@ def refresh_cache():
 def refresh_cache_cli():
     payload = _refresh_soccer_cache(_active_league_id())
     print(payload)
+
+
+@app.cli.command("prune-cache")
+def prune_cache_cli():
+    """Delete expired provider responses and enforce SCORPRED_CACHE_MAX_MB."""
+    from services import cache_pruner
+    click.echo(cache_pruner.prune())
+
+
+@app.cli.command("grant-admin")
+@click.argument("email")
+def grant_admin(email):
+    """Promote an existing, independently verified account from the server CLI."""
+    from db_models import User
+    user = User.query.filter_by(email=email.strip().lower()).first()
+    if user is None:
+        raise click.ClickException("Create and verify the account before granting administrator access.")
+    user.is_admin = True
+    db.session.commit()
+    click.echo("Administrator access granted to the existing account.")
 
 @app.route("/pass-analysis")
 def pass_analysis():
@@ -6023,9 +5705,9 @@ def worldcup():
         ),
     )
 
-@limiter.exempt
 @app.route("/health")
 @app.route("/status")
+@limiter.exempt
 def health():
     # Keep this fast — Render polls it every 30s. No external API calls here.
     try:
@@ -6041,23 +5723,31 @@ def health():
             brain_health = _MATCH_BRAIN.get_system_health() or {}
         except Exception:
             brain_health = {}
+    ready = db_status == "connected"
     return jsonify(
         {
-            "status": "ok",
+            "status": "ok" if ready else "unavailable",
             "app": "ScorPred",
             "release": _runtime_release_tag(),
             "db": db_status,
             "cache": cache_status,
+            "api": brain_health.get("api_status", "unknown"),
             "degraded_mode": bool(brain_health.get("degraded_mode")),
             "last_refresh": brain_health.get("last_refresh_time"),
             "error_count": int(brain_health.get("error_count") or 0),
             "timestamp": _now_stamp(),
         }
-    )
+    ), 200 if ready else 503
 
 
-@limiter.limit("30/hour")
+@app.route("/live")
+@limiter.exempt
+def liveness():
+    return jsonify({"status": "ok"})
+
+
 @app.route("/api/football/relevant-competitions")
+@limiter.limit("30/hour")
 def football_relevant_competitions_api():
     _set_data_refresh()
     try:
@@ -6089,8 +5779,8 @@ def football_relevant_competitions_api():
     return jsonify({"competitions": competitions, "league_ids": league_ids, "data_source": _football_data_source(), "last_updated": _now_stamp()})
 
 
-@limiter.limit("30/hour")
 @app.route("/api/football/prefetch-competition")
+@limiter.limit("30/hour")
 def football_prefetch_competition_api():
     _set_data_refresh()
     try:
@@ -6119,74 +5809,22 @@ def football_prefetch_competition_api():
 # â”€â”€ Error page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @app.route("/my-bets", methods=["GET"])
+@user_auth.login_required
 def my_bets():
-    _refresh_tracking_results_if_due()
-    tracked = _MATCH_BRAIN.refresh_tracked_matches() if _MATCH_BRAIN is not None else mt.get_recent_predictions(limit=300)
-
-    status_filter = (request.args.get("status") or "all").strip().lower()
-    if status_filter not in {"all", "open", "settled"}:
-        status_filter = "all"
-
-    def _row_result_label(item: dict[str, Any]) -> tuple[str, str]:
-        if str(item.get("status") or "").lower() != "completed":
-            return "Open", "push"
-        if item.get("is_correct") is True:
-            return "Correct", "won"
-        if item.get("is_correct") is False:
-            return "Incorrect", "lost"
-        return "Settled", "push"
-
-    tracked_rows = []
-    for item in tracked:
-        result_label, result_class = _row_result_label(item)
-        is_open = str(item.get("status") or "").lower() != "completed"
-        if status_filter == "open" and not is_open:
-            continue
-        if status_filter == "settled" and is_open:
-            continue
-        final_score = item.get("final_score") if isinstance(item.get("final_score"), dict) else {}
-        score_label = "—"
-        if "a" in final_score and "b" in final_score:
-            score_label = f"{final_score.get('a', 0)}-{final_score.get('b', 0)}"
-        tracked_rows.append(
-            {
-                "id": item.get("id"),
-                "sport": str(item.get("sport") or "soccer").upper(),
-                "date": _format_prediction_date(item.get("game_date") or item.get("date") or item.get("created_at")),
-                "match": f"{item.get('team_a') or 'Team A'} vs {item.get('team_b') or 'Team B'}",
-                "pick": item.get("predicted_pick_label") or item.get("predicted_winner") or "Unavailable",
-                "pick_type": item.get("action") or item.get("confidence") or "Tracked",
-                "score": score_label,
-                "result_label": result_label,
-                "result_class": result_class,
-                "confidence": _prediction_confidence_pct(item),
-            }
-        )
-
-    settled = [row for row in tracked if str(row.get("status") or "").lower() == "completed" and row.get("is_correct") is not None]
-    won_count = sum(1 for row in settled if row.get("is_correct") is True)
-    lost_count = sum(1 for row in settled if row.get("is_correct") is False)
-    pushed_count = max(0, len(tracked) - len(settled))
-    settled_count = len(settled)
-    win_rate = round((won_count / settled_count) * 100, 1) if settled_count else 0.0
-    lost_rate = round((lost_count / settled_count) * 100, 1) if settled_count else 0.0
-
-    return render_template(
-        "my_bets.html",
-        bets=tracked_rows,
-        won_count=won_count,
-        lost_count=lost_count,
-        pushed_count=pushed_count,
-        win_rate=win_rate,
-        lost_rate=lost_rate,
-        roi="N/A",
-        total_profit="N/A",
-        total_stake="N/A",
-        **_page_context(),
-    )
+    rows = bets_service.list_bets(user_id=g.current_user["id"])
+    bets = [{"id": row["id"], "date": row["created_at"][:10], "match": row["matchup"],
+             "pick": row["recommended_side"], "pick_type": row["action"], "score": "?",
+             "result_label": "Saved", "result_class": "push", "confidence": row["confidence"]}
+            for row in rows]
+    return render_template("my_bets.html", bets=bets, won_count=0, lost_count=0,
+                           pushed_count=len(bets), win_rate=None, lost_rate=None,
+                           roi="N/A", total_profit="N/A", total_stake="N/A", **_page_context())
 
 
 @app.route("/add-bet", methods=["POST"])
+@app.route("/api/bets", methods=["POST"])
+@limiter.limit("30 per minute")
+@user_auth.api_login_required
 def add_bet():
     retry_after = _check_rate_limit("add-bet", limit=30, window_seconds=60)
     if retry_after:
@@ -6201,24 +5839,43 @@ def add_bet():
         if canonical:
             _MATCH_BRAIN.track_match(canonical)
     try:
-        created = bets_service.create_bet(data)
+        created = bets_service.create_bet(data, user_id=g.current_user["id"])
     except bets_service.BetValidationError as exc:
         return {"status": "error", "error": str(exc)}, 400
     return {"status": "ok", "bet": created}
 
 
 @app.route("/clear-bets", methods=["POST"])
+@app.route("/api/bets", methods=["DELETE"])
+@limiter.limit("10 per minute")
+@user_auth.api_login_required
 def clear_bets():
-    bets_service.clear_bets()
+    bets_service.clear_bets(user_id=g.current_user["id"])
     return {"status": "ok"}
 
 
 @app.route("/delete-bet/<int:bet_id>", methods=["POST"])
+@app.route("/api/bets/<int:bet_id>", methods=["DELETE"])
+@limiter.limit("30 per minute")
+@user_auth.api_login_required
 def delete_bet(bet_id: int):
-    deleted = bets_service.delete_bet(bet_id)
+    deleted = bets_service.delete_bet(bet_id, user_id=g.current_user["id"])
     if not deleted:
         return {"status": "not_found"}, 404
     return {"status": "ok"}
+
+
+@app.route("/api/bets", methods=["GET"])
+@user_auth.api_login_required
+def api_bets():
+    return jsonify({"bets": bets_service.list_bets(user_id=g.current_user["id"])})
+
+
+@app.route("/api/session", methods=["GET"])
+def api_session():
+    from security import get_csrf_token
+    user = user_auth.current_user()
+    return jsonify({"user": {"email": user["email"], "id": user["id"]} if user else None, "csrf_token": get_csrf_token()})
 
 
 @app.route("/performance", methods=["GET"])
@@ -6593,13 +6250,49 @@ def api_health():
     return jsonify(status), http_code
 
 
+def _bounded_soccer_cards(league_id, *, timeout_seconds=20, selected_date=None):
+    """Share a cold refresh and bound the HTTP wait while it warms the cache."""
+    def calculate():
+        with app.app_context():
+            if selected_date is None:
+                return prediction_service.get_fixture_cards(league_id)
+            return prediction_service.get_fixture_cards(league_id, selected_date=selected_date)
+
+    flight_key = league_id if selected_date is None else (league_id, selected_date)
+    with _SOCCER_CARD_LOCK:
+        future = _SOCCER_CARD_FLIGHTS.get(flight_key)
+        if future is None:
+            future = _SOCCER_CARD_POOL.submit(calculate)
+            _SOCCER_CARD_FLIGHTS[flight_key] = future
+    try:
+        result = future.result(timeout=timeout_seconds)
+    except FutureTimeoutError:
+        warning = "Soccer analysis is still refreshing. Please try again shortly."
+        return [], [], warning, "degraded", {"status": "degraded", "observed_at": None, "warning": warning}
+    finally:
+        if future.done():
+            with _SOCCER_CARD_LOCK:
+                if _SOCCER_CARD_FLIGHTS.get(flight_key) is future:
+                    _SOCCER_CARD_FLIGHTS.pop(flight_key, None)
+    return result
+
+
 @app.route("/api/dashboard/soccer", methods=["GET"])
+@limiter.limit("30 per minute")
 def api_dashboard_soccer():
     try:
         league_id = _set_active_league(_active_league_id())
-        date_filter = (request.args.get("date") or "").strip()[:10]  # YYYY-MM-DD
+        date_filter = (request.args.get("date") or "").strip()
+        if date_filter:
+            try:
+                datetime.strptime(date_filter, "%Y-%m-%d")
+                if len(date_filter) != 10:
+                    raise ValueError
+            except ValueError:
+                return jsonify(error="Use a calendar date in YYYY-MM-DD format."), 400
 
-        cards, _, load_error, _, _ = prediction_service.get_fixture_cards(league_id)
+        cards, fixtures, load_error, _, _ = _bounded_soccer_cards(league_id, selected_date=date_filter)
+        cards = [sanitize_decision(card) for card in cards]
         for c in cards:
             c.setdefault("league_id", league_id)
             c.setdefault("sport", "soccer")
@@ -6607,8 +6300,13 @@ def api_dashboard_soccer():
         # Group all cards by calendar date for multi-day view
         from collections import defaultdict as _dd
         by_date: dict[str, list] = _dd(list)
+        # Schedule metadata supplies tabs for all dates without analyzing them.
+        for fixture in fixtures or []:
+            fixture_date = calendar_date((fixture.get("fixture") or {}).get("date"))
+            if fixture_date:
+                by_date[fixture_date]
         for c in cards:
-            d = (c.get("game_date") or "")[:10]
+            d = calendar_date(c.get("game_date"))
             if d:
                 by_date[d].append(c)
 
@@ -6622,7 +6320,7 @@ def api_dashboard_soccer():
                     extra_cards = []
                     for f in raw_extra:
                         card = _soccer_decision_card_from_fixture(f)
-                        if card:
+                        if card and calendar_date(card.get("game_date")) == date_filter:
                             card.setdefault("league_id", league_id)
                             card.setdefault("sport", "soccer")
                             extra_cards.append(card)
@@ -6636,109 +6334,135 @@ def api_dashboard_soccer():
         # If the requested date has no games, fall back to the nearest available date.
         if date_filter and date_filter in by_date:
             visible = by_date[date_filter]
+        elif date_filter:
+            visible = []
         elif available_dates:
             visible = by_date[available_dates[0]]
             date_filter = available_dates[0]
         else:
             visible = cards  # No date info at all → return all
 
-        top = dui.top_opportunities(visible, limit=4)
+        visible = [dict(sanitize_decision(card), slate_date=date_filter) for card in visible]
+        top = dui.top_opportunities([card for card in visible if card.get("action") != "SKIP"], limit=4)
         plan = dui.plan_summary(visible)
 
         return jsonify({
-            "slate": [_card_to_decision(c) for c in visible],
-            "topOpportunities": [_card_to_decision(c) for c in top],
+            "slate": decision_store.publish(visible, "soccer"),
+            "topOpportunities": decision_store.publish(top, "soccer"),
             "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
             "availableDates": available_dates,
             "selectedDate": date_filter,
             "error": load_error,
-            "last_updated": _now_stamp(),
-        })
+            "last_updated": from_records(visible).get("observed_at"),
+            "calendarTimezone": "America/New_York",
+        }), 503 if load_error and not cards else 200
     except Exception as exc:
         app.logger.warning("api_dashboard_soccer error: %s", exc)
-        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "selectedDate": "", "error": str(exc)}), 200
+        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "selectedDate": "", "error": "Soccer data is temporarily unavailable."}), 503
 
 
 
 @app.route("/api/dashboard/insights", methods=["GET"])
-def api_dashboard_insights():
-    try:
-        sport_filter = (request.args.get("sport") or "all").strip().lower()
-        if sport_filter not in {"all", "soccer", "nba"}:
-            sport_filter = "all"
-        league_id = _set_active_league(_active_league_id())
-        if _MATCH_BRAIN is not None:
-            insights_payload = _MATCH_BRAIN.get_insights(league_id)
-            raw_cards: list[dict] = []
-            for item in insights_payload.get("top_opportunities", []):
-                pred_block = item.get("prediction") or {}
-                probs = pred_block.get("probabilities") or {}
-                dq_raw = item.get("data_quality") or pred_block.get("data_quality")
-                if isinstance(dq_raw, int):
-                    dq_label = "Strong Data" if dq_raw >= 75 else ("Limited Data" if dq_raw < 50 else "Partial Data")
-                else:
-                    dq_label = _normalize_data_label(str(dq_raw or ""))
-                analysis = {
-                    "match_id": item.get("match_id"),
-                    "matchup": item.get("matchup"),
-                    "confidence": pred_block.get("confidence") or item.get("confidence"),
-                    "probabilities": {"a": probs.get("home"), "draw": probs.get("draw"), "b": probs.get("away")},
-                    "action": pred_block.get("action") or item.get("action"),
-                    "recommended_side": pred_block.get("side") or item.get("recommended_side"),
-                    "reason": " | ".join((pred_block.get("reasoning") or {}).get("strengths", [])) or item.get("reason") or "",
-                    "data_quality": dq_label,
-                    "metric_breakdown": item.get("metric_breakdown") or {},
-                }
-                card = dui.build_decision_card(analysis=analysis)
-                if card:
-                    raw_cards.append(card)
-        else:
-            raw_cards, *_ = prediction_service.get_fixture_cards(league_id)
-
-        all_cards = raw_cards
-        if sport_filter != "all":
-            all_cards = [c for c in all_cards if str(c.get("sport") or "").lower() == sport_filter]
-
-        top = dui.top_opportunities(all_cards, limit=6)
-        plan = dui.plan_summary(all_cards)
-        confidence_groups = {
-            "Top confidence": len([c for c in all_cards if dui.safe_float(c.get("confidence_pct"), 0) >= 66]),
-            "Playable range": len([c for c in all_cards if 55 <= dui.safe_float(c.get("confidence_pct"), 0) < 66]),
-            "Caution range": len([c for c in all_cards if dui.safe_float(c.get("confidence_pct"), 0) < 55]),
-        }
-        volatility_watch = sorted(
-            [c for c in all_cards if str(c.get("action") or "").upper() != "SKIP"],
-            key=lambda c: (-int(c.get("volatility_score") or 0), -dui.safe_float(c.get("confidence_pct"), 0)),
-        )[:4]
-
-        return jsonify({
-            "radarCards": [_card_to_decision(c) for c in top],
-            "volatilityRows": [
-                {
-                    "side": c.get("recommended_side") or "",
-                    "matchup": c.get("matchup") or "",
-                    "action": str(c.get("action") or "CONSIDER").upper(),
-                    "confidence": int(dui.safe_float(c.get("confidence_pct"), 0)),
-                    "note": c.get("volatility_note") or c.get("reason") or "",
-                }
-                for c in volatility_watch
-            ],
-            "confidenceGroups": confidence_groups,
-            "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
-            "sportFilter": sport_filter,
-            "last_updated": _now_stamp(),
-        })
-    except Exception as exc:
-        app.logger.warning("api_dashboard_insights error: %s", exc)
-        return jsonify({
-            "radarCards": [], "volatilityRows": [],
-            "confidenceGroups": {"Top confidence": 0, "Playable range": 0, "Caution range": 0},
-            "plan": {"bet": 0, "consider": 0, "skip": 0},
-        }), 200
-
-
 @limiter.limit("30 per minute")
+def api_dashboard_insights():
+    sport = (request.args.get("sport") or "all").lower()
+    if sport not in {"all", "soccer", "nba", "nfl"}:
+        return jsonify({"error": "Invalid sport"}), 400
+    decisions, errors = [], []
+    if sport in {"all", "soccer"}:
+        # This request has already passed its own public rate limit. Reusing a
+        # view internally must not count the same request again for each sport.
+        response = app.make_response(unwrap(api_dashboard_soccer)())
+        payload = response.get_json() or {}
+        decisions.extend(payload.get("slate") or [])
+        if payload.get("error"):
+            errors.append("Soccer data is temporarily unavailable.")
+    if sport in {"all", "nba"}:
+        import nba_routes
+        response = app.make_response(unwrap(nba_routes.api_dashboard_nba)())
+        payload = response.get_json() or {}
+        decisions.extend(payload.get("slate") or [])
+        if payload.get("error"):
+            errors.append("NBA data is temporarily unavailable.")
+    if sport in {"all", "nfl"}:
+        import nfl_routes
+        response = app.make_response(unwrap(nfl_routes.api_dashboard_nfl)())
+        payload = response.get_json() or {}
+        decisions.extend(payload.get("slate") or [])
+        if payload.get("error"):
+            errors.append("NFL data is temporarily unavailable.")
+    decisions = [sanitize_decision(item) for item in decisions]
+    groups = {name: sorted([item for item in decisions if item.get("sport") == name], key=lambda item: (dui.ACTION_ORDER.get(item["action"], 3), -item["confidence"])) for name in ("soccer", "nba", "nfl")}
+    rule_cards = groups["soccer"] + groups["nba"]
+    plan = {action.lower(): sum(item["action"] == action for item in decisions) for action in ("BET", "CONSIDER", "SKIP")}
+    volatility = [item for item in rule_cards if item["action"] != "SKIP" and item["data"] != "Strong Data"][:4]
+    return jsonify({
+        "radarCards": rule_cards[:6],
+        "slate": decisions,
+        "radarGroups": {name: cards[:4] for name, cards in groups.items()},
+        "scenarioCards": groups["nfl"][:4],
+        "volatilityRows": [{"side": item["side"], "matchup": item["matchup"], "action": item["action"], "confidence": item["confidence"], "note": item["reason"]} for item in volatility],
+        "confidenceGroups": {"Top rule confidence": sum(item["confidence"] >= 66 for item in rule_cards),
+                             "Mid rule confidence": sum(55 <= item["confidence"] < 66 for item in rule_cards),
+                             "Low rule confidence": sum(item["confidence"] < 55 for item in rule_cards)},
+        "plan": plan, "sportFilter": sport, "warnings": errors, "last_updated": _now_stamp(),
+    }), 503 if errors and not decisions else 200
+
+
+@app.route("/api/performance/track-record", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_track_record():
+    from services import track_record
+    try:
+        return jsonify(track_record.summary())
+    except Exception:
+        _logger.warning("Track record unavailable", exc_info=True)
+        return jsonify({"error": "The track record is temporarily unavailable."}), 503
+
+
+@app.route("/api/matches/<match_id>")
+@limiter.limit("60 per minute")
+def api_match_decision(match_id):
+    sport = (request.args.get("sport") or "soccer").lower()
+    if sport not in {"soccer", "nba", "nfl"}:
+        return jsonify({"error": "Invalid sport"}), 400
+    # NFL pregame estimates must expire at kickoff, even inside the card TTL.
+    decision = None if sport == "nfl" else decision_store.get(sport, match_id)
+    if decision is None and sport == "nba":
+        from services import nba_matchup_context
+        archived = nba_matchup_context.archived_game(match_id)
+        if archived:
+            decision = nba_matchup_context.schedule_decision(archived)
+    if decision is None:
+        if sport == "soccer":
+            response = app.make_response(api_dashboard_soccer())
+        elif sport == "nfl":
+            import nfl_routes
+            response = app.make_response(nfl_routes.api_dashboard_nfl())
+        else:
+            import nba_routes
+            response = app.make_response(nba_routes.api_dashboard_nba())
+        if response.status_code >= 500:
+            return jsonify({"error": "Match data is temporarily unavailable."}), 503
+        if response.status_code >= 400:
+            return response
+        decision = next((item for item in (response.get_json() or {}).get("slate", []) if item.get("matchId") == match_id), None)
+    if decision is None:
+        if sport == "nba":
+            from services import nba_matchup_context
+            try:
+                game = nba_matchup_context.game_for_id(match_id, request.args.get("date"))
+                if game:
+                    decision = nba_matchup_context.schedule_decision(game)
+            except (ValueError, RuntimeError, OSError):
+                pass
+    if decision is None:
+        return jsonify({"error": "This match is no longer available. Choose a match from the current slate."}), 404
+    return jsonify({"decision": sanitize_decision(decision)})
+
+
 @app.route("/api/scoreline/soccer", methods=["GET", "POST"])
+@limiter.limit("30 per minute")
 def api_scoreline_soccer():
     """
     Scoreline probability distribution for a soccer match.
@@ -6752,30 +6476,43 @@ def api_scoreline_soccer():
         odds_total  float (optional) Market total goals line for anchoring
         ou_lines    csv   (optional) Comma-separated O/U lines e.g. "1.5,2.5,3.5"
     """
+    from services import scoring_research
+    from services.scoreline_inputs import ScorelineInputError, validate
     try:
         params = request.get_json(silent=True) or request.form or request.args
+        validated = validate(params, "soccer")
         team_a_id = _safe_int(params.get("team_a_id") or params.get("home_id"))
         team_b_id = _safe_int(params.get("team_b_id") or params.get("away_id"))
         league_id = _coerce_league_id(params.get("league_id") or _active_league_id())
         team_a_name = str(params.get("team_a_name") or params.get("team_a") or "Home").strip()
         team_b_name = str(params.get("team_b_name") or params.get("team_b") or "Away").strip()
-        odds_total = _safe_float(params.get("odds_total")) or None
-        if odds_total is not None and odds_total <= 0:
-            odds_total = None
-
-        raw_lines = str(params.get("ou_lines") or "").strip()
-        ou_lines = None
-        if raw_lines:
-            try:
-                ou_lines = [float(x.strip()) for x in raw_lines.split(",") if x.strip()]
-            except ValueError:
-                ou_lines = None
+        odds_total, ou_lines = validated["odds_total"], validated["ou_lines"]
+        fixture = None
+        event_id = str(params.get("event_id") or params.get("match_id") or "").strip()
+        if event_id:
+            fixture = _FIXTURE_INDEX.get(event_id)
+            if not fixture:
+                loaded = load_fixtures_cached(league_id)
+                fixture = next((row for row in loaded[0] or [] if str((row.get("fixture") or {}).get("id")) == event_id), None)
+            if not fixture:
+                return jsonify(status="error", message="The scheduled match could not be verified. Refresh the slate."), 404
+            info = fixture.get("fixture") or {}
+            teams = fixture.get("teams") or {}
+            if str((teams.get("home") or {}).get("id")) != str(team_a_id) or str((teams.get("away") or {}).get("id")) != str(team_b_id):
+                return jsonify(status="error", message="The selected teams do not match this fixture."), 400
+            if not is_pregame(info.get("date"), info.get("status")):
+                return jsonify(status="error", message="Pregame scoring predictions are unavailable after kickoff or a status change."), 422
+            if fixture.get("data_freshness") and freshness_state(fixture["data_freshness"]) != "fresh":
+                return jsonify(status="error", message="The schedule needs a fresh provider update before scoring."), 422
+            validated["before"] = info.get("date")
+        scoring_season = _safe_int((fixture or {}).get("league", {}).get("season"), SEASON)
+        input_freshness = (fixture or {}).get("data_freshness") or {}
 
         form_a: list[dict] = []
         form_b: list[dict] = []
         h2h: list[dict] = []
-        injuries_a: list[dict] = []
-        injuries_b: list[dict] = []
+        injuries_a = None
+        injuries_b = None
         ml_prob_a: float | None = None
         ml_prob_b: float | None = None
         opp_strength_a: float | None = None
@@ -6784,9 +6521,9 @@ def api_scoreline_soccer():
 
         if team_a_id and team_b_id:
             # Check scoreline cache first
-            _sl_key = f"scoreline:{team_a_id}:{team_b_id}:{league_id}"
+            _sl_key = cache_service.make_key("scoreline_v3", event_id, team_a_id, team_b_id, league_id, scoring_season, odds_total, tuple(ou_lines or []), team_a_name, team_b_name, validated["before"])
             _cached_sl = _local_scoreline_cache.get(_sl_key)
-            if _cached_sl is not None:
+            if _cached_sl is not None and (not _cached_sl.get("data_freshness") or freshness_state(_cached_sl["data_freshness"]) == "fresh"):
                 return jsonify({"status": "ok", "result": _cached_sl})
 
             # Fetch all 6 data sources in parallel; each future is resolved
@@ -6799,8 +6536,8 @@ def api_scoreline_soccer():
 
             try:
                 with ThreadPoolExecutor(max_workers=6) as _pool:
-                    _fut_a        = _pool.submit(ac.get_team_fixtures, team_a_id, league_id, SEASON, 10)
-                    _fut_b        = _pool.submit(ac.get_team_fixtures, team_b_id, league_id, SEASON, 10)
+                    _fut_a        = _pool.submit(ac.get_team_fixtures, team_a_id, league_id, scoring_season, 10)
+                    _fut_b        = _pool.submit(ac.get_team_fixtures, team_b_id, league_id, scoring_season, 10)
                     _fut_h2h      = _pool.submit(ac.get_h2h, team_a_id, team_b_id, 10)
                     _fut_inj_a    = _pool.submit(ac.get_injuries, league_id, SEASON, team_a_id)
                     _fut_inj_b    = _pool.submit(ac.get_injuries, league_id, SEASON, team_b_id)
@@ -6808,21 +6545,20 @@ def api_scoreline_soccer():
                     raw_a      = _safe_fut(_fut_a, [])
                     raw_b      = _safe_fut(_fut_b, [])
                     raw_h2h    = _safe_fut(_fut_h2h, [])
-                    raw_inj_a  = _safe_fut(_fut_inj_a, [])
-                    raw_inj_b  = _safe_fut(_fut_inj_b, [])
+                    raw_inj_a  = _safe_fut(_fut_inj_a)
+                    raw_inj_b  = _safe_fut(_fut_inj_b)
                     standings  = _safe_fut(_fut_standings, [])
-                form_a = pred.extract_form(
-                    pred.filter_recent_completed_fixtures(raw_a, current_season=SEASON), team_a_id
-                )[:6]
-                form_b = pred.extract_form(
-                    pred.filter_recent_completed_fixtures(raw_b, current_season=SEASON), team_b_id
-                )[:6]
+                input_freshness = worst([input_freshness, from_records(raw_a), from_records(raw_b)])
+                if input_freshness and freshness_state(input_freshness) != "fresh":
+                    return jsonify(status="error", message="Recent form needs a fresh provider update before scoring."), 422
+                form_a = scoring_research.soccer_scoring_form(raw_a, team_a_id, season=scoring_season, before=validated["before"])
+                form_b = scoring_research.soccer_scoring_form(raw_b, team_b_id, season=scoring_season, before=validated["before"])
                 h2h = pred.extract_form(
                     pred.filter_recent_completed_fixtures(raw_h2h, current_season=SEASON, seasons_back=5),
                     team_a_id,
                 )[:6]
-                injuries_a = _clean_injuries(raw_inj_a) or []
-                injuries_b = _clean_injuries(raw_inj_b) or []
+                injuries_a = _clean_injuries(raw_inj_a) if raw_inj_a is not None else None
+                injuries_b = _clean_injuries(raw_inj_b) if raw_inj_b is not None else None
             except Exception:
                 app.logger.warning("scoreline_soccer: data fetch failed", exc_info=True)
                 standings = []
@@ -6847,6 +6583,9 @@ def api_scoreline_soccer():
             except Exception:
                 app.logger.debug("scoreline_soccer: ML blend skipped", exc_info=True)
 
+        features = scoring_research.rolling_features(form_a, form_b, sport="soccer")
+        projection = scoring_research.project("soccer", features, before=validated["before"]) if league_id == 39 else {
+            "available": False, "reason": "The current trained soccer scoring model covers the Premier League only."}
         result = _scoreline_engine.predict_soccer_scoreline(
             form_a=form_a, form_b=form_b,
             h2h=h2h, injuries_a=injuries_a, injuries_b=injuries_b,
@@ -6857,10 +6596,20 @@ def api_scoreline_soccer():
             ou_lines=ou_lines,
             opp_strength_a=opp_strength_a,
             opp_strength_b=opp_strength_b,
+            research_projection=projection,
         )
+        result["data_freshness"] = input_freshness
+        if not is_pregame(validated["before"]) and validated["before"]:
+            return jsonify(status="error", message="Pregame scoring predictions are unavailable after kickoff."), 422
+        if input_freshness and freshness_state(input_freshness) != "fresh":
+            return jsonify(status="error", message="Scoring inputs expired during calculation. Refresh the match."), 422
         if team_a_id and team_b_id:
             _local_scoreline_cache[_sl_key] = result
         return jsonify({"status": "ok", "result": result})
+    except ScorelineInputError as exc:
+        return jsonify(status="error", message=str(exc)), 400
+    except (ValueError, _scoreline_engine.InsufficientScoreData) as exc:
+        return jsonify(status="error", message=str(exc)), 422
     except Exception as exc:
         app.logger.error("api_scoreline_soccer error: %s", exc, exc_info=True)
         return jsonify({"status": "error", "message": sanitize_error(exc)}), 500
@@ -6869,7 +6618,7 @@ def api_scoreline_soccer():
 @app.errorhandler(404)
 def not_found(_):
     # SPA deep-link: serve index.html so React Router handles the path
-    if _SPA_INDEX.exists() and not request.path.startswith("/api/"):
+    if app.config.get("SERVE_SPA", True) and _SPA_INDEX.exists() and request.path in _SPA_PAGE_PATHS:
         return send_from_directory(_SPA_DIST, "index.html")
     return _error_response(404, "Page not found.")
 
@@ -6880,10 +6629,21 @@ def server_error(e):
     return _error_response(500, "An internal error occurred. Please try again.")
 
 
+@app.errorhandler(429)
+def rate_limit_error(error):
+    if _is_api_request():
+        response = error.get_response()
+        response.set_data(app.json.dumps({"error": "Too many requests. Please try again shortly."}))
+        response.content_type = "application/json"
+        return response
+    return error
+
+
 if __name__ == "__main__":
     debug = False
     use_reloader = False
     port = int(os.getenv("PORT", "5000"))
+    start_background_services()
     try:
         app.run(debug=debug, use_reloader=use_reloader, port=port)
     except OSError as e:
@@ -6894,3 +6654,5 @@ if __name__ == "__main__":
             )
         else:
             raise
+    finally:
+        stop_background_services()

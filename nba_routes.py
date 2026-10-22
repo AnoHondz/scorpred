@@ -10,26 +10,47 @@ Session keys use the nba_ prefix to avoid collisions with the football section.
 """
 
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
-from pathlib import Path
+
 import hashlib
 import importlib
 import json
+import math
 import os
 import re
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from flask import (
-    Blueprint, render_template, request, session,
-    redirect, url_for, jsonify, current_app,
+    Blueprint,
+    current_app,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
 )
-import scorpred_engine as se
-import model_tracker as mt
+
 import decision_ui as dui
+import model_tracker as mt
+import scorpred_engine as se
+from extensions import limiter
 from runtime_paths import cache_dir
 from security import sanitize_error
+from services import decision_store
+from services.data_freshness import SOURCE_KEY, from_records, metadata, worst
+from services.decision_engine import DecisionEngine
+from services.prediction_lifecycle import (
+    CALENDAR_ZONE,
+    calendar_date,
+    freshness_state,
+    parse_kickoff,
+    sanitize_decision,
+    unavailable_reason,
+)
 
 nba_bp = Blueprint(
     "nba",
@@ -486,7 +507,11 @@ def _assistant_extract_top_factors(prediction: dict) -> list[str]:
 
 
 def _assistant_totals_pick_display(prediction: dict) -> str | None:
-    totals_leg = _extract_totals_leg(prediction)
+    totals_leg = prediction.get("totals_leg") or {}
+    if not totals_leg and prediction.get("totals_pick"):
+        totals_leg = {"pick": prediction["totals_pick"], "line": prediction.get("totals_line"), "market": prediction.get("totals_market")}
+    if not totals_leg:
+        totals_leg = next((item for item in prediction.get("optional_picks") or [] if "over/under" in str(item.get("market") or "").lower() or "o/u" in str(item.get("market") or "").lower()), {})
     if not totals_leg:
         return None
     pick = str(totals_leg.get("pick") or "").strip()
@@ -543,7 +568,7 @@ def _support(route_name: str) -> dict:
 
 
 def _now_stamp() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(CALENDAR_ZONE).isoformat()
 
 
 def _page_context(**kwargs) -> dict:
@@ -581,112 +606,38 @@ def _team_logo(team: dict) -> str:
     return ""
 
 
-def _fallback_nba_prediction_payload(home_name: str, away_name: str, game_key: str = "") -> tuple[dict, str]:
-    seed = int(hashlib.sha256(f"nba:{home_name}:{away_name}:{game_key}".encode("utf-8", errors="ignore")).hexdigest()[:10], 16)
-    side_key = "home" if seed % 5 in {0, 2, 3} else "away"
-    pick_name = home_name if side_key == "home" else away_name
-    confidence_pct = int(dui.clamp(55 + (seed % 15) + (4 if seed % 17 == 0 else 0), 54, 75))
-    selected_prob = confidence_pct
-    other_prob = max(24, 100 - selected_prob)
-    probabilities = (
-        {"a": selected_prob, "b": other_prob}
-        if side_key == "home"
-        else {"a": other_prob, "b": selected_prob}
-    )
-    reason = [
-        f"{pick_name} carries the cleaner form and rotation profile.",
-        f"{pick_name} grades ahead on venue-adjusted matchup context.",
-        f"{pick_name} shows the more stable scoring path in this spot.",
-        f"{pick_name} owns the better side of a competitive matchup.",
-    ][seed % 4]
-    support = [
-        "Available NBA slate context supports the side without flattening the matchup.",
-        "The read is actionable, with late injury and rotation news still worth checking.",
-        "Confidence reflects schedule context, team identity, and baseline matchup signals.",
-    ][(seed // 5) % 3]
-    picked_components = {
-        "form": 60 + (seed % 24),
-        "attack": 58 + ((seed // 3) % 25),
-        "defense": 53 + ((seed // 5) % 20),
-        "venue": 57 + ((seed // 11) % 22),
-    }
-    other_components = {
-        "form": 48 + ((seed // 13) % 18),
-        "attack": 47 + ((seed // 17) % 18),
-        "defense": 48 + ((seed // 19) % 17),
-        "venue": 45 + ((seed // 23) % 18),
-    }
-    return (
-        {
-            "best_pick": {
-                "prediction": pick_name,
-                "team": "a" if side_key == "home" else "b",
-                "reasoning": reason,
-                "confidence": "High" if confidence_pct >= 66 else "Medium",
-            },
-            "win_probabilities": probabilities,
-            "confidence_pct": confidence_pct,
-            "data_completeness": {
-                "tier": "partial",
-                "label": "Live slate context",
-                "summary": "Baseline schedule, team identity, and game context are available.",
-            },
-            "components_a": picked_components if side_key == "home" else other_components,
-            "components_b": picked_components if side_key == "away" else other_components,
-            "decision_summary": reason,
-        },
-        support,
-    )
-
-
 def _fallback_prediction_card_from_game(game: dict, team_map: dict[str, dict] | None = None) -> dict:
-    team_map = team_map or {}
-    home_raw = _game_side(game, "home")
-    away_raw = _game_side(game, "away")
-    home_team = team_map.get(str(home_raw.get("id") or "")) or home_raw
-    away_team = team_map.get(str(away_raw.get("id") or "")) or away_raw
-    home_name = home_team.get("name") or home_team.get("nickname") or "Home"
-    away_name = away_team.get("name") or away_team.get("nickname") or "Away"
-    if home_name == "Home" or away_name == "Away":
-        return {**game, "prediction": None}
+    return {**game, "prediction": None, "prediction_error": "Prediction unavailable"}
 
-    prediction, support = _fallback_nba_prediction_payload(
-        home_name,
-        away_name,
-        str(game.get("id") or (game.get("date") or {}).get("start") or ""),
-    )
-    card = dui.build_decision_card(
-        sport="nba",
-        team_a=home_name,
-        team_b=away_name,
-        prediction=prediction,
-        competition="NBA",
-        match_date=(game.get("date") or {}).get("start") or "",
-        venue=(game.get("venue") or {}).get("name") or "",
-        team_a_logo=_team_logo(home_team),
-        team_b_logo=_team_logo(away_team),
-        cta_url="/nba/select-game",
-        cta_label="Analyze Match",
-        cta_method="post",
-        cta_payload={
-            "team_a": home_team.get("id") or home_raw.get("id") or "",
-            "team_b": away_team.get("id") or away_raw.get("id") or "",
-            "team_a_name": home_name,
-            "team_b_name": away_name,
-            "team_a_logo": _team_logo(home_team),
-            "team_b_logo": _team_logo(away_team),
-            "event_id": game.get("id") or "",
-            "event_date": (game.get("date") or {}).get("start") or "",
-            "event_status": (game.get("status") or {}).get("long") or "",
-            "venue_name": (game.get("venue") or {}).get("name") or "",
-            "short_name": game.get("short_name") or f"{away_name} @ {home_name}",
-        },
-        support_text=support,
-    )
-    prediction["decision_card"] = card
-    prediction["play_type"] = card.get("action")
-    prediction["confidence_pct"] = card.get("confidence_pct")
-    return {**game, "prediction": prediction}
+
+def _nba_pregame_reason(game: dict) -> str | None:
+    raw_date = game.get("date")
+    kickoff = raw_date.get("start") if isinstance(raw_date, dict) else raw_date
+    return unavailable_reason(kickoff, game.get("status"), game.get("data_freshness"))
+
+
+def _nba_calendar_parts(kickoff):
+    parsed = parse_kickoff(kickoff)
+    return (calendar_date(parsed), parsed.astimezone(CALENDAR_ZONE).strftime("%H:%M")) if parsed else ("", "")
+
+
+def _nba_form_reason(*contexts):
+    if any(context.get("data_freshness") and freshness_state(context["data_freshness"]) != "fresh" for context in contexts):
+        return "Current NBA team form needs a fresh provider update before a pregame estimate is available."
+    return None
+
+
+def _nba_guard_prediction(prediction, game, *contexts):
+    if _nba_pregame_reason(game) or _nba_form_reason(*contexts):
+        return None
+    if prediction and prediction.get("decision_card"):
+        raw_date = game.get("date")
+        prediction["decision_card"].update(
+            game_date=raw_date.get("start") if isinstance(raw_date, dict) else raw_date,
+            event_status=game.get("status"),
+            data_freshness=worst([game.get("data_freshness"), *[context.get("data_freshness") for context in contexts]]))
+        prediction["decision_card"] = sanitize_decision(prediction["decision_card"])
+    return prediction
 
 
 def _build_nba_opp_strengths(nba_standings: dict | list | None) -> dict:
@@ -709,23 +660,26 @@ def _build_nba_opp_strengths(nba_standings: dict | list | None) -> dict:
 
 
 def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_opp_strengths: dict) -> dict:
+    if reason := _nba_pregame_reason(game):
+        return {**game, "prediction": None, "unavailable_reason": reason}
     home_id = str(_game_side(game, "home").get("id") or "")
     away_id = str(_game_side(game, "away").get("id") or "")
-    home_team = team_map.get(home_id)
-    away_team = team_map.get(away_id)
+    home_team = team_map.get(home_id) or _game_side(game, "home")
+    away_team = team_map.get(away_id) or _game_side(game, "away")
 
-    if not home_team or not away_team:
+    if not home_team.get("name") or not away_team.get("name"):
         return {**game, "prediction": None}
 
     form_home = []
     form_away = []
     form_home_context = {"using_historical_context": False}
     form_away_context = {"using_historical_context": False}
+    season = game.get("season") or nc._season_from_game_date(game) or nc.NBA_SEASON
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_map = {
-            "form_home": executor.submit(nc.get_team_recent_form_context, home_id, nc.NBA_SEASON, 10, 0, "page"),
-            "form_away": executor.submit(nc.get_team_recent_form_context, away_id, nc.NBA_SEASON, 10, 0, "page"),
+            "form_home": executor.submit(nc.get_team_recent_form_context, home_id, season, 10, 0, "page"),
+            "form_away": executor.submit(nc.get_team_recent_form_context, away_id, season, 10, 0, "page"),
         }
 
         for key, future in future_map.items():
@@ -742,6 +696,11 @@ def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_o
                 form_away_context = result or form_away_context
                 form_away_raw = form_away_context.get("current_games") or []
                 form_away = np_nba.extract_recent_form(form_away_raw, away_id, n=5)
+
+    if reason := _nba_form_reason(form_home_context, form_away_context):
+        return {**game, "prediction": None, "unavailable_reason": reason}
+    if min(len(form_home), len(form_away)) < 2:
+        return {**game, "prediction": None, "unavailable_reason": "At least two completed current-season games per team are needed for a pregame estimate."}
 
     prediction = se.scorpred_predict(
         form_a=form_home,
@@ -760,8 +719,8 @@ def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_o
         prediction,
         form_a_games=len(form_home),
         form_b_games=len(form_away),
-        stats_a_available=True,
-        stats_b_available=True,
+        stats_a_available=False,
+        stats_b_available=False,
         used_historical_context=bool(
             form_home_context.get("using_historical_context")
             or form_away_context.get("using_historical_context")
@@ -771,8 +730,8 @@ def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_o
     data_completeness = _nba_data_completeness(
         form_a_games=len(form_home),
         form_b_games=len(form_away),
-        stats_a_available=True,
-        stats_b_available=True,
+        stats_a_available=False,
+        stats_b_available=False,
         used_historical_context=bool(
             form_home_context.get("using_historical_context")
             or form_away_context.get("using_historical_context")
@@ -809,6 +768,11 @@ def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_o
                 },
             }
         )
+        prediction["decision_card"].update(game_date=(game.get("date") or {}).get("start"), event_status=game.get("status"),
+                                           data_freshness=worst([game.get("data_freshness"), form_home_context.get("data_freshness"), form_away_context.get("data_freshness")]))
+        prediction["decision_card"] = sanitize_decision(prediction["decision_card"])
+    if reason := _nba_pregame_reason(game):
+        return {**game, "prediction": None, "unavailable_reason": reason}
     return {**game, "prediction": prediction}
 
 
@@ -998,7 +962,27 @@ def _apply_nba_product_presentation(
         return prediction
 
     prediction["data_completeness"] = data_completeness
+    probs = prediction.get("win_probabilities") or {}
+    best = prediction.get("best_pick") or {}
+    decision = DecisionEngine().build_decision({
+        "home_name": team_a_name, "away_name": team_b_name,
+        "probabilities": {"home": probs.get("a"), "draw": 0, "away": probs.get("b")},
+        "recommended_side": best.get("prediction"),
+        "confidence": prediction.get("confidence_pct") or prediction.get("confidence"),
+        "data_quality": {"full": 85, "partial": 65, "limited": 45}.get(data_completeness.get("tier"), 45),
+        "odds": prediction.get("odds") or {},
+    })
+    existing_action = prediction.get("action") or prediction.get("play_type")
+    if existing_action:
+        decision["action"] = existing_action if existing_action in {"BET", "CONSIDER", "SKIP"} else "SKIP"
+    analysis = {"match_id": prediction.get("match_id"), "matchup": f"{team_a_name} vs {team_b_name}",
+                "action": decision["action"], "confidence": decision["confidence"],
+                "recommended_side": decision["side"], "reason": best.get("reasoning") or prediction.get("matchup_reading") or "Weighted rule prediction",
+                "probabilities": {"a": probs.get("a"), "draw": 0, "b": probs.get("b")},
+                "data_quality": "Strong Data" if decision["data_quality"] >= 75 else ("Partial Data" if decision["data_quality"] >= 55 else "Limited Data"),
+                "metric_breakdown": {key: decision[key] for key in ("edge_score", "expected_value", "risk_level", "model_probability")}}
     decision_card = dui.build_decision_card(
+        analysis=analysis,
         sport="nba",
         team_a=team_a_name,
         team_b=team_b_name,
@@ -1070,9 +1054,11 @@ def _espn_player_overview(player_id: str) -> dict:
 
     if path.exists():
         age = (datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds()
-        if age < _ESPN_NBA_OVERVIEW_TTL:
+        if 0 <= age < _ESPN_NBA_OVERVIEW_TTL:
             with open(path, encoding="utf-8") as fh:
-                return json.load(fh)
+                data = json.load(fh)
+            data[SOURCE_KEY] = metadata("ESPN player overview", datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(), _ESPN_NBA_OVERVIEW_TTL)
+            return data
 
     last_exc: Exception | None = None
     for attempt in range(_ESPN_RETRIES):
@@ -1089,20 +1075,19 @@ def _espn_player_overview(player_id: str) -> dict:
                 continue
             resp.raise_for_status()
             data = resp.json()
+            if not isinstance(data, dict):
+                raise TypeError("Unsupported ESPN player overview schema")
+            data[SOURCE_KEY] = metadata("ESPN player overview", datetime.now(UTC).isoformat(), _ESPN_NBA_OVERVIEW_TTL)
             _ESPN_NBA_OVERVIEW_CACHE.mkdir(parents=True, exist_ok=True)
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
             return data
-        except (requests.RequestException, ValueError) as exc:
+        except (requests.RequestException, ValueError, TypeError) as exc:
             last_exc = exc
             if attempt < _ESPN_RETRIES - 1:
                 time.sleep(_ESPN_BACKOFF * (2 ** attempt))
 
-    # Stale cache is better than a hard failure
-    if path.exists():
-        with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
-
+    # Retain expired files for diagnosis, but never serve them as fresh data.
     raise RuntimeError(
         f"ESPN NBA player overview unavailable for player_id={player_id}"
     ) from last_exc
@@ -1115,6 +1100,16 @@ def _season_split_map(overview: dict) -> dict:
     regular = next((split for split in splits if split.get("displayName") == "Regular Season"), None)
     stats = (regular or {}).get("stats") or []
     return {name: stats[idx] for idx, name in enumerate(names) if idx < len(stats)}
+
+
+def _overview_number(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number >= 0 else None
 
 
 def _recent_game_log(overview: dict) -> list[dict]:
@@ -1137,71 +1132,35 @@ def _recent_game_log(overview: dict) -> list[dict]:
                 "date": (event.get("gameDate") or "")[:10],
                 "opponent": event.get("opponent", ""),
                 "result": event.get("gameResult", ""),
-                "minutes": value_map.get("minutes", "0"),
-                "min": value_map.get("minutes", "0"),
-                "points": float(value_map.get("points", 0) or 0),
-                "rebounds": float(value_map.get("totalRebounds", 0) or 0),
-                "assists": float(value_map.get("assists", 0) or 0),
-                "blocks": float(value_map.get("blocks", 0) or 0),
-                "steals": float(value_map.get("steals", 0) or 0),
-                "turnovers": float(value_map.get("turnovers", 0) or 0),
-                "threePointPct": float(value_map.get("threePointPct", 0) or 0),
-                "fieldGoalPct": float(value_map.get("fieldGoalPct", 0) or 0),
-                "tpm": 0,
+                "minutes": value_map.get("minutes"),
+                "min": value_map.get("minutes"),
+                "points": _overview_number(value_map.get("points")),
+                "rebounds": _overview_number(value_map.get("totalRebounds")),
+                "assists": _overview_number(value_map.get("assists")),
+                "blocks": _overview_number(value_map.get("blocks")),
+                "steals": _overview_number(value_map.get("steals")),
+                "turnovers": _overview_number(value_map.get("turnovers")),
+                "threePointPct": _overview_number(value_map.get("threePointPct")),
+                "fieldGoalPct": _overview_number(value_map.get("fieldGoalPct")),
+                "tpm": _overview_number(value_map.get("threePointFieldGoalsMade")),
                 "fgm": "-",
                 "fga": "-",
-                "fgp": float(value_map.get("fieldGoalPct", 0) or 0),
+                "fgp": _overview_number(value_map.get("fieldGoalPct")),
                 "pra": round(
                     float(value_map.get("points", 0) or 0)
                     + float(value_map.get("totalRebounds", 0) or 0)
                     + float(value_map.get("assists", 0) or 0),
                     1,
-                ),
+                ) if all(_overview_number(value_map.get(k)) is not None for k in ("points", "totalRebounds", "assists")) else None,
             }
         )
     return rows
 
 
 def _build_nba_props_from_avgs(season_avgs: dict, limited_data: bool) -> list[dict]:
-    if not season_avgs:
-        return []
-
-    def _line(value: float) -> float:
-        return round(max(0.5, value) * 2) / 2
-
-    gp = int(float(season_avgs.get("gamesPlayed", 0) or 0))
-    base_conf = 74 if gp >= 40 else 68 if gp >= 20 else 60
-    note = "Limited by public endpoint depth" if limited_data else ""
-    candidates = [
-        ("Points", float(season_avgs.get("avgPoints", 0) or 0)),
-        ("Rebounds", float(season_avgs.get("avgRebounds", 0) or 0)),
-        ("Assists", float(season_avgs.get("avgAssists", 0) or 0)),
-        ("PRA", round(
-            float(season_avgs.get("avgPoints", 0) or 0)
-            + float(season_avgs.get("avgRebounds", 0) or 0)
-            + float(season_avgs.get("avgAssists", 0) or 0),
-            1,
-        )),
-    ]
-    props = []
-    for label, projection in candidates:
-        line = _line(projection)
-        lean = "OVER" if projection >= line else "UNDER"
-        props.append(
-            {
-                "label": label,
-                "line": line,
-                "projection": round(projection, 1),
-                "season_avg": round(projection, 1),
-                "last5_avg": round(projection, 1),
-                "opp_avg": round(projection, 1),
-                "lean": lean,
-                "confidence": base_conf,
-                "breakdown": f"Season average {projection:.1f} | Public feed recent-game context {'available' if not limited_data else 'limited'}",
-                "opp_note": note,
-            }
-        )
-    return props
+    # A season overview is descriptive: it supplies neither verified opponent
+    # samples nor calibrated prop confidence. Do not fabricate prop estimates.
+    return []
 
 
 def _build_nba_key_threats(roster: list, featured: list) -> list[dict]:
@@ -1284,20 +1243,10 @@ def _build_player_analysis(player_id: str, player_name: str = "") -> dict:
     limited_data = len(last5_log) < 5
     return {
         "player": {"id": str(player_id), "name": player_name},
-        "season_avgs": {
-            "games": int(float(season_avgs.get("gamesPlayed", 0) or 0)),
-            "min": float(season_avgs.get("avgMinutes", 0) or 0),
-            "points": float(season_avgs.get("avgPoints", 0) or 0),
-            "rebounds": float(season_avgs.get("avgRebounds", 0) or 0),
-            "assists": float(season_avgs.get("avgAssists", 0) or 0),
-            "blocks": float(season_avgs.get("avgBlocks", 0) or 0),
-            "steals": float(season_avgs.get("avgSteals", 0) or 0),
-            "turnovers": float(season_avgs.get("avgTurnovers", 0) or 0),
-            "fgp": float(season_avgs.get("fieldGoalPct", 0) or 0),
-            "tpp": float(season_avgs.get("threePointPct", 0) or 0),
-            "ftp": float(season_avgs.get("freeThrowPct", 0) or 0),
-            "tpm": round(float(season_avgs.get("avgPoints", 0) or 0) / 3.5, 1),
-        },
+        "season_avgs": {key: _overview_number(season_avgs.get(source)) for key, source in {
+            "games": "gamesPlayed", "min": "avgMinutes", "points": "avgPoints", "rebounds": "avgRebounds",
+            "assists": "avgAssists", "blocks": "avgBlocks", "steals": "avgSteals", "turnovers": "avgTurnovers",
+            "fgp": "fieldGoalPct", "tpp": "threePointPct", "ftp": "freeThrowPct", "tpm": "avgThreePointFieldGoalsMade"}.items()},
         "last5_log": last5_log,
         "last5_limited": limited_data,
         "vs_opp_records": [],
@@ -1307,7 +1256,8 @@ def _build_player_analysis(player_id: str, player_name: str = "") -> dict:
         "limited_data_warning": limited_data,
         "props": _build_nba_props_from_avgs(season_avgs, limited_data),
         "data_source": "ESPN player overview",
-        "last_updated": _now_stamp(),
+        "last_updated": (overview.get(SOURCE_KEY) or {}).get("observed_at"),
+        "data_freshness": overview.get(SOURCE_KEY),
     }
 
 
@@ -1387,9 +1337,8 @@ def _index_inner():
         upcoming_games_with_predictions = [result for result in ordered_results if result is not None]
 
     decision_cards = [
-        (game.get("prediction") or {}).get("decision_card")
+        (game.get("prediction") or {}).get("decision_card") or _nba_schedule_decision(game)
         for game in upcoming_games_with_predictions
-        if (game.get("prediction") or {}).get("decision_card")
     ]
     dui.assign_opportunity_ranks(decision_cards)
 
@@ -1637,6 +1586,11 @@ def _matchup_inner():
         except Exception:
             pass
 
+        reason = (_nba_pregame_reason(game_snapshot or selected_game or {})
+                  or _nba_form_reason(form_context_a, form_context_b))
+        if reason or min(len(recent_form_a), len(recent_form_b)) < 2:
+            error = reason or "At least two completed current-season games per team are needed."
+            raise ValueError(error)
         mastermind = sm.predict_match(
             {
                 "sport": "nba",
@@ -1686,6 +1640,7 @@ def _matchup_inner():
     except Exception as e:
         _log_err("Scorpred NBA engine", e)
 
+    scorpred = _nba_guard_prediction(scorpred, game_snapshot or selected_game or {}, form_context_a, form_context_b)
     season_context = {
         "current_season": nc.NBA_SEASON,
         "form_a_current": len(form_context_a.get("current_games") or []),
@@ -1938,6 +1893,11 @@ def _prediction_inner():
         except Exception:
             pass
 
+        reason = (_nba_pregame_reason(game_snapshot or selected_game or {})
+                  or _nba_form_reason(form_context_a, form_context_b))
+        if reason or min(len(nba_form_a), len(nba_form_b)) < 2:
+            error = reason or "At least two completed current-season games per team are needed."
+            raise ValueError(error)
         mastermind = sm.predict_match(
             {
                 "sport": "nba",
@@ -2026,6 +1986,9 @@ def _prediction_inner():
             form_strip=nba_form_a,
         )
 
+    scorpred = _nba_guard_prediction(scorpred, game_snapshot or selected_game or {}, form_context_a, form_context_b)
+    if scorpred is None:
+        market_analysis = None
     # Track this prediction
     try:
         if scorpred:
@@ -2050,6 +2013,7 @@ def _prediction_inner():
                 win_probs=probs,
                 confidence=conf,
                 game_date=(selected_game or {}).get("date") or None,
+                kickoff=(selected_game or {}).get("date") or None,
                 team_a_id=team_a["id"],
                 team_b_id=team_b["id"],
                 totals_pick=totals_leg.get("pick"),
@@ -2105,6 +2069,8 @@ def _build_today_prediction_card(
     Designed to be called from a ThreadPoolExecutor so multiple games
     are processed concurrently.
     """
+    if _nba_pregame_reason(game):
+        return None
     teams_block = game.get("teams") or {}
     home_raw = teams_block.get("home") or {}
     away_raw = teams_block.get("visitors") or {}
@@ -2118,8 +2084,7 @@ def _build_today_prediction_card(
     away_team = team_map.get(away_id) or away_raw
 
     game_date_start = (game.get("date") or {}).get("start") or ""
-    game_date = game_date_start[:10] if game_date_start else ""
-    game_time = game_date_start[11:16] if len(game_date_start) > 10 else ""
+    game_date, game_time = _nba_calendar_parts(game_date_start)
 
     # ── Parallel per-game data fetches ─────────────────────────────────────
     h2h_raw: list = []
@@ -2164,6 +2129,9 @@ def _build_today_prediction_card(
 
     h2h_form_home = np_nba.extract_recent_form(h2h_raw, home_id, n=5) if h2h_raw else []
     h2h_form_away = np_nba.extract_recent_form(h2h_raw, away_id, n=5) if h2h_raw else []
+
+    if _nba_form_reason(form_home_context, form_away_context) or min(len(form_home), len(form_away)) < 2 or _nba_pregame_reason(game):
+        return None
 
     prediction = se.scorpred_predict(
         form_a=form_home,
@@ -2232,6 +2200,12 @@ def _build_today_prediction_card(
             }
         )
 
+    if _nba_pregame_reason(game) or _nba_form_reason(form_home_context, form_away_context):
+        return None
+    if prediction.get("decision_card"):
+        prediction["decision_card"].update(game_date=game_date_start, event_status=game.get("status"),
+                                           data_freshness=worst([game.get("data_freshness"), form_home_context.get("data_freshness"), form_away_context.get("data_freshness")]))
+        prediction["decision_card"] = sanitize_decision(prediction["decision_card"])
     best_pick = prediction.get("best_pick", {})
     probs = prediction.get("win_probabilities", {})
 
@@ -2252,6 +2226,8 @@ def _build_today_prediction_card(
 
 
 def _today_prediction_from_fallback_game(game: dict, team_map: dict[str, dict]) -> dict | None:
+    if _nba_pregame_reason(game):
+        return None
     fallback = _fallback_prediction_card_from_game(game, team_map)
     prediction = fallback.get("prediction") or {}
     card = prediction.get("decision_card")
@@ -2265,8 +2241,8 @@ def _today_prediction_from_fallback_game(game: dict, team_map: dict[str, dict]) 
     probs = prediction.get("win_probabilities") or {}
     return {
         "game": game,
-        "game_date": game_date_start[:10] if game_date_start else "",
-        "game_time": game_date_start[11:16] if len(game_date_start) > 10 else "",
+        "game_date": _nba_calendar_parts(game_date_start)[0],
+        "game_time": _nba_calendar_parts(game_date_start)[1],
         "home_team": home_team,
         "away_team": away_team,
         "prediction": prediction,
@@ -2302,7 +2278,7 @@ def _today_predictions_inner():
         _log_err("Teams fetch for today predictions", e)
 
     # Fetch today's NBA scoreboard
-    now_utc = datetime.now(timezone.utc)
+    now_utc = datetime.now(UTC)
     current_app.logger.info(
         "today_predictions: UTC=%s — fetching today's scoreboard",
         now_utc.strftime("%Y-%m-%d %H:%M"),
@@ -2387,9 +2363,10 @@ def _today_predictions_inner():
     )
 
     # ── Yesterday section: completed predictions from tracker ─────────────────
-    from datetime import date, timedelta
-    yesterday_str = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-    today_str = date.today().strftime("%Y-%m-%d")
+    from datetime import timedelta
+    today = datetime.now(CALENDAR_ZONE).date()
+    yesterday_str = (today - timedelta(days=1)).isoformat()
+    today_str = today.isoformat()
     try:
         recent = mt.get_recent_predictions(limit=50)
         yesterday_results = [
@@ -2432,23 +2409,30 @@ def nba_props_generate():
       opponent_name   str   — opponent display name
       is_home         bool  — "true" or "false"
       markets         str   — comma-separated e.g. "points,rebounds,assists,pra"
-      season          int   — optional, defaults to 2024
+      season          int   — optional, current NBA ending year
     """
     import props_engine as pe
 
     _apply_refresh()
     payload = request.get_json(silent=True) or request.values
-    player_id = int(payload.get("player_id", 0) or 0)
+    if not hasattr(payload, "get"):
+        return jsonify(error="Expected an object of player and team identifiers."), 400
+    try:
+        if any(isinstance(payload.get(k), (bool, float, list, dict)) for k in ("player_id", "player_team_id", "opponent_id", "season")):
+            raise ValueError("Identifiers must not be coerced from another type")
+        player_id = int(payload.get("player_id", 0) or 0)
+        player_team_id = int(payload.get("player_team_id", 0) or 0)
+        opponent_id = int(payload.get("opponent_id", 0) or 0)
+        season = int(payload.get("season", nc.NBA_SEASON) or nc.NBA_SEASON)
+    except (TypeError, ValueError):
+        return jsonify(error="Player, team, opponent and season must be integer identifiers."), 400
     player_name = payload.get("player_name", "Unknown Player")
-    player_team_id = int(payload.get("player_team_id", 0) or 0)
-    opponent_id = int(payload.get("opponent_id", 0) or 0)
     opponent_name = payload.get("opponent_name", "Opponent")
     is_home_str = str(payload.get("is_home", "true")).lower()
     markets_str = str(payload.get("markets", "points,rebounds,assists,pra"))
-    season = int(payload.get("season", 2024) or 2024)
     position = payload.get("position", "")
 
-    if not player_id or not player_team_id or not opponent_id:
+    if min(player_id, player_team_id, opponent_id) <= 0 or not 1999 <= season <= nc.NBA_SEASON:
         return jsonify({"error": "Required: player_id, player_team_id, opponent_id"}), 400
 
     is_home = is_home_str not in ("false", "0", "no")
@@ -2467,8 +2451,8 @@ def nba_props_generate():
             player_position   = position,
             season            = season,
         )
-        result["data_source"] = "ESPN live roster + configured NBA prop model"
-        result["last_updated"] = _now_stamp()
+        result["data_source"] = "Legacy NBA player game-log adapter; verified coverage required"
+        result["last_updated"] = None  # No source receipt supplied by the legacy log adapter.
         return jsonify(result)
     except Exception as e:
         current_app.logger.error("NBA props generation failed: %s", e)
@@ -2524,25 +2508,45 @@ def standings():
     )
 
 
+def _nba_schedule_decision(game, reason=None):
+    """Display a real fixture as SKIP when no supported pregame estimate exists."""
+    home, away = _game_side(game, "home"), _game_side(game, "away")
+    return {"match_id": str(game.get("id") or ""), "sport": "nba", "competition": "NBA",
+            "team_a": home.get("name"), "team_b": away.get("name"),
+            "team_a_id": home.get("id"), "team_b_id": away.get("id"),
+            "team_a_logo": home.get("logo"), "team_b_logo": away.get("logo"),
+            "matchup": f'{home.get("name")} vs {away.get("name")}',
+            "game_date": (game.get("date") or {}).get("start", ""),
+            "event_status": game.get("status"), "data_freshness": game.get("data_freshness"),
+            "recommended_side": "Unavailable", "action": "SKIP", "confidence_pct": 0, "confidence": 0,
+            "probabilities": {}, "model_source": "unavailable",
+            "data_confidence": {"label": "Limited Data"}, "data_quality": "Limited Data",
+            "reason": reason or "Schedule available; a supported pregame estimate is currently unavailable."}
+
+
 @nba_api_bp.route("/api/dashboard/nba", methods=["GET"])
+@limiter.limit("60 per minute")
 def api_dashboard_nba():
     try:
         date_filter = (request.args.get("date") or "").strip()[:10]  # YYYY-MM-DD
         cards: list[dict] = []
         available_dates: list[str] = []
         load_error = None
+        schedule_status = {}
         try:
             import nba_live_client as _nc
             # Fetch 7 days ahead to power the multi-day tabs
-            all_games = _nc.get_upcoming_games(30, 7, "api") or []
-            today = _nc.get_today_games("api") or []
-            all_games = all_games or [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
+            all_games = _nc.get_upcoming_games(30, 7, "page") or []
+            schedule_status = _nc.get_schedule_refresh_status()
+            if not all_games:
+                today = _nc.get_today_games("page") or []
+                all_games = [g for g in today if (g.get("status") or {}).get("state") in {"pre", "in"}]
 
             # Collect available dates from all fetched games
             from collections import defaultdict as _dd
             games_by_date: dict[str, list] = _dd(list)
             for g in all_games:
-                d = ((g.get("date") or {}).get("start") or "")[:10]
+                d = calendar_date((g.get("date") or {}).get("start"))
                 if d:
                     games_by_date[d].append(g)
             available_dates = sorted(games_by_date.keys())
@@ -2556,8 +2560,16 @@ def api_dashboard_nba():
                 # No date specified: show the nearest day that has games
                 slate = games_by_date.get(available_dates[0], []) if available_dates else all_games
 
-            teams = _nc.get_teams() or []
+            try:
+                teams = _nc.get_teams() or []
+            except Exception:
+                teams = []
             team_map = {str(t["id"]): t for t in teams}
+            for game in all_games:
+                for side in ("home", "away"):
+                    team = _game_side(game, side)
+                    if team.get("id") and team.get("name"):
+                        team_map.setdefault(str(team["id"]), team)
             try:
                 standings = _nc.get_standings() or {}
             except Exception:
@@ -2569,15 +2581,13 @@ def api_dashboard_nba():
                 for fut in as_completed(fmap):
                     idx = fmap[fut]
                     try:
-                        ordered[idx] = fut.result()
+                        result = fut.result()
                     except Exception:
                         current_app.logger.warning("NBA prediction card build failed for game index=%d", idx, exc_info=True)
-                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
-                    if not ((ordered[idx] or {}).get("prediction") or {}).get("decision_card"):
-                        ordered[idx] = _fallback_prediction_card_from_game(slate[idx], team_map)
-            games_with_pred = [r for r in ordered if r]
-            cards = [(g.get("prediction") or {}).get("decision_card") for g in games_with_pred]
-            cards = [c for c in cards if c]
+                        result = {}
+                    ordered[idx] = ((result.get("prediction") or {}).get("decision_card")
+                                    or _nba_schedule_decision(slate[idx], result.get("unavailable_reason")))
+            cards = [sanitize_decision(card) for card in ordered if card]
             cards = [
                 c for c in cards
                 if (c.get("team_a") or "").strip().lower() not in ("", "tbd", "home")
@@ -2590,19 +2600,97 @@ def api_dashboard_nba():
         top = dui.top_opportunities(cards, limit=4)
         plan = dui.plan_summary(cards)
         return jsonify({
-            "slate": [dui.card_to_decision(c) for c in cards],
-            "topOpportunities": [dui.card_to_decision(c) for c in top],
+            "slate": decision_store.publish(cards, "nba"),
+            "topOpportunities": decision_store.publish(top, "nba"),
             "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
             "availableDates": available_dates,
+            "selectedDate": date_filter or (available_dates[0] if available_dates else ""),
             "error": load_error,
-            "last_updated": datetime.now(timezone.utc).isoformat(),
-        })
+            "warnings": [schedule_status["warning"]] if schedule_status.get("warning") else [],
+            "refresh_status": schedule_status.get("status", "unknown"),
+            "calendarTimezone": "America/New_York",
+            "last_updated": schedule_status.get("observed_at"),
+        }), 503 if load_error and not cards else 200
     except Exception as exc:
         current_app.logger.warning("api_dashboard_nba error: %s", exc)
-        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "error": str(exc)}), 200
+        return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "error": "NBA data is temporarily unavailable."}), 503
+
+
+@nba_api_bp.get("/api/nba/matches/<game_id>/context")
+@limiter.limit("60 per minute")
+def api_nba_matchup_context(game_id):
+    from services import nba_matchup_context as context_service
+    try:
+        game = context_service.game_for_id(game_id, request.args.get("date"))
+        if not game:
+            return jsonify(error="NBA game not found in the available schedule or local archive."), 404
+        return jsonify(result=context_service.context(game))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("NBA descriptive context unavailable")
+        return jsonify(error="NBA comparisons are temporarily unavailable. Schedule and prediction availability remain separate."), 503
+
+
+@nba_api_bp.get("/api/nba/research/early-season")
+@limiter.limit("60 per minute")
+def api_nba_early_season_report():
+    from services import nba_early_season
+    return jsonify(nba_early_season.load_report())
+
+
+@nba_api_bp.get("/api/nba/research/early-season/matches/<game_id>")
+@limiter.limit("30 per minute")
+def api_nba_early_season_preview(game_id):
+    from services import nba_early_season, nba_matchup_context
+    if not nba_early_season.enabled():
+        return jsonify(error="NBA early-season research previews are disabled. Production predictions are unchanged."), 404
+    try:
+        game = nba_matchup_context.game_for_id(game_id, request.args.get("date"))
+        if not game:
+            return jsonify(error="NBA game not found."), 404
+        result = nba_early_season.forecast(nba_matchup_context.context(game), nba_early_season.load_artifact())
+        return jsonify(result=result)
+    except (ValueError, KeyError, OSError, TypeError):
+        return jsonify(error="Early-season research inputs or calibration are unavailable, stale, or incompatible."), 422
+    except Exception:
+        current_app.logger.exception("NBA early-season research unavailable")
+        return jsonify(error="NBA early-season research is temporarily unavailable."), 503
+
+
+@nba_api_bp.get("/api/nba/games")
+@limiter.limit("60 per minute")
+def api_nba_observed_games():
+    from services import nba_matchup_context as context_service
+    try:
+        view = request.args.get("view", "archive")
+        if view not in {"archive", "results"}:
+            return jsonify(error="Choose archive or results."), 400
+        raw = request.args.get("date") or ""
+        if view == "results" and not raw:
+            raw = (datetime.now(CALENDAR_ZONE) - timedelta(days=1)).date().isoformat()
+        if raw and (len(raw) != 10 or datetime.strptime(raw, "%Y-%m-%d").strftime("%Y-%m-%d") != raw):
+            raise ValueError("Use a calendar date in YYYY-MM-DD format.")
+        games, selected = context_service.games_on_date(raw or None)
+        if view == "results" and raw and not games:
+            day = datetime.fromisoformat(raw).replace(tzinfo=CALENDAR_ZONE)
+            if abs((day.date() - datetime.now(CALENDAR_ZONE).date()).days) <= 14:
+                games = [game for game in nc.get_scoreboard_games(day, "page") if game.get("status", {}).get("completed")]
+                selected = raw
+        return jsonify(slate=[context_service.schedule_decision(game) for game in games], topOpportunities=[],
+                       selectedDate=selected or raw, availableDates=[selected or raw] if selected or raw else [],
+                       plan={"bet": 0, "consider": 0, "skip": len(games)},
+                       notice="Completed observations only. Archived statistics are descriptive and are never reconstructed pregame predictions.",
+                       last_updated=None, history_role="descriptive_only")
+    except (ValueError, TypeError):
+        return jsonify(error="Use a valid calendar date in YYYY-MM-DD format."), 400
+    except Exception:
+        current_app.logger.exception("NBA observed games unavailable")
+        return jsonify(error="NBA observed games are temporarily unavailable."), 503
 
 
 @nba_api_bp.route("/api/scoreline/nba", methods=["GET", "POST"])
+@limiter.limit("30 per minute")
 def api_scoreline_nba():
     """
     Scoreline / points distribution for an NBA game.
@@ -2615,54 +2703,66 @@ def api_scoreline_nba():
         odds_total  float (optional) Market total points line for anchoring
         ou_lines    csv   (optional) Comma-separated O/U lines e.g. "215.5,220.5,225.5"
     """
-    from services import scoreline_engine as _se
+    from services import scoreline_engine as scoreline_service
+    from services import scoring_research
+    from services.scoreline_inputs import ScorelineInputError, validate
     try:
         params = request.get_json(silent=True) or request.form or request.args
+        validated = validate(params, "nba")
+        event_id = str(params.get("event_id") or params.get("match_id") or "").strip()
+        game_snapshot = None
+        input_freshness = {}
+        if event_id:
+            try:
+                game_snapshot = nc.get_event_snapshot(event_id, validated["before"], "page")
+            except (RuntimeError, ValueError, OSError):
+                raise ScorelineInputError("The NBA game status could not be refreshed. Retry when schedule data is available.") from None
+            if not game_snapshot:
+                raise ScorelineInputError("The NBA game status could not be verified. Refresh the schedule and retry.")
+            if reason := _nba_pregame_reason(game_snapshot):
+                raise ScorelineInputError(reason)
+            actual_ids = [str(_game_side(game_snapshot, side).get("id") or "") for side in ("home", "away")]
+            if actual_ids != [validated["team_a_id"], validated["team_b_id"]]:
+                raise ScorelineInputError("The NBA teams do not match the selected fixture.")
+            validated["before"] = (game_snapshot.get("date") or {}).get("start")
         team_a_id = str(params.get("team_a_id") or params.get("home_id") or "").strip()
         team_b_id = str(params.get("team_b_id") or params.get("away_id") or "").strip()
         team_a_name = str(params.get("team_a_name") or params.get("team_a") or "Home").strip()
         team_b_name = str(params.get("team_b_name") or params.get("team_b") or "Away").strip()
-        try:
-            odds_total: float | None = float(params.get("odds_total") or 0) or None
-        except (TypeError, ValueError):
-            odds_total = None
-
-        raw_lines = str(params.get("ou_lines") or "").strip()
-        ou_lines = None
-        if raw_lines:
-            try:
-                ou_lines = [float(x.strip()) for x in raw_lines.split(",") if x.strip()]
-            except ValueError:
-                ou_lines = None
+        odds_total, ou_lines = validated["odds_total"], validated["ou_lines"]
 
         stats_a: dict = {}
         stats_b: dict = {}
         form_a: list[dict] = []
         form_b: list[dict] = []
-        injuries_a: list = []
-        injuries_b: list = []
+        injuries_a = None
+        injuries_b = None
         ml_prob_a: float | None = None
         ml_prob_b: float | None = None
-        opp_strength_a: float = 5.0  # default neutral
-        opp_strength_b: float = 5.0
+        opp_strength_a = None
+        opp_strength_b = None
+        preseason_form = False
 
         if team_a_id and team_b_id:
             try:
-                import nba_live_client as _nc
-                import nba_predictor as _np
-                import scorpred_engine as _se
-                import prediction_engine as _pred
+                _nc, _np = nc, np_nba
 
-                # Fetch standings for opponent strength
-                standings_raw = _nc.get_standings() or {}
-                standings_list = standings_raw.get("standings", []) if isinstance(standings_raw, dict) else []
-                opp_str = _se.build_opp_strengths_from_standings(standings_list)
+                def safe_fetch(function, *args, **kwargs):
+                    try:
+                        return function(*args, **kwargs)
+                    except Exception:
+                        current_app.logger.warning("Optional NBA scoring input unavailable: %s", function.__name__)
+                        return None
+
+                # Optional standings/injuries must not prevent scored games loading.
+                standings_raw = safe_fetch(_nc.get_standings) or {}
+                opp_str = _build_nba_opp_strengths(standings_raw)
                 # Extract individual opponent strengths
-                opp_strength_b = opp_str.get(_pred._norm(team_a_name), 5.0)  # team A faces team B
-                opp_strength_a = opp_str.get(_pred._norm(team_b_name), 5.0)  # team B faces team A
+                opp_strength_b = opp_str.get(se._norm(team_a_name))
+                opp_strength_a = opp_str.get(se._norm(team_b_name))
 
-                raw_stats_a = _nc.get_team_season_stats(team_a_id) or {}
-                raw_stats_b = _nc.get_team_season_stats(team_b_id) or {}
+                raw_stats_a = safe_fetch(_nc.get_team_season_stats, team_a_id) or {}
+                raw_stats_b = safe_fetch(_nc.get_team_season_stats, team_b_id) or {}
                 stats_a = {
                     "ppg": raw_stats_a.get("ppg"),
                     "opp_ppg": raw_stats_a.get("opp_ppg"),
@@ -2671,28 +2771,30 @@ def api_scoreline_nba():
                     "ppg": raw_stats_b.get("ppg"),
                     "opp_ppg": raw_stats_b.get("opp_ppg"),
                 }
-                raw_form_a = _nc.get_team_recent_form(team_a_id, n=6)
-                raw_form_b = _nc.get_team_recent_form(team_b_id, n=6)
+                raw_form_a = safe_fetch(_nc.get_team_recent_form, team_a_id, n=10) or []
+                raw_form_b = safe_fetch(_nc.get_team_recent_form, team_b_id, n=10) or []
+                preseason_form = any(game.get("season_type") == 1 for game in raw_form_a + raw_form_b)
+                input_freshness = worst([(game_snapshot or {}).get("data_freshness"), from_records(raw_form_a), from_records(raw_form_b), raw_stats_a.get("data_freshness"), raw_stats_b.get("data_freshness")])
+                if input_freshness and freshness_state(input_freshness) != "fresh":
+                    return jsonify(status="error", message="NBA scoring inputs need a fresh provider update."), 422
+                feature_season = (game_snapshot or {}).get("season") or nc.NBA_SEASON
+                raw_form_a = scoring_research.prior_games(raw_form_a, "nba", before=validated["before"], season=feature_season)
+                raw_form_b = scoring_research.prior_games(raw_form_b, "nba", before=validated["before"], season=feature_season)
                 form_a = _np.extract_recent_form(raw_form_a, team_a_id, n=6)
                 form_b = _np.extract_recent_form(raw_form_b, team_b_id, n=6)
-                injuries_a = _nc.get_team_injuries(team_a_id) or []
-                injuries_b = _nc.get_team_injuries(team_b_id) or []
+                injuries_a = safe_fetch(_nc.get_team_injuries, team_a_id)
+                injuries_b = safe_fetch(_nc.get_team_injuries, team_b_id)
             except Exception:
                 current_app.logger.warning("scoreline_nba: data fetch failed", exc_info=True)
 
-            # Try ML win probabilities from scorpred_engine
-            try:
-                import nba_predictor as _np
-                nba_pred = _np.predict_winner(
-                    team_a_id=team_a_id, team_b_id=team_b_id,
-                    team_a_name=team_a_name, team_b_name=team_b_name,
-                )
-                ml_prob_a = float(nba_pred.get("home_win_prob") or 0) or None
-                ml_prob_b = float(nba_pred.get("away_win_prob") or 0) or None
-            except Exception:
-                current_app.logger.debug("scoreline_nba: ML blend skipped", exc_info=True)
-
-        result = _se.predict_nba_scoreline(
+        try:
+            features = scoring_research.rolling_features(form_a, form_b, sport="nba")
+            projection = scoring_research.project("nba", features, before=validated["before"])
+        except ValueError:
+            projection = {"available": False, "reason": "The trained NBA scoring model needs at least three completed games per team."}
+        if preseason_form:
+            projection = {"available": False, "reason": "Current form includes preseason games. The research scoring model was evaluated on regular-season and playoff games; this remains a descriptive estimate."}
+        result = scoreline_service.predict_nba_scoreline(
             stats_a=stats_a, stats_b=stats_b,
             form_a=form_a, form_b=form_b,
             injuries_a=injuries_a, injuries_b=injuries_b,
@@ -2703,8 +2805,20 @@ def api_scoreline_nba():
             ou_lines=ou_lines,
             opp_strength_a=opp_strength_a,
             opp_strength_b=opp_strength_b,
+            research_projection=projection,
         )
+        if game_snapshot and (reason := _nba_pregame_reason(game_snapshot)):
+            raise ScorelineInputError(reason)
+        if input_freshness and freshness_state(input_freshness) != "fresh":
+            return jsonify(status="error", message="NBA scoring inputs expired during calculation. Refresh the match."), 422
+        if validated["before"] and not parse_kickoff(validated["before"]) > datetime.now(UTC):
+            raise ScorelineInputError("Pregame scoring predictions are unavailable after kickoff.")
+        result["data_freshness"] = input_freshness
         return jsonify({"status": "ok", "result": result})
+    except ScorelineInputError as exc:
+        return jsonify(status="error", message=str(exc)), 400
+    except scoreline_service.InsufficientScoreData as exc:
+        return jsonify(status="error", message=str(exc)), 422
     except Exception as exc:
         current_app.logger.error("api_scoreline_nba error: %s", exc, exc_info=True)
         return jsonify({"status": "error", "message": sanitize_error(exc)}), 500
