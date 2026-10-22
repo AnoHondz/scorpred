@@ -192,6 +192,8 @@ def test_version_compatibility_and_disabled_research_access(tmp_path):
         ResearchViews({"manifest.json": {}}, enabled=True, version="old")
 
 
+@pytest.mark.skipif(not (repo_root() / "docs/assets/rights_soccer/soccer_lineage.json").exists(),
+                    reason="Large soccer lineage evidence (>1 MB) is kept outside Git; run where it is present.")
 def test_real_versioned_views_are_consistent_idempotent_and_do_not_mutate_sources():
     root = repo_root()
     from scripts.build_soccer_research import build
