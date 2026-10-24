@@ -8,10 +8,13 @@ but replaces mock scoreboards, schedules, rosters, and injuries with live data.
 from __future__ import annotations
 
 import hashlib
+import copy
+from concurrent.futures import Future
 import json
 import logging
 import os
 import time
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -22,7 +25,7 @@ import requests
 import nba_client as legacy
 from runtime_paths import cache_dir
 from services.data_freshness import metadata, worst
-from services.prediction_lifecycle import freshness_state
+from services.prediction_lifecycle import freshness_state, parse_kickoff
 from utils.atomic import atomic_write_json
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,10 @@ NBA_SEASON = legacy.NBA_SEASON
 NBA_ESPN_BASE_URL = os.getenv(
     "NBA_ESPN_BASE_URL",
     "https://site.api.espn.com/apis/site/v2/sports/basketball/nba",
+).rstrip("/")
+NBA_ESPN_STATS_BASE_URL = os.getenv(
+    "NBA_ESPN_STATS_BASE_URL",
+    "https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba",
 ).rstrip("/")
 EXTERNAL_API_TIMEOUT_SECONDS = float(os.getenv("EXTERNAL_API_TIMEOUT_SECONDS", "20"))
 EXTERNAL_API_RETRY_ATTEMPTS = max(1, int(os.getenv("EXTERNAL_API_RETRY_ATTEMPTS", "3")))
@@ -44,16 +51,20 @@ NBA_LIVE_TTL_SECONDS = 60
 NBA_SCHEDULE_TTL_SECONDS = 60 * 60
 NBA_STATUS_MAX_AGE_SECONDS = 5 * 60
 NBA_FORM_MAX_AGE_SECONDS = 6 * 60 * 60
+NBA_PLAYER_STATS_TTL_SECONDS = 6 * 60 * 60
+NBA_PAST_PLAYER_STATS_TTL_SECONDS = 7 * 24 * 60 * 60
 CALENDAR_TZ = ZoneInfo("America/New_York")
 _CUP_CHAMPIONSHIP_TYPE_ID = "39"
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 
-# Process-level caches reduce disk I/O and repeated schedule normalization work
-# when users navigate between NBA pages in the same running app instance.
+# Memory entries store the earliest source deadline, never a new receipt time.
 _MEM_CACHE: dict[str, tuple[float, Any]] = {}
 _SCHEDULE_MEM: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _SCOREBOARD_REFRESH: dict[str, dict[str, Any]] = {}
 _SCHEDULE_REFRESH: dict[str, Any] = {"status": "unknown", "observed_at": None}
+_FETCH_LOCK = threading.Lock()
+_FETCHES: dict[tuple, Future] = {}
+_WAITERS: dict[tuple, int] = {}
 
 
 def _source_metadata(observed_at: float, ttl_seconds: int, max_age: int, *, stale=False) -> dict:
@@ -77,10 +88,16 @@ ROUTE_FEATURES: dict[str, list[str]] = {
 }
 
 
+_CACHE_DIR_READY = False
+
+
 def _cache_path(endpoint: str, params: dict[str, Any] | None = None) -> Path:
+    global _CACHE_DIR_READY
     raw = f"{endpoint}:{sorted((params or {}).items())}"
     key = hashlib.md5(raw.encode("utf-8")).hexdigest()
-    NBA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if not _CACHE_DIR_READY:
+        NBA_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _CACHE_DIR_READY = True
     return NBA_CACHE_DIR / f"{key}.json"
 
 
@@ -123,21 +140,77 @@ def _espn_get(
     params: dict[str, Any] | None = None,
     ttl_seconds: int = NBA_SCHEDULE_TTL_SECONDS,
     request_profile: str = "default",
+    base_url: str | None = None,
 ) -> Any:
+    # Coalesce the same page request without making short page fetches wait for
+    # the longer retry policy of a background refresh.
+    key = (str(_cache_path(f"espn:{endpoint}", params or {})), ttl_seconds, request_profile, base_url)
+    with _FETCH_LOCK:
+        flight = _FETCHES.get(key)
+        owner = flight is None
+        if owner:
+            flight = Future()
+            _FETCHES[key] = flight
+        else:
+            _WAITERS[key] = _WAITERS.get(key, 0) + 1
+    if not owner:
+        return copy.deepcopy(flight.result())
+    try:
+        result = _fetch_espn(endpoint, params, ttl_seconds, request_profile, base_url)
+    except BaseException as exc:
+        with _FETCH_LOCK:
+            _FETCHES.pop(key, None)
+            _WAITERS.pop(key, None)
+        flight.set_exception(exc)
+        raise
+    with _FETCH_LOCK:
+        _FETCHES.pop(key, None)
+        waiters = _WAITERS.pop(key, 0)
+    # Waiters copy from a private snapshot; with none waiting (the usual case) nothing is copied.
+    flight.set_result(copy.deepcopy(result) if waiters else None)
+    return result
+
+
+def _cached_snapshot(path, ttl_seconds, max_age, *, stale=False):
+    payload = _load_cache(path)
+    if not isinstance(payload, dict):
+        raise ValueError("NBA cache does not contain a provider response")
+    original = payload.get("_scorpred_source")
+    if isinstance(original, dict):
+        observed = original.get("observed_at")
+        source = metadata("ESPN", observed, ttl_seconds, max_age,
+                          degraded=stale or freshness_state(original) != "fresh")
+        for field in ("expires_at", "max_stale_at"):
+            previous, current = parse_kickoff(original.get(field)), parse_kickoff(source.get(field))
+            if previous and current:
+                source[field] = min(previous, current).isoformat()
+        source["state"] = freshness_state(source)
+        source["receipt_basis"] = original.get("receipt_basis", "embedded_observation")
+    else:
+        # Older cache files have no durable receipt. Retain the existing bounded
+        # legacy fallback, and replace it only after a real provider response.
+        source = _source_metadata(path.stat().st_mtime, ttl_seconds, max_age, stale=stale)
+        source["receipt_basis"] = "legacy_file_mtime"
+    return _with_source(payload, source)
+
+
+def _fetch_espn(endpoint, params, ttl_seconds, request_profile, base_url):
     params = params or {}
     path = _cache_path(f"espn:{endpoint}", params)
     max_age = (NBA_STATUS_MAX_AGE_SECONDS if endpoint in {"scoreboard", "summary"}
                else max(ttl_seconds, NBA_FORM_MAX_AGE_SECONDS) if endpoint.endswith("/schedule") else ttl_seconds)
 
-    if _cache_valid(path, ttl_seconds):
-        logger.debug("ESPN cache HIT  %s", endpoint)
+    if path.exists():
         try:
-            return _with_source(_load_cache(path), _source_metadata(path.stat().st_mtime, ttl_seconds, max_age))
+            cached = _cached_snapshot(path, ttl_seconds, max_age)
+            if cached["_scorpred_source"]["state"] == "fresh":
+                logger.debug("ESPN cache HIT  %s", endpoint)
+                return cached
         except (ValueError, OSError):
             logger.warning("Ignoring invalid NBA cache for %s", endpoint)
 
     logger.debug("ESPN cache MISS %s", endpoint)
-    url = f"{NBA_ESPN_BASE_URL}/{endpoint.lstrip('/')}"
+    url = f"{base_url or NBA_ESPN_BASE_URL}/{endpoint.lstrip('/')}"
     timeout_seconds, retry_attempts, retry_backoff_seconds = _request_settings(request_profile)
     last_exc: Exception | None = None
     for attempt in range(retry_attempts):
@@ -159,18 +232,26 @@ def _espn_get(
             payload = response.json()
             if not isinstance(payload, dict) or payload.get("error") or payload.get("errors"):
                 raise ValueError("NBA provider returned an invalid response")
-            _save_cache(path, payload)
-            return _with_source(payload, _source_metadata(path.stat().st_mtime, ttl_seconds, max_age))
+            source = _source_metadata(datetime.now(UTC).timestamp(), ttl_seconds, max_age)
+            source["receipt_basis"] = "provider_response"
+            observed = _with_source(payload, source)
+            try:
+                _save_cache(path, observed)
+            except OSError:
+                logger.warning("NBA cache write failed for %s; using the received response", endpoint)
+            return observed
         except (requests.RequestException, ValueError) as exc:
             last_exc = exc
             if attempt < retry_attempts - 1:
                 time.sleep(retry_backoff_seconds * (2 ** attempt))
                 continue
 
-    if _cache_valid(path, max_age):
-        logger.warning("ESPN STALE fallback for %s", endpoint)
+    if path.exists():
         try:
-            return _with_source(_load_cache(path), _source_metadata(path.stat().st_mtime, ttl_seconds, max_age, stale=True))
+            cached = _cached_snapshot(path, ttl_seconds, max_age, stale=True)
+            if cached["_scorpred_source"]["state"] != "unavailable":
+                logger.warning("ESPN STALE fallback for %s", endpoint)
+                return cached
         except (OSError, ValueError):
             logger.warning("Ignoring invalid NBA fallback cache for %s", endpoint)
     raise RuntimeError(f"NBA ESPN request failed for {endpoint}") from last_exc
@@ -885,6 +966,70 @@ def get_injuries_from_roster(roster: list[dict]) -> list[dict]:
 def get_team_injuries(team_id, season: int = NBA_SEASON, request_profile: str = "default") -> list[dict]:
     roster = get_team_roster(team_id, season=season, request_profile=request_profile)
     return get_injuries_from_roster(roster)
+
+
+_PLAYER_STAT_FIELDS = {
+    "general": {"gamesPlayed": "gp", "avgMinutes": "min", "avgRebounds": "reb", "avgFouls": "pf"},
+    "offensive": {"avgPoints": "pts", "avgFieldGoalsMade": "fgm", "avgFieldGoalsAttempted": "fga",
+                  "avgFreeThrowsMade": "ftm", "avgFreeThrowsAttempted": "fta", "avgAssists": "ast",
+                  "avgThreePointFieldGoalsMade": "fg3m",
+                  "avgTurnovers": "tov"},
+    "defensive": {"avgSteals": "stl", "avgBlocks": "blk"},
+}
+
+
+def get_league_player_stats(season: int, request_profile: str = "default") -> list[dict]:
+    """Every player's regular-season per-game averages for ``season`` (ESPN ending year).
+
+    ESPN combines a traded player's season into one row; ``team_ids`` lists every team they appeared for.
+    """
+    ttl = NBA_PLAYER_STATS_TTL_SECONDS if season >= NBA_SEASON else NBA_PAST_PLAYER_STATS_TTL_SECONDS
+    key = f"player_stats:{season}"
+    cached = _MEM_CACHE.get(key)
+    if cached and time.time() < cached[0]:
+        return [dict(line) for line in cached[1]]  # rows are flat; callers never mutate team_ids
+    lines: list[dict] = []
+    deadline = time.time() + min(ttl, 10 * 60)
+    page, pages = 1, 1
+    while page <= min(pages, 5):
+        payload = _espn_get("statistics/byathlete", params={"season": season, "seasontype": 2, "limit": 1000, "page": page},
+                            ttl_seconds=ttl, request_profile=request_profile, base_url=NBA_ESPN_STATS_BASE_URL)
+        source = payload.get("_scorpred_source") or {}
+        if source:
+            if freshness_state(source) != "fresh":
+                raise RuntimeError("NBA player averages need a fresh provider observation")
+            expires = parse_kickoff(source.get("expires_at"))
+            if expires:
+                deadline = min(deadline, expires.timestamp())
+        pages = _as_int((payload.get("pagination") or {}).get("pages")) or 1
+        names = {category.get("name"): category.get("names") or [] for category in payload.get("categories") or []}
+        for row in payload.get("athletes") or []:
+            athlete = row.get("athlete") or {}
+            teams = [str(team.get("id")) for team in athlete.get("teams") or [] if team.get("id")]
+            line = {"id": str(athlete.get("id") or ""), "name": athlete.get("displayName") or "",
+                    "position": (athlete.get("position") or {}).get("abbreviation") or "",
+                    "team_ids": teams or [str(athlete.get("teamId") or "")]}
+            for category in row.get("categories") or []:
+                fields = _PLAYER_STAT_FIELDS.get(category.get("name"), {})
+                for name, value in zip(names.get(category.get("name"), []), category.get("values") or category.get("totals") or []):
+                    if name in fields:
+                        try:
+                            line[fields[name]] = float(value)
+                        except (TypeError, ValueError):
+                            pass
+            if line["id"]:
+                lines.append(line)
+        page += 1
+    _MEM_CACHE[key] = (deadline, [dict(line) for line in lines])
+    return lines
+
+
+def get_team_season_games(team_id, season: int, request_profile: str = "default") -> list[dict]:
+    """Completed standings games for a finished season, newest first; old results may come from a stale cache."""
+    finished = [game for game in _team_schedule(str(team_id), season=season, request_profile=request_profile)
+                if game["status"]["state"] == "post" and game.get("standings_game", True)]
+    finished.sort(key=lambda game: game["date"]["start"], reverse=True)
+    return finished
 
 
 def get_injuries() -> list:

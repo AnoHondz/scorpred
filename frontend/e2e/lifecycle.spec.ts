@@ -48,6 +48,7 @@ test('Eastern date tabs, kickoff labels and analysis links agree in another brow
   await expect(page.locator('.live-chip')).toContainText('09:00 PM ET');
   await page.getByRole('button', { name: /Analyze Match/ }).click();
   await expect(page).toHaveURL(/date=2026-10-17/);
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   await expect(page.getByLabel('Projected score').first()).toBeVisible();
 });
 
@@ -55,14 +56,16 @@ for (const sport of ['soccer', 'nba', 'nfl'] as const) {
   test(`${sport} withdraws an already loaded prediction at kickoff without a reload`, async ({ page }) => {
     await setup(page, sport, '2026-10-18T01:00:03Z');
     await page.goto(`/match-analysis?sport=${sport}&match_id=lifecycle-1`);
+    await page.getByText('Score forecast & analysis', { exact: true }).click();
     await expect(page.getByLabel('Projected score').first()).toBeVisible();
-    await expect(page.locator('.action-badge')).toHaveText('CONSIDER');
+    await expect(page.locator('.action-badge')).toHaveAttribute('aria-label', 'Betting decision: CONSIDER');
     await page.clock.fastForward(4000);
-    await expect(page.locator('.action-badge')).toHaveText('SKIP');
+    await expect(page.locator('.action-badge')).toHaveAttribute('aria-label', 'Betting decision: SKIP');
     await expect(page.getByLabel('Projected score')).toHaveCount(0);
     await expect(page.getByLabel('Scoring predictor', { exact: true })).toContainText('unavailable after kickoff');
-    await expect(page.locator('.match-lean')).toContainText('Unavailable');
-    await expect(page.getByLabel(sport === 'nfl' ? 'Scenario share unavailable' : 'Rule confidence unavailable', { exact: true }).last()).toBeVisible();
+    await expect(page.getByLabel('Match prediction', { exact: true })).toContainText('Prediction unavailable');
+    await expect(page.locator('.field-measure')).toHaveCount(0);
+    await expect(page.locator('.field-pick')).not.toContainText('Home team');
   });
 }
 
@@ -70,9 +73,11 @@ test('source expiry removes a loaded score forecast and its recommendation', asy
   await setup(page, 'nba', '2026-10-18T02:00:00Z', { state: 'fresh', observed_at: origin,
     expires_at: '2026-10-18T01:00:03Z', max_stale_at: '2026-10-18T01:05:00Z' });
   await page.goto('/match-analysis?sport=nba&match_id=lifecycle-1');
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   await expect(page.getByLabel('Projected score').first()).toBeVisible();
   await page.clock.fastForward(4000);
-  await expect(page.locator('.action-badge')).toHaveText('SKIP');
+  await expect(page.locator('.action-badge')).toHaveAttribute('aria-label', 'Betting decision: SKIP');
+  await expect(page.locator('.field-measure')).toHaveCount(0);
   await expect(page.getByLabel('Projected score')).toHaveCount(0);
   await expect(page.getByLabel('Scoring predictor', { exact: true })).toContainText('source data needs a fresh update');
 });
@@ -90,11 +95,11 @@ test('home separates NFL scenario shares and recalculates counts at kickoff', as
   const shortlists = page.locator('section[aria-label$="shortlist"]');
   await expect(shortlists).toHaveCount(3);
   expect(await shortlists.evaluateAll(elements => elements.map(element => element.getAttribute('aria-label')))).toEqual(['Soccer shortlist', 'NBA shortlist', 'NFL shortlist']);
-  await expect(page.locator('.plan-stat').filter({ hasText: 'CONSIDER' })).toContainText('3');
+  await expect(page.locator('.plan-line .plan-consider')).toContainText('3');
   await expect(page.getByLabel('NFL shortlist')).toContainText('Scoring scenario share');
   await page.clock.fastForward(16000);
   await expect(page.getByRole('button', { name: /Analyze Match/ })).toHaveCount(0);
-  await expect(page.locator('.plan-stat').filter({ hasText: 'SKIP' })).toContainText('3');
+  await expect(page.getByLabel('Slate overview')).toContainText('3 skip');
 });
 
 test('a score response expires even if its parent card is still fresh', async ({ page }) => {
@@ -102,6 +107,7 @@ test('a score response expires even if its parent card is still fresh', async ({
   await page.route('**/api/scoreline/nba?*', route => route.fulfill({ json: { status: 'ok', result: { ...nba,
     data_freshness: { state: 'fresh', observed_at: origin, expires_at: '2026-10-18T01:00:15Z', max_stale_at: '2026-10-18T01:05:00Z' } } } }));
   await page.goto('/match-analysis?sport=nba&match_id=lifecycle-1');
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   await expect(page.getByLabel('Projected score').first()).toBeVisible();
   await page.clock.fastForward(16000);
   await expect(page.getByLabel('Projected score')).toHaveCount(0);

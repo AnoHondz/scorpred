@@ -23,7 +23,7 @@ export default function NBAEarlySeasonResearch({ decision }: { decision: Decisio
   const guarded = Object.entries(report.coverage).filter(([season]) => season !== '2023').reduce((sum, [, row]) => sum + row.early_games - row.winner_rule_gate, 0);
   return <details className="card" aria-label="NBA early-season research study"><summary>Early-season research · {report.evaluated_games} games tested</summary>
     <p className="research-badge">Research only · production predictions unchanged</p>
-    <p className="quiet-label">The study starts with previous-season scoring and conceding, then adds current observations over six games. It produced estimates for {guarded} tested games that failed the existing two-game availability requirement.</p>
+    <p className="quiet-label">The study starts with previous-season scoring and conceding, then adds current observations over six games. It produced estimates for {guarded} tested games that failed the former two-game availability requirement.</p>
     <div className="table-scroll"><table className="evaluation-table"><caption>Chronological historical results · not prospective accuracy</caption>
       <thead><tr><th>Method</th><th>Games</th><th>Log loss ↓</th><th>Brier ↓</th><th>Winner accuracy</th></tr></thead>
       <tbody>{Object.entries(report.metrics).map(([name, metric]) => <tr key={name}><td>{name === 'blend' ? 'Gradual season blend' : name === 'home_prior' ? 'Home baseline' : 'Previous season only'}</td><td>{metric.games}</td><td>{metric.log_loss.toFixed(3)}</td><td>{metric.brier.toFixed(3)}</td><td>{(metric.accuracy * 100).toFixed(1)}%</td></tr>)}</tbody>

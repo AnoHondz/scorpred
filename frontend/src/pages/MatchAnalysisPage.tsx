@@ -1,53 +1,29 @@
-import { DataBadge, DecisionCard, EmptyState, TeamIdentity, type Decision } from '../components/DecisionCard';
+import { EmptyState, type Decision } from '../components/DecisionCard';
 import ScorelinePredictor from '../components/ScorelinePredictor';
 import NFLAnalysis from '../components/NFLAnalysis';
+import NFLProps from '../components/NFLProps';
+import InjuryImpact from '../components/InjuryImpact';
+import SoccerProps from '../components/SoccerProps';
+import NBAProps from '../components/NBAProps';
 import NFLWinnerResearch from '../components/NFLWinnerResearch';
 import { decisionAt } from '../decisionLifecycle';
 import { useNow } from '../hooks/useNow';
-import { calendarFormat } from '../navigation';
 import NBAContext from '../components/NBAContext';
 import { MatchupStage } from '../components/immersive/CommandCenter';
+import SavePick from '../components/SavePick';
 
-function TrustRow({ label, value }: { label: string; value: string }) {
-  return <div className="trust-stat"><span className="trust-stat-label">{label}</span><span className="trust-stat-value">{value}</span></div>;
-}
-
-function AnalysisDetail({ decision }: { decision: Decision }) {
-  const nfl = decision.sport === 'nfl';
-  const selectedShare = nfl ? decision.scenarioShare : decision.winProbability;
-  const tiedShare = nfl ? decision.tiedScenarioShare : decision.drawProbability;
-  const [competition, venue] = (decision.support || '').split(' | ');
-  const reasonLines = (decision.reason || 'No analysis available.').split(' | ').filter(Boolean);
-  const measureAvailable = decision.side !== 'Unavailable' && Number.isFinite(decision.confidence);
-  return <div className="analysis-layout">
-    <div className="section">
-      <div className="section-heading-row"><h2 className="section-title">Game outlook</h2><span className="quiet-label">Current dashboard analysis</span></div>
-      <DecisionCard decision={decision} featured />
-      <details className="card" open><summary><h3 className="panel-title">Behind the decision</h3></summary>
-        <ul className="why-list">{reasonLines.map(line => <li key={line}>{line}</li>)}</ul>
-      </details>
-    </div>
-    <aside className="section" aria-label="Analysis context">
-      <div className="card">
-        <p className="section-label">{nfl ? 'Scenario share' : 'Rule confidence'}</p>
-        <div className="analysis-measure" role="img" aria-label={measureAvailable ? `${decision.confidence}% ${nfl ? 'scenarios' : 'confidence'}` : `${nfl ? 'Scenario share' : 'Rule confidence'} unavailable`}>
-          <strong>{measureAvailable ? `${decision.confidence}%` : 'Unavailable'}</strong>
-          {measureAvailable && <div className="measure-track"><span style={{ width: `${decision.confidence}%` }} /></div>}
-        </div>
-        <div className="mt-4"><DataBadge label={decision.data} /></div>
-        <p className="score-model-note">{nfl ? 'Descriptive scoring scenarios, not calibrated win probabilities.' : 'Rule confidence measures agreement within the weighted rules. It is distinct from win probability.'}</p>
-      </div>
-      <div className="card"><h3 className="panel-title">Match context</h3>
-        <TrustRow label="Competition" value={competition || decision.sport?.toUpperCase() || 'Unavailable'} />
-        <TrustRow label="Venue" value={venue || 'Unavailable'} />
-        {decision.sport !== 'nba' && <TrustRow label={nfl ? 'Tied scenarios' : 'Draw probability'} value={tiedShare == null ? 'Unavailable' : `${tiedShare.toFixed(1)}%`} />}
-        <TrustRow label={nfl ? 'Selected-side scenarios' : 'Win probability'} value={selectedShare == null ? 'Unavailable' : `${selectedShare.toFixed(1)}%`} />
-        <TrustRow label="Analysis source" value={nfl ? 'Experimental scoring rules' : decision.modelSource === 'weighted_rules' ? 'Weighted rule model' : decision.modelSource || 'Unavailable'} />
-        <TrustRow label="Data tier" value={decision.data} />
-        {decision.dataFreshness?.observed_at && <TrustRow label="Source observed" value={`${calendarFormat(decision.dataFreshness.observed_at, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET`} />}
-      </div>
-    </aside>
-  </div>;
+function PredictionReason({ decision }: { decision: Decision }) {
+  const reasons = (decision.reason || 'No explanation available.').split(/\s+\|\s+|(?<=[.!?])\s+(?=[A-Z])/).filter(Boolean);
+  return <section className="card prediction-explanation" aria-label="Prediction explanation">
+    <h2 className="section-title">{decision.side === 'Unavailable' ? 'Why unavailable' : 'Why this prediction'}</h2>
+    <ul className="prediction-reasons">{reasons.slice(0, 4).map(reason => <li key={reason}>{reason}</li>)}</ul>
+    <details className="prop-about"><summary>Full analysis & sources</summary>
+      {reasons.slice(4).map(reason => <p key={reason}>{reason}</p>)}
+      <p>Method: {decision.modelSource || 'Current dashboard method'}.</p>
+      {decision.dataFreshness?.source && <p>Source: {decision.dataFreshness.source}.</p>}
+      {decision.market && <p>{decision.market.bookmaker} · Decimal moneyline: {decision.market.home_decimal?.toFixed(2) ?? 'Unavailable'} / {decision.market.away_decimal?.toFixed(2) ?? 'Unavailable'}{decision.market.total != null ? ` · Total ${decision.market.total}` : ''}.</p>}
+    </details>
+  </section>;
 }
 
 export default function MatchAnalysisPage({ decision: rawDecision, sport = 'soccer', teamAId, teamBId, leagueId }: {
@@ -60,23 +36,23 @@ export default function MatchAnalysisPage({ decision: rawDecision, sport = 'socc
   const now = useNow();
   const decision = rawDecision ? decisionAt(rawDecision, now) : null;
   const matchup = decision?.matchup || 'Match Analysis';
-  const [competition, venue] = (decision?.support || '').split(' | ');
   const teamAName = decision?.teamA || matchup.split(' vs ')[0] || 'Home';
   const teamBName = decision?.teamB || matchup.split(' vs ')[1] || 'Away';
-  return <div className="page-stack">
-    <section className="hero-card analysis-masthead">
-      <div><p className="page-eyebrow">{competition || sport.toUpperCase()} · MATCH ANALYSIS</p>
-        <h1 className="page-title">{matchup}</h1></div>
-      {decision && <>
-        <div className="analysis-teams"><TeamIdentity name={teamAName} logo={decision.teamALogo} side="Home" /><span className="analysis-vs">VS</span><TeamIdentity name={teamBName} logo={decision.teamBLogo} side="Away" /></div>
-        <div className="match-metadata"><span>{decision.matchDate ? `${calendarFormat(decision.matchDate, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET` : 'Kickoff unavailable'}</span><span>{venue || 'Venue unavailable'}</span></div>
-      </>}
-    </section>
-    {sport === 'nba' && decision && <NBAContext decision={decision} />}
-    <MatchupStage sport={sport} decision={decision} label="MATCHUP EXPLORER" />
+  return <div className="page-stack match-analysis-page">
     {decision ? <>
-      <AnalysisDetail decision={decision} />
-      {sport === 'nfl' ? <><NFLAnalysis decision={decision} /><NFLWinnerResearch /></> : <ScorelinePredictor sport={sport} teamAName={teamAName} teamBName={teamBName} teamAId={teamAId} teamBId={teamBId} leagueId={leagueId} kickoff={decision.matchDate} matchId={decision.matchId} eventStatus={decision.eventStatus} dataFreshness={decision.dataFreshness} />}
-    </> : <EmptyState title="No match selected" body="Go to Soccer, NBA or NFL and click Analyze Matchup on any card." />}
+      <MatchupStage sport={sport} decision={decision} primary />
+      <SavePick decision={decision} />
+      <div className="match-support-grid">
+        <PredictionReason decision={decision} />
+        {sport === 'nfl' ? <NFLProps decision={decision} /> : sport === 'nba' ? <NBAProps decision={decision} /> : <SoccerProps decision={decision} />}
+      </div>
+      {sport === 'nba' && <NBAContext decision={decision} />}
+      <details className="card analysis-expansion"><summary>Injury reports</summary><InjuryImpact decision={decision} /></details>
+      <details className="card analysis-expansion"><summary>Score forecast & analysis</summary>
+      {sport === 'nfl' ? <><NFLAnalysis decision={decision} />
+        <details className="prop-about"><summary>Research models</summary><NFLWinnerResearch /></details></>
+        : <ScorelinePredictor sport={sport} teamAName={teamAName} teamBName={teamBName} teamAId={teamAId} teamBId={teamBId} leagueId={leagueId} kickoff={decision.matchDate} matchId={decision.matchId} eventStatus={decision.eventStatus} dataFreshness={decision.dataFreshness} />}
+      </details>
+    </> : <><h1 className="page-title">Match analysis</h1><EmptyState title="No match selected" body="Go to Soccer, NBA or NFL and click Analyze Matchup on any card." /></>}
   </div>;
 }

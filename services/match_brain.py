@@ -143,7 +143,8 @@ class MatchBrain:
             trust_score = None
         drift_status = self.get_drift_status()
         adaptive = self.get_adaptive_thresholds(model_metrics=model_metrics, drift_status=drift_status)
-        feature_attribution = self.get_feature_attribution()
+        # Feature feedback is learned from the rules engine's components; it does not apply to the ratings model.
+        feature_attribution = {} if _pred.get("ratings_model") else self.get_feature_attribution()
 
         decision = self.decision_engine.build_decision(
             {
@@ -169,6 +170,10 @@ class MatchBrain:
             }
         )
 
+        # No soccer model has beaten bookmaker prices in walk-forward testing
+        # (docs/SOCCER_MODEL_RESEARCH.md), so the strongest soccer call is CONSIDER.
+        if decision.get("action") == "BET":
+            decision["action"] = "CONSIDER"
         kickoff = (fixture.get("fixture") or {}).get("date") or ""
         status = self.get_match_status(fixture)
         league = (fixture.get("league") or {}).get("name") or "Soccer"
@@ -203,6 +208,7 @@ class MatchBrain:
             "risk_level": breakdown.get("risk_level"),
             "decision_grade": breakdown.get("decision_grade"),
             "prediction": decision,
+            "model_source": _pred.get("model_source"),
             "teams": {"home": home, "away": away},
             "date_bucket": self.get_date_bucket(fixture),
             "event_status": (fixture.get("fixture") or {}).get("status"),

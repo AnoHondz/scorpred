@@ -11,8 +11,13 @@ from datetime import UTC, datetime, timedelta
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / ".tmp/local-app"
-SOURCES = ("app.py", "services/prediction_service.py", "services/cache_service.py", "services/nba_matchup_context.py",
-           "nba_routes.py", "nba_live_client.py", "services/nba_early_season.py", "nfl_routes.py", "scripts/run_local.py")
+SOURCES = ("app.py", "services/prediction_service.py", "services/cache_service.py", "services/decision_store.py",
+           "services/data_freshness.py", "services/prediction_lifecycle.py", "services/nba_matchup_context.py", "nba_routes.py", "nba_live_client.py",
+           "services/nba_pregame_model.py", "services/nba_game_projection.py", "services/nba_early_season.py",
+           "nfl_routes.py", "services/nfl_props.py", "services/soccer_props.py", "services/injury_impact.py",
+           "services/injury_reports.py", "services/nfl_player_value.py", "services/soccer_player_value.py",
+           "services/espn_box_scores.py", "services/prop_model.py", "services/nba_props.py", "services/fpl_props.py",
+           "services/prop_markets.py", "services/best_props.py", "services/daily_digest.py", "services/scheduler.py", "services/soccer_model.py", "decision_ui.py", "scripts/run_local.py")
 
 
 def source_fingerprint():
@@ -44,7 +49,10 @@ def main():
 
         identity = {"app": "ScorPred", "pid": os.getpid(), "root": str(ROOT),
                     "source_fingerprint": source_fingerprint(), "research_enabled": False}
-        application.app.add_url_rule("/api/local-runtime", "local_runtime", lambda: jsonify(identity))
+        def local_runtime():
+            from services import daily_digest
+            return jsonify({**identity, "daily_digest": daily_digest.status(application._pipeline_scheduler)})
+        application.app.add_url_rule("/api/local-runtime", "local_runtime", local_runtime)
         stop = STATE / "backend.stop"
         stop.unlink(missing_ok=True)
         server = make_server("127.0.0.1", 5001, application.app, threaded=True)

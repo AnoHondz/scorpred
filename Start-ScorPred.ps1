@@ -22,7 +22,9 @@ try {
         try { return Invoke-RestMethod -Uri "http://127.0.0.1:5001$Path" -TimeoutSec 3 } catch { return $null }
     }
     function Wait-App([string]$Url, [string]$Log) {
-        $deadline = (Get-Date).AddSeconds(55)
+        # Cold Python/model-library imports can exceed one minute on this PC.
+        # Keep waiting for the identified owner instead of launching a duplicate.
+        $deadline = (Get-Date).AddSeconds(180)
         do {
             try {
                 $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 3

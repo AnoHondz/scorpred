@@ -115,9 +115,9 @@ export default function DashboardLayout({
         <header className="topbar">
           <div>
             <p className="topbar-breadcrumb">Workspace <span>/</span></p>
-            <h1 className="topbar-title">
+            <p className="topbar-title">
               {activeItem}
-            </h1>
+            </p>
           </div>
           <div className="flex items-center gap-3">
             <button className="icon-button" onClick={refreshData} disabled={pending > 0} aria-label={pending ? 'Refreshing data' : 'Refresh data'} title="Refresh this view from the server"><RefreshCw size={16} className={pending ? 'refresh-spinning' : ''} /></button>

@@ -63,6 +63,7 @@ test('NFL disabled research never requests a game forecast and scenario outcomes
   const requests: string[] = [];
   page.on('request', request => { if (request.url().includes('/research/winner/')) requests.push(new URL(request.url()).pathname); });
   await page.goto('/match-analysis?sport=nfl&match_id=design-check');
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   const scenarios = page.getByLabel('Recent scoring scenario shares', { exact: true });
   await expect(scenarios).toContainText('60.0%');
   await expect(scenarios).toContainText('5.0%');
@@ -70,7 +71,7 @@ test('NFL disabled research never requests a game forecast and scenario outcomes
   const research = page.getByLabel('NFL winner model research');
   await expect(research).toContainText('Research disabled or unavailable');
   await expect(research).toContainText('NFL winner research is disabled.');
-  await expect(page.getByRole('heading', { name: 'Game outlook', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Match prediction', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Team comparison', exact: true })).toBeVisible();
   expect([...new Set(requests)]).toEqual(['/api/nfl/research/winner/models']);
 });

@@ -10,6 +10,8 @@ async function mockApi(page: Page) {
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/session') return route.fulfill({ json: { user: null } });
+    if (path === '/api/nfl/research/winner/models') return route.fulfill({ status: 404, json: { error: 'Research disabled.' } });
+    if (/^\/api\/nfl\/matches\/[^/]+\/props$/.test(path)) return route.fulfill({ status: 422, json: { error: 'Player props unavailable for this controlled navigation fixture.' } });
     if (path === '/api/leagues') return route.fulfill({ json: { leagues: [{ id: 39, name: 'Premier League', flag: '', country: 'England' }] } });
     if (path === '/api/dashboard/soccer') return route.fulfill({ json: sportData });
     if (path === '/api/dashboard/nba') return route.fulfill({ json: { ...sportData, slate: [], topOpportunities: [] } });
@@ -25,14 +27,15 @@ test('navigation, filters, refresh, match links, and browser back preserve the U
   await page.locator('.sidebar-nav').getByRole('button', { name: 'Soccer', exact: true }).click();
   await expect(page).toHaveURL(/\/soccer$/);
   await page.reload();
-  await expect(page.locator('.topbar h1')).toHaveText('Soccer');
+  await expect(page.locator('.topbar-title')).toHaveText('Soccer');
   await page.getByRole('button', { name: /Analyze Match/ }).first().click();
   await expect(page).toHaveURL(/\/match-analysis\?.*match_id=42/);
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Arsenal vs Chelsea', exact: true })).toBeVisible();
-  await expect(page.getByRole('alert')).toContainText('Data is temporarily unavailable.');
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
+  await expect(page.getByLabel('Scoring predictor').getByRole('alert')).toContainText('Data is temporarily unavailable.');
   await page.goBack();
-  await expect(page.locator('.topbar h1')).toHaveText('Soccer');
+  await expect(page.locator('.topbar-title')).toHaveText('Soccer');
 });
 
 test('NFL has reloadable navigation and event-bound scoring analysis', async ({ page }) => {
@@ -54,9 +57,10 @@ test('NFL has reloadable navigation and event-bound scoring analysis', async ({ 
   await expect(page).toHaveURL(/sport=nfl&match_id=123/);
   await expect(page).toHaveURL(/date=2026-10-18/);
   await page.reload();
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   await expect(page.getByText('Projected points:', { exact: false })).toContainText('24.5');
   await expect(page.getByText('Scenario shares are descriptive estimates, not calibrated probabilities.')).toBeVisible();
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByLabel('Scoring predictor').getByRole('alert')).toHaveCount(0);
   await page.goBack();
   await expect(page).toHaveURL(/\/nfl$/);
 });
@@ -109,6 +113,7 @@ test('matchday redesign displays data coverage and fits narrow screens', async (
   await expect(page.getByLabel('Slate overview')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('home-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Explore NFL' }).click();
+  await page.getByText('Data sources', { exact: true }).click();
   await expect(page.getByLabel('NFL data coverage')).toContainText('Not connected');
   await expect(page.getByRole('link', { name: 'The Odds API · prices' })).toHaveAttribute('href', 'https://the-odds-api.com/liveapi/guides/v4/');
   await page.screenshot({ path: testInfo.outputPath('nfl-desktop.png'), fullPage: true });
@@ -131,6 +136,7 @@ test('free NFL coverage shows snapshot limits and expires on an open page', asyn
       ] },
   } }));
   await page.goto('/nfl');
+  await page.getByText('Data sources', { exact: true }).click();
   const coverage = page.getByLabel('Free NFL research datasets');
   await expect(coverage).toContainText('200 rows · 2026 · through week 6');
   await expect(coverage).toContainText('Imported snapshot');

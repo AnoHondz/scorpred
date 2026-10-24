@@ -633,6 +633,7 @@ def build_decision_card(
         "data_quality": analysis["data_quality"],
         "metric_breakdown": analysis.get("metric_breakdown"),
         "match_id": analysis.get("match_id"),
+        "model_source": analysis.get("model_source"),
         "confidence_pct": int(safe_float(confidence, 0)),
         "action_label": action,
         "action_class": str(action).lower(),
@@ -932,6 +933,8 @@ def card_to_decision(card: dict) -> dict:
         "matchId": str(card.get("match_id") or cta.get("event_id") or ""),
         "winProbability": normalize_percent(probability, 0) if probability is not None and card.get("sport") != "nfl" else None,
         "drawProbability": normalize_percent(probabilities.get("draw"), 0) if probabilities.get("draw") is not None and card.get("sport") != "nfl" else None,
+        # The full split, so a draw pick still says how the two win chances divide.
+        "homeProbability": normalize_percent(probabilities.get("a"), 0) if probabilities.get("a") is not None and card.get("sport") != "nfl" else None,
         "scenarioShare": normalize_percent(probability, 0) if probability is not None and card.get("sport") == "nfl" else None,
         "tiedScenarioShare": normalize_percent(probabilities.get("draw"), 0) if probabilities.get("draw") is not None and card.get("sport") == "nfl" else None,
         "modelSource": card.get("model_source") or "weighted_rules",
@@ -945,7 +948,8 @@ def card_to_decision(card: dict) -> dict:
         "slateDate": card.get("slate_date") or "",
         "eventStatus": card.get("event_status"),
         "dataFreshness": card.get("data_freshness") or {},
-        "confidenceMeasure": "scenario_share" if card.get("sport") == "nfl" else "rule_confidence",
+        "confidenceMeasure": "scenario_share" if card.get("sport") == "nfl" else
+        "rule_confidence" if (card.get("model_source") or "weighted_rules") == "weighted_rules" else "model_probability",
         "confidence": int(safe_float(card.get("confidence_pct") or card.get("confidence"), 0)),
         "reason": card.get("reason") or "",
         "data": normalize_data_label(
@@ -956,7 +960,7 @@ def card_to_decision(card: dict) -> dict:
         "leagueLogo": card.get("league_logo") or "",
         "teamALogo": card.get("team_a_logo") or "",
         "teamBLogo": card.get("team_b_logo") or "",
-        "market": card.get("market") if card.get("sport") == "nfl" and isinstance(card.get("market"), dict) else None,
+        "market": card.get("market") if card.get("sport") in {"nfl", "nba"} and isinstance(card.get("market"), dict) else None,
         "sport": card.get("sport") or "nba",
         "homeId": card.get("team_a_id") or cta.get("team_a") or None,
         "awayId": card.get("team_b_id") or cta.get("team_b") or None,

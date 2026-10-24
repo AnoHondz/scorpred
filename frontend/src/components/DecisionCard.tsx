@@ -1,4 +1,4 @@
-import { ArrowUpRight, Eye, Layers3, Pause, Target } from 'lucide-react';
+import { ArrowUpRight } from 'lucide-react';
 import { calendarFormat, dateTabLabel } from '../navigation';
 import { useNow } from '../hooks/useNow';
 import { decisionAt } from '../decisionLifecycle';
@@ -117,6 +117,13 @@ export function DecisionCard({
   const home = decision.teamA || decision.side;
   const away = decision.teamB || decision.opponent || 'Away team';
   const competition = (decision.support || '').split(' | ')[0] || decision.sport?.toUpperCase() || 'Match analysis';
+  const nba = decision.sport === 'nba';
+  const unavailable = decision.side === 'Unavailable';
+  const metricLabel = decision.sport === 'nfl' ? 'Scenario share'
+    : nba || decision.confidenceMeasure === 'model_probability' ? 'Win probability' : 'Rule confidence';
+  const metricValue = nba && decision.winProbability != null ? Math.round(decision.winProbability) : decision.confidence;
+  const market = decision.market;
+  const spread = nba && market?.home_spread != null ? `${decision.teamA} ${market.home_spread > 0 ? '+' : ''}${market.home_spread}` : null;
   return <article className={`card decision-card depth-card ${ACTION_ACCENT[decision.action]} ${featured && decision.action === 'BET' ? 'decision-card-featured' : ''}`}>
     <div className="match-card-top"><span className="competition-label"><span className="sport-dot" />{competition}</span>
       <span className={`action-badge ${ACTION_CLASS[decision.action]}`}>{decision.action}</span>
@@ -127,15 +134,15 @@ export function DecisionCard({
         <TeamIdentity name={away} logo={decision.teamBLogo || (selectedSide === away ? decision.logo : '')} side="Away" />
       </div>
       <div className="match-metric">
-        {decision.side === 'Unavailable' ? <span className="quiet-label">Unavailable</span> : <ConfidenceArc value={decision.confidence} action={decision.action} label={decision.sport === 'nfl' ? 'scenario share' : 'rule confidence'} />}
-        <span>{decision.sport === 'nfl' ? 'Scenario share' : 'Rule confidence'}</span>
+        {unavailable ? <span className="quiet-label">Unavailable</span> : <ConfidenceArc value={metricValue} action={decision.action} label={metricLabel.toLowerCase()} />}
+        <span>{metricLabel}</span>
       </div>
     </div>
     {decision.dataFreshness?.warning && <p className="freshness-note" role="status">{decision.dataFreshness.warning}</p>}
-    <div className="match-lean"><span>{decision.sport === 'nfl' ? 'Scenario lean' : 'Model lean'}</span><h2>{selectedSide}</h2><DataBadge label={decision.data} /></div>
-    <p className="match-reason">{decision.reason}</p>
-    {decision.sport !== 'nfl' && decision.side !== 'Unavailable' && decision.winProbability != null && <p className="match-market">Outcome probability: {decision.winProbability.toFixed(1)}% <span>· Separate from rule confidence</span></p>}
-    {decision.market && <p className="match-market">Moneyline {decision.market.home_decimal?.toFixed(2)} / {decision.market.away_decimal?.toFixed(2)} <span>· {decision.market.bookmaker}</span></p>}
+    {nba && unavailable ? null : <div className="match-lean"><span>{decision.sport === 'nfl' ? 'Scenario lean' : nba ? 'Pick' : 'Model lean'}</span><h2>{selectedSide}</h2><DataBadge label={decision.data} /></div>}
+    {unavailable && <p className="match-reason">{decision.reason}</p>}
+    {!nba && decision.sport !== 'nfl' && !unavailable && decision.winProbability != null && <p className="match-market">Win chance {decision.winProbability.toFixed(0)}%</p>}
+    {market && <p className="match-market">{spread && <>{spread} · </>}Moneyline {market.home_decimal?.toFixed(2) ?? '—'} / {market.away_decimal?.toFixed(2) ?? '—'} <span>· {market.bookmaker}</span></p>}
     <div className="match-card-footer">
       {decision.matchDate ? <MatchDateChip date={decision.matchDate} /> : <span className="kickoff-pending">Kickoff to be confirmed</span>}
       {onAnalyze && <button type="button" onClick={() => onAnalyze(decision)} className="btn-analyze">Analyze Matchup <ArrowUpRight size={15} /></button>}
@@ -153,20 +160,13 @@ export function TeamIdentity({ name, logo, side }: { name: string; logo?: string
 /* ── Plan strip ─────────────────────────────────────────── */
 
 export function PlanStrip({ bet, consider, skip, loading = false }: { bet: number; consider: number; skip: number; loading?: boolean }) {
-  return (
-    <section className="plan-strip" aria-label="Slate overview">
-      <div className="plan-stat plan-stat-total"><span className="plan-icon"><Layers3 size={17} /></span><div><span className="plan-stat-label">ON THE SLATE</span><span className="plan-stat-num">{loading ? '—' : bet + consider + skip}<small>matchups</small></span></div></div>
-      <div className="plan-stat">
-        <span className="plan-icon plan-bet"><Target size={17} /></span><div><span className="plan-stat-label">BET</span><span className="plan-stat-num">{loading ? '—' : bet}<small>Meets decision rules</small></span></div>
-      </div>
-      <div className="plan-stat">
-        <span className="plan-icon plan-consider"><Eye size={17} /></span><div><span className="plan-stat-label">CONSIDER</span><span className="plan-stat-num">{loading ? '—' : consider}<small>Take a closer look</small></span></div>
-      </div>
-      <div className="plan-stat">
-        <span className="plan-icon"><Pause size={17} /></span><div><span className="plan-stat-label">SKIP</span><span className="plan-stat-num">{loading ? '—' : skip}<small>Outside current rules</small></span></div>
-      </div>
-    </section>
-  );
+  const value = (n: number) => <span className="plan-stat-num">{loading ? '—' : n}</span>;
+  return <p className="plan-line" aria-label="Slate overview">
+    <span>{value(bet + consider + skip)} games</span>
+    <span className="plan-bet">{value(bet)} bet</span>
+    <span className="plan-consider">{value(consider)} consider</span>
+    <span>{value(skip)} skip</span>
+  </p>;
 }
 
 /* ── Date tabs ──────────────────────────────────────────── */

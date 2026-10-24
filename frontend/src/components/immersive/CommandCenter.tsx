@@ -1,10 +1,11 @@
-import { ArrowRight, ArrowUpRight, CircleDot, Orbit } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import type { CSSProperties, ReactNode, PointerEvent } from 'react';
-import { calendarFormat, navigate } from '../../navigation';
+import { navigate } from '../../navigation';
 import { decisionAt } from '../../decisionLifecycle';
 import { useNow } from '../../hooks/useNow';
 import type { Decision } from '../DecisionCard';
-import SportsArena, { type ArenaSport } from './SportsArena';
+import type { ArenaSport } from './SportsArena';
+import PredictionField from './PredictionField';
 
 const SPORT_LABELS = { nfl: 'NFL', nba: 'NBA', soccer: 'Soccer' };
 
@@ -33,27 +34,13 @@ export function AnimatedIndicator({ label, value, share, tone = 'emerald' }: { l
   </div>;
 }
 
-export function MatchupStage({ sport, decision: raw, onSelect, label = 'FEATURED MATCHUP' }: {
-  sport: ArenaSport; decision?: Decision | null; onSelect?: (decision: Decision) => void; label?: string;
+export function MatchupStage({ sport, decision: raw, onSelect, primary = false }: {
+  sport: ArenaSport; decision?: Decision | null; onSelect?: (decision: Decision) => void; primary?: boolean;
 }) {
   const now = useNow();
   const decision = raw ? decisionAt(raw, now) : null;
-  const measure = sport === 'nfl' ? decision?.scenarioShare : decision?.winProbability;
-  const observed = decision?.dataFreshness?.observed_at;
-  return <section className={`matchup-stage stage-${sport}`} aria-label={`${SPORT_LABELS[sport]} matchup arena`}>
-    <div className="stage-heading"><span><i className="signal-dot" />{SPORT_LABELS[sport]} <span> / </span>{label}</span>
-      <span>{decision?.matchDate ? `${calendarFormat(decision.matchDate, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET` : 'Schedule & availability'}</span></div>
-    <div className="stage-scene"><SportsArena sport={sport} />
-      {decision && <div className="floating-matchup"><div className="floating-team floating-home">{decision.teamALogo && <img src={decision.teamALogo} alt="" />}<small>HOME</small><h2>{decision.teamA}</h2></div>
-        <span className="stage-versus">VS</span><div className="floating-team floating-away">{decision.teamBLogo && <img src={decision.teamBLogo} alt="" />}<small>AWAY</small><h2>{decision.teamB}</h2></div></div>}
-    </div>
-    <div className="stage-bottom"><div className="stage-summary"><Orbit size={18} /><div><strong>{decision ? decision.side === 'Unavailable' ? 'The matchup, beyond a prediction.' : decision.side : 'Every matchup has a story.'}</strong>
-      <p>{decision?.reason || 'Explore available schedules. Estimates appear only when the required source data supports them.'}</p></div></div>
-      {decision && <AnimatedIndicator label={sport === 'nfl' ? 'Experimental scenario share' : 'Outcome probability'} value={measure == null || decision.side === 'Unavailable' ? 'Unavailable' : `${measure.toFixed(1)}%`} share={measure == null ? undefined : measure / 100} tone={sport === 'nfl' ? 'blue' : 'emerald'} />}
-      {decision && onSelect && <button className="stage-action" onClick={() => onSelect(decision)}>Explore matchup<ArrowUpRight size={17} /></button>}
-    </div>
-    <p className="stage-source"><CircleDot size={11} />{observed ? `Source observed ${calendarFormat(observed, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET` : 'Source observation time unavailable'}<span>{sport === 'nfl' ? 'Descriptive scenarios · not calibrated win probabilities' : 'Probabilities & confidence retain their existing method'}</span></p>
-  </section>;
+  if (!decision) return null;
+  return <PredictionField sport={sport} decision={decision} primary={primary} onSelect={onSelect} />;
 }
 
 export function CoverageVisual({ groups }: { groups: { name: string; count: number; loading: boolean }[] }) {

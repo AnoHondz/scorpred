@@ -47,7 +47,8 @@ try {
       await step(sport.toLowerCase(), () => nav().getByRole('button', { name: sport, exact: true }).click(),
         () => expect(page.locator('.decision-card').first()).toBeVisible({ timeout: 55000 }));
       await step(`${sport.toLowerCase()}-analysis`, () => page.getByRole('button', { name: /Analyze Match/ }).first().click(), async () => {
-        await expect(page.getByRole('heading', { name: 'Game outlook', exact: true })).toBeVisible({ timeout: 55000 });
+        await expect(page.getByLabel('Match prediction', { exact: true })).toBeVisible({ timeout: 55000 });
+        await page.getByText('Score forecast & analysis', { exact: true }).click();
         await expect(page.getByRole('status').filter({ hasText: /Loading recent scoring/ })).toHaveCount(0, { timeout: 55000 });
         await expect(page.getByRole('status').filter({ hasText: /Loading scoring/ })).toHaveCount(0, { timeout: 55000 });
         await expect(page.getByText('Computing scoreline distribution…', { exact: true })).toHaveCount(0, { timeout: 55000 });
@@ -58,7 +59,7 @@ try {
       () => expect(page.getByRole('heading', { name: 'Insights & model performance.' })).toBeVisible());
     await step('refresh-control', () => page.getByRole('button', { name: 'Refresh data', exact: true }).click(),
       () => expect(page.getByRole('button', { name: 'Refresh data', exact: true })).toBeEnabled({ timeout: 55000 }));
-    await step('refresh', () => page.reload(), () => expect(page.locator('.topbar h1')).toHaveText('Insights'));
+    await step('refresh', () => page.reload(), () => expect(page.locator('.topbar-title')).toHaveText('Insights'));
     report.journeys.push(journey);
     await context.close();
   }

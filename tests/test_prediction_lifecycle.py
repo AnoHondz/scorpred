@@ -83,7 +83,7 @@ def test_insights_keep_nfl_scenarios_out_of_rule_confidence(monkeypatch):
     assert payload["radarGroups"]["nfl"][0]["confidence"] == 100
     assert payload["radarGroups"]["nfl"][0]["scenarioShare"] == 100
     assert payload["radarGroups"]["nfl"][0]["winProbability"] is None
-    assert payload["confidenceGroups"]["Top rule confidence"] == 2
+    assert payload["confidenceGroups"]["Favourite at 66%+"] == 2
 
 
 def test_soccer_calendar_and_links_use_eastern_day(monkeypatch):

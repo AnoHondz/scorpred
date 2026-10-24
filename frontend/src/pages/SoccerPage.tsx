@@ -2,11 +2,11 @@ import { navigate, useLocation, localToday } from '../navigation';
 import RequestError from '../components/RequestError';
 import { useFetch } from '../hooks/useFetch';
 import { useNow } from '../hooks/useNow';
+import { useSourceRefresh } from '../hooks/useSourceRefresh';
 import { decisionAt } from '../decisionLifecycle';
 import { slatePlan } from '../slate';
 import { CardSkeleton, DateTabs, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
 import DataStatus from '../components/DataStatus';
-import { MatchupStage } from '../components/immersive/CommandCenter';
 
 interface SoccerData {
   slate: Decision[];
@@ -16,6 +16,7 @@ interface SoccerData {
   selectedDate?: string;
   error?: string | null;
   last_updated?: string | null;
+  refresh_pending?: boolean;
 }
 
 interface League {
@@ -48,7 +49,11 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
   const leagueData = useFetch<{ leagues: League[] }>('/api/leagues');
   const leagues = leagueData.data?.leagues ?? [];
   const url = `/api/dashboard/soccer?league_id=${selectedLeagueId}&date=${requestedDate}`;
-  const { data, loading, error, retry } = useFetch<SoccerData>(url);
+  const { data, loading, error, retry, status } = useFetch<SoccerData>(url);
+  const deadlines = (data?.slate ?? []).filter(game => Date.parse(game.matchDate || '') > now)
+    .map(game => Date.parse(game.dataFreshness?.expires_at || '')).filter(Number.isFinite);
+  const refreshing = data?.refresh_pending || (status === 503 && error?.includes('still refreshing'));
+  useSourceRefresh(refreshing ? 0 : deadlines.length ? Math.min(...deadlines) : null, retry);
   const availableDates = data?.availableDates ?? [];
   const selectedDate = requestedDate || data?.selectedDate || todayISO();
   const setSelectedDate = (date: string) => navigate(`/soccer?league_id=${selectedLeagueId}&date=${date}`);
@@ -71,16 +76,15 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
         </p>
         <h1 className="page-title">Soccer Predictions</h1>
         <p className="mt-3 max-w-xl text-slate-400 text-sm leading-relaxed">
-          Browse confirmed fixtures, compare matchup context, and review available estimates.
+          Fixtures, win chances and the matches worth a closer look.
         </p>
       </section>
-
-      <MatchupStage sport="soccer" decision={slate[0]} onSelect={onSelectMatch} label="THE MATCHDAY PERSPECTIVE" />
 
       {/* League switcher */}
       {leagueData.error && <RequestError message={leagueData.error} onRetry={leagueData.retry} />}
       {error && <RequestError message={error} onRetry={retry} />}
       {data?.error && <RequestError message={data.error} onRetry={retry} />}
+      {data?.refresh_pending && <p className="coverage-note" role="status">Match forecasts are refreshing. This view will update automatically.</p>}
       {leagues.length > 0 && (
         <div className="league-scroll">
           {leagues.map((lg) => (

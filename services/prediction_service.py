@@ -5,11 +5,13 @@ import hashlib
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from typing import Any
 
 from services import cache_service
 from services.data_freshness import worst
-from services.prediction_lifecycle import calendar_date, sanitize_decision, unavailable_reason
+from services.input_contracts import three_way_probabilities
+from services.prediction_lifecycle import calendar_date, freshness_state, sanitize_decision, unavailable_reason
 
 _logger = logging.getLogger(__name__)
 
@@ -26,6 +28,17 @@ def configure(**deps: Callable[..., Any]) -> None:
     _deps.update(deps)
 
 
+def analysis_needs_refresh(result, fixture):
+    """Recompute an expired analysis only from a genuinely refreshed pregame fixture."""
+    if not fixture:
+        return False
+    info = fixture.get("fixture") or {}
+    missing_recovered = (not three_way_probabilities(result.get("probabilities"))
+                         and three_way_probabilities((fixture.get("prediction") or {}).get("win_probabilities")))
+    return ((freshness_state(result.get("data_freshness")) != "fresh" or missing_recovered)
+            and not unavailable_reason(info.get("date"), info.get("status"), fixture.get("data_freshness")))
+
+
 def _guard_analysis(result, match_id):
     lookup = _deps.get("get_fixture")
     fixture = lookup(str(match_id)) if lookup else None
@@ -39,7 +52,9 @@ def _guard_analysis(result, match_id):
 def get_match_analysis(match_id: str | int):
     key = cache_service.make_key("match-analysis", match_id)
     cached = cache_service.get_json(key, ttl=_MATCH_ANALYSIS_TTL)
-    if cached is not None:
+    lookup = _deps.get("get_fixture")
+    fixture = lookup(str(match_id)) if lookup else None
+    if cached is not None and not analysis_needs_refresh(cached, fixture):
         return _guard_analysis(cached, match_id)
     analyze_fn = _deps.get("analyze_match")
     if not analyze_fn:
@@ -50,16 +65,31 @@ def get_match_analysis(match_id: str | int):
     return _guard_analysis(result, match_id) if result is not None else None
 
 
+def _sources_fresh(payload) -> bool:
+    try:
+        fixtures = payload[0] or []
+    except (TypeError, IndexError, KeyError):
+        return False
+    return all(not f.get("data_freshness") or freshness_state(f["data_freshness"]) == "fresh" for f in fixtures)
+
+
 def get_fixture_cards(league_id: int, *, selected_date: str | None = None):
     # Use a separate namespace from load_fixtures_cached to avoid cache shape collisions.
-    raw_key = cache_service.make_key("fixtures_raw", league_id)
+    load_date = (selected_date or calendar_date(datetime.now(UTC))) if selected_date is not None else None
+    dated_loader = _deps.get("load_fixtures_for_date") if load_date else None
+    raw_key = (cache_service.make_key("fixtures_raw_day_v1", league_id, load_date) if dated_loader
+               else cache_service.make_key("fixtures_raw", league_id))
     payload = cache_service.get_json(raw_key, ttl=_FIXTURE_CARD_TTL)
+    if payload is not None and not _sources_fresh(payload):
+        # The cache's TTL counts from when it was written, but fixture freshness counts from when the
+        # provider was observed; a payload that has expired would publish every card as unavailable.
+        payload = None
     if payload is None:
         load_fn = _deps.get("load_fixtures")
         if not load_fn:
             return [], None, "Unavailable", "", ""
         try:
-            payload = load_fn(league_id)
+            payload = dated_loader(league_id, load_date) if dated_loader else load_fn(league_id)
         except Exception:
             _logger.warning("load_fixtures failed for league_id=%s", league_id, exc_info=True)
             payload = ([], "Fixture loader unavailable", "degraded", "")

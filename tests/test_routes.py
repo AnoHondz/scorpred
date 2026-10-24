@@ -512,7 +512,7 @@ class TestPredictionRoute:
         assert b"Trust Check" in rv.data
         assert b"Limited Data" in rv.data
 
-    def test_prediction_tracks_selected_fixture_date(self, client):
+    def test_prediction_page_does_not_track_its_engine(self, client):
         kickoff = (datetime.now(UTC) + timedelta(days=1)).isoformat()
         flask_app_module._FIXTURE_INDEX["stage1-tracking"] = {
             "fixture": {"id": "stage1-tracking", "date": kickoff, "status": {"short": "NS"}},
@@ -540,8 +540,8 @@ class TestPredictionRoute:
             rv = client.get("/prediction")
 
         assert rv.status_code == 200
-        assert mock_save.call_count == 1
-        assert mock_save.call_args.kwargs["game_date"] == kickoff
+        # This page runs a different engine from the published one, so it never writes the track record.
+        mock_save.assert_not_called()
 
 
 class TestNbaPredictionRoute:
@@ -766,8 +766,7 @@ class TestNbaPredictionRoute:
         assert b"Lakers" in rv.data
         assert b"Trust Check" in rv.data
         assert b"Data Confidence" not in rv.data
-        assert mock_save.call_count == 1
-        assert mock_save.call_args.kwargs["game_date"] == upcoming["date"]["start"]
+        mock_save.assert_not_called()
 
     def test_nba_index_never_renders_no_confidence_phrase(self, client):
         game = _mock_nba_game(date="2026-04-21")

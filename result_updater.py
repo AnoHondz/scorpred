@@ -7,7 +7,7 @@ in the tracking file to mark them correct or incorrect.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import api_client as ac
@@ -324,7 +324,19 @@ def fetch_nba_result(
     return None
 
 
-def update_pending_predictions() -> dict[str, Any]:
+# A game is worth checking for a result this long after kickoff.
+RESULT_DELAY = timedelta(minutes=110)
+
+
+def _started(pred: dict, now: datetime) -> bool:
+    kickoff = mt._aware_datetime(pred.get("kickoff_at"))
+    if kickoff is not None:
+        return kickoff + RESULT_DELAY <= now
+    day = str(pred.get("game_date") or pred.get("date") or "")[:10]
+    return bool(day) and day < now.date().isoformat()
+
+
+def update_pending_predictions(started_only: bool = False) -> dict[str, Any]:
     """
     Go through all pending predictions and try to fetch their actual results.
     
@@ -350,6 +362,9 @@ def update_pending_predictions() -> dict[str, Any]:
     
     # Filter to pending predictions only (status != completed)
     pending = [p for p in predictions if p.get("status") != "completed"]
+    if started_only:
+        now = datetime.now(timezone.utc)
+        pending = [p for p in pending if _started(p, now)]
     
     stats = {
         "checked": len(pending),

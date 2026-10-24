@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import BestProps from '../components/BestProps';
 import { ArrowLeft, ArrowRight, CalendarDays, Layers3 } from 'lucide-react';
 import { useFetch } from '../hooks/useFetch';
 import { CardSkeleton, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
@@ -31,8 +32,8 @@ export default function HomePage({ onSelectMatch }: { onSelectMatch: (d: Decisio
   const nba = useFetch<SportData>(`/api/dashboard/nba${suffix}`);
   const nfl = useFetch<SportData>(`/api/dashboard/nfl${suffix}`);
   const groups = [
-    { name: 'Soccer', result: soccer, measure: 'Rule confidence', path: '/soccer' },
-    { name: 'NBA', result: nba, measure: 'Rule confidence', path: '/nba' },
+    { name: 'Soccer', result: soccer, measure: 'Model win probability', path: '/soccer' },
+    { name: 'NBA', result: nba, measure: 'Model win probability', path: '/nba' },
     { name: 'NFL', result: nfl, measure: 'Scoring scenario share', path: '/nfl' },
   ].filter(group => sport === 'All' || sport === group.name).map(group => ({
     ...group,
@@ -75,7 +76,8 @@ export default function HomePage({ onSelectMatch }: { onSelectMatch: (d: Decisio
         <CoverageVisual groups={groups.map(group => ({ name: group.name, count: group.cards.length, loading: group.result.loading || Boolean(group.result.error) }))} />
       </aside>
     </div>
-    {(sport === 'All' || sport === 'NFL') && <p className="coverage-note"><span className="note-dot" />NFL scenarios are experimental. Scenario shares are not calibrated win probabilities or comparable to rule confidence.</p>}
+    <BestProps date={date} />
+    {(sport === 'All' || sport === 'NFL') && <p className="coverage-note"><span className="note-dot" />NFL scenarios are experimental. Scenario shares are not calibrated win probabilities and cannot be compared with the soccer and NBA numbers.</p>}
     {groups.map(group => <section key={group.name} className="section sport-section" aria-label={`${group.name} shortlist`}>
       <div className="section-heading-row"><div className="sport-section-heading"><span className={`sport-monogram sport-${group.name.toLowerCase()}`}>{group.name === 'Soccer' ? 'SC' : group.name}</span>
         <div><h2 className="section-title">{group.name}<span className="count-tag">{group.result.loading ? '—' : group.cards.length}</span></h2><p className="quiet-label">{group.measure}{group.name === 'NFL' ? ' · Experimental' : ''}{group.result.data?.selectedDate && group.result.data.selectedDate !== date ? ` · ${calendarFormat(`${group.result.data.selectedDate}T12:00:00Z`, { month: 'short', day: 'numeric' })}` : ''}</p></div></div>

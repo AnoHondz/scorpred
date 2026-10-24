@@ -49,13 +49,21 @@ def test_results_do_not_generate_predictions_for_completed_untracked_games():
 
 
 def test_nba_scoreline_with_team_ids_uses_the_distribution_service(monkeypatch):
-    monkeypatch.setattr(nba_routes.nc, "get_standings", dict)
-    monkeypatch.setattr(nba_routes.nc, "get_team_season_stats", lambda team: {"ppg": 110, "opp_ppg": 108})
-    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form", lambda *a, **kw: [])
-    monkeypatch.setattr(nba_routes.nc, "get_team_injuries", lambda team: [])
+    from datetime import UTC, datetime, timedelta
+    start = datetime.now(UTC) - timedelta(days=3)
+    games = [{"id": f"g{i}", "season_type": 2, "date": {"start": (start - timedelta(days=2 * i)).isoformat()},
+              "status": {"state": "post", "completed": True},
+              "teams": {"home": {"id": "1"}, "visitors": {"id": "2"}} if i % 2 else {"home": {"id": "2"}, "visitors": {"id": "1"}},
+              "scores": {"home": {"points": 112 + i % 5}, "visitors": {"points": 108}}} for i in range(12)]
+    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form_context", lambda *a, **kw: {"current_games": games})
+    monkeypatch.setattr(nba_routes.nc, "get_team_season_games", lambda *a, **kw: [])
+    monkeypatch.setattr(nba_routes, "_nba_player_pools", lambda *a: (None, None))
     response = module.app.test_client().get("/api/scoreline/nba?team_a_id=1&team_b_id=2")
     assert response.status_code == 200
-    assert response.json["result"]["sport"] == "nba"
+    result = response.json["result"]
+    assert result["sport"] == "nba" and result["model"] == "nba-game-projection-v1"
+    assert result["projected_score"]["home"] + result["projected_score"]["away"] == pytest.approx(result["projected_score"]["total"], abs=0.11)
+    assert result["players"] == {"home": None, "away": None} and result["matchups"] is None
 
 
 def test_spa_build_preserves_api_and_static_boundaries(monkeypatch, tmp_path):

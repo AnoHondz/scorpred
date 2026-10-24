@@ -52,9 +52,9 @@ export default function InsightsPage({ onSelectMatch }: { onSelectMatch: (decisi
   const volatilityRows = (data?.volatilityRows ?? []).filter(row => radarCards.some(card => card.matchup === row.matchup && card.action !== 'SKIP'));
   const plan = slatePlan(slate);
   const confidenceGroups = {
-    'Top rule confidence': ruleCards.filter(card => card.confidence >= 66).length,
-    'Mid rule confidence': ruleCards.filter(card => card.confidence >= 55 && card.confidence < 66).length,
-    'Low rule confidence': ruleCards.filter(card => card.confidence < 55).length,
+    'Favourite at 66%+': ruleCards.filter(card => card.confidence >= 66).length,
+    'Favourite at 55-65%': ruleCards.filter(card => card.confidence >= 55 && card.confidence < 66).length,
+    'Favourite below 55%': ruleCards.filter(card => card.confidence < 55).length,
   };
 
   return (
@@ -67,7 +67,7 @@ export default function InsightsPage({ onSelectMatch }: { onSelectMatch: (decisi
         </p>
       </section>
 
-      {view === 'slate' && <MatchupStage sport={slate[0]?.sport || 'nfl'} decision={slate[0]} onSelect={onSelectMatch} label="SIGNALS & PERSPECTIVE" />}
+      {view === 'slate' && <MatchupStage sport={slate[0]?.sport || 'nfl'} decision={slate[0]} onSelect={onSelectMatch} />}
 
       <div className="dashboard-controls">
         <div className="sport-filter" aria-label="Insights sport filter">
@@ -102,7 +102,7 @@ export default function InsightsPage({ onSelectMatch }: { onSelectMatch: (decisi
         <div>
           <p className="section-label">Reads by sport</p>
           <h2 className="section-title">Compare each sport within its own measure.</h2>
-          <p className="text-sm text-slate-400">NFL scenario share describes simulated scoring scenarios; it is not a calibrated win probability or comparable to rule confidence.</p>
+          <p className="text-sm text-slate-400">NFL scenario share describes simulated scoring scenarios; it is not a calibrated win probability and cannot be compared with the soccer and NBA win probabilities.</p>
         </div>
         {loading ? (
           <div className="empty-state">

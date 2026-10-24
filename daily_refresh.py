@@ -105,8 +105,10 @@ def step_update_results(dry_run: bool = False) -> dict:
 
 
 def step_learn_from_mistakes(dry_run: bool = False) -> dict:
-    """Analyse past prediction errors and save bounded adjustments.
+    """Learn from graded picks: the validated recalibration of published probabilities.
 
+    services.recalibration switches a correction on only when it improves held-out picks.
+    The older mistake report (it adjusts the legacy ScorMastermind pages only) still runs.
     Requires cache/prediction_tracking.json to have graded predictions.
     Skipped gracefully when the tracking file is absent (CI environments).
     """
@@ -122,6 +124,12 @@ def step_learn_from_mistakes(dry_run: bool = False) -> dict:
     try:
         import model_tracker as mt
         import mistake_analysis as ma
+
+        if not dry_run:
+            from services import recalibration
+            learned = recalibration.learn_all()
+            result["details"]["recalibration"] = {sport: {k: record.get(k) for k in ("active", "picks", "reason")}
+                                                  for sport, record in learned.items()}
 
         completed = mt.get_completed_predictions(limit=500)
         if not completed:

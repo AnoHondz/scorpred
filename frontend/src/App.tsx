@@ -4,6 +4,7 @@ import { lazy, Suspense } from 'react';
 import RequestError from './components/RequestError';
 import { CardSkeleton, type Decision } from './components/DecisionCard';
 import { useFetch } from './hooks/useFetch';
+import { useSourceRefresh } from './hooks/useSourceRefresh';
 import { calendarDate, navigate, useLocation } from './navigation';
 
 const SoccerPage = lazy(() => import('./pages/SoccerPage'));
@@ -18,11 +19,16 @@ const paths: Record<DashPage, string> = { Dashboard: '/', Soccer: '/soccer', NBA
 function MatchRoute({ search }: { search: string }) {
   const params = new URLSearchParams(search);
   const id = params.get('match_id');
-  const { data, loading, error, retry } = useFetch<{ decision: Decision }>(id ? `/api/matches/${encodeURIComponent(id)}?${params}` : null);
+  const { data, loading, error, retry, status } = useFetch<{ decision: Decision; warnings?: string[]; refresh_pending?: boolean }>(id ? `/api/matches/${encodeURIComponent(id)}?${params}` : null);
+  const sourceExpiry = data?.decision?.dataFreshness?.expires_at;
+  const refreshing = params.get('sport') === 'soccer' && (data?.refresh_pending || (status === 503 && error?.includes('still refreshing')));
+  useSourceRefresh(refreshing ? 0 : ['nba', 'soccer'].includes(params.get('sport') || '') && sourceExpiry ? Date.parse(sourceExpiry) : null, retry,
+    data?.decision?.matchDate ? Date.parse(data.decision.matchDate) : undefined);
   if (id && loading) return <CardSkeleton />;
   if (error) return <RequestError message={error} onRetry={retry} />;
   const decision = data?.decision ?? null;
-  return <MatchAnalysisPage decision={decision} sport={decision?.sport} teamAId={decision?.homeId} teamBId={decision?.awayId} leagueId={decision?.leagueId} />;
+  return <>{data?.warnings?.map(warning => <p className="coverage-note" role="status" key={warning}>{warning}</p>)}
+    <MatchAnalysisPage decision={decision} sport={decision?.sport} teamAId={decision?.homeId} teamBId={decision?.awayId} leagueId={decision?.leagueId} /></>;
 }
 
 export default function App() {

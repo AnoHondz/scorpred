@@ -78,33 +78,33 @@ def test_nba_form_uses_team_identity_across_string_and_integer_ids():
     assert nba_predictor.extract_recent_form(games, 3) == []
 
 
+def _nba_games(count, *, season_type=2):
+    start = datetime.now(UTC) - timedelta(days=3)
+    return [{"id": f"g{i}", "season_type": season_type, "date": {"start": (start - timedelta(days=2 * i)).isoformat()},
+             "status": {"state": "post", "completed": True},
+             "teams": {"home": {"id": "1"}, "visitors": {"id": "2"}},
+             "scores": {"home": {"points": 110}, "visitors": {"points": 100}}} for i in range(count)]
+
+
 def test_optional_nba_feed_failure_does_not_discard_scored_games(monkeypatch):
-    def failed():
-        raise RuntimeError("Standings down")
-    monkeypatch.setattr(nba_routes.nc, "get_standings", failed)
-    monkeypatch.setattr(nba_routes.nc, "get_team_season_stats", lambda _: {"ppg": 110, "opp_ppg": 108})
-    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form", lambda *a, **kw: [])
-    monkeypatch.setattr(nba_routes.nc, "get_team_injuries", lambda _: None)
+    def failed(*_):
+        raise RuntimeError("Player feed down")
+    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form_context", lambda *a, **kw: {"current_games": _nba_games(10)})
+    monkeypatch.setattr(nba_routes.nc, "get_team_season_games", lambda *a, **kw: [])
+    monkeypatch.setattr(nba_routes, "_nba_player_pools", failed)
     response = module.app.test_client().get("/api/scoreline/nba?team_a_id=1&team_b_id=2")
     assert response.status_code == 200
     coverage = response.json["result"]["data_completeness"]["factors"]
-    assert coverage["injuries"] is False
-    assert coverage["standings"] is False
+    assert coverage["rosters"] is False and coverage["current_season"] is True
 
 
-def test_nba_preseason_form_does_not_claim_regular_season_research_validation(monkeypatch):
-    games = [{"id": str(i), "date": {"start": f"2026-10-0{i + 1}T00:00Z"}, "status": {"state": "post"}, "season_type": 1,
-              "teams": {"home": {"id": 1}, "visitors": {"id": 2}},
-              "scores": {"home": {"points": 110}, "visitors": {"points": 100}}} for i in range(4)]
-    monkeypatch.setattr(nba_routes.nc, "get_standings", dict)
-    monkeypatch.setattr(nba_routes.nc, "get_team_season_stats", lambda _: {"ppg": 110, "opp_ppg": 108})
-    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form", lambda *a, **kw: games)
-    monkeypatch.setattr(nba_routes.nc, "get_team_injuries", lambda _: [])
-    monkeypatch.setattr(research, "project", lambda *a, **kw: {"available": True})
+def test_nba_preseason_games_never_feed_the_scoreline(monkeypatch):
+    monkeypatch.setattr(nba_routes.nc, "get_team_recent_form_context", lambda *a, **kw: {"current_games": _nba_games(6, season_type=1)})
+    monkeypatch.setattr(nba_routes.nc, "get_team_season_games", lambda *a, **kw: [])
+    monkeypatch.setattr(nba_routes, "_nba_player_pools", lambda *a: (None, None))
     response = module.app.test_client().get("/api/scoreline/nba?team_a_id=1&team_b_id=2")
-    assert response.status_code == 200
-    assert response.json["result"]["research"]["available"] is False
-    assert "preseason" in response.json["result"]["research"]["reason"]
+    assert response.status_code == 422
+    assert "this season or last" in response.json["message"]
 
 
 def test_synthetic_training_inference_parity_integrity_and_time_boundaries(tmp_path, monkeypatch):

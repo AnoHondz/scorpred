@@ -60,7 +60,7 @@ from services import prediction_service
 from services import validators
 from services import decision_store
 from services.data_freshness import from_records, worst
-from services.prediction_lifecycle import calendar_date, freshness_state, is_pregame, sanitize_decision, unavailable_reason
+from services.prediction_lifecycle import calendar_date, freshness_state, is_pregame, parse_kickoff, sanitize_decision, unavailable_reason
 from services.decision_engine import DecisionEngine
 from services.match_brain import MatchBrain
 from db_models import db, migrate_schema
@@ -486,11 +486,8 @@ def _extract_totals_leg(prediction: dict) -> dict | None:
             m = str(opt.get("market") or "").lower()
             if "over/under" in m or "o/u" in m:
                 pick = opt.get("lean") or opt.get("pick")
-                try:
-                    line = float(opt.get("line") or opt.get("value") or 0)
-                except Exception:
-                    _logger.debug("Failed to parse totals line value from optional pick: %r", opt, exc_info=True)
-                    line = None
+                # The rules engine names the line in the market ("Goals Over/Under 2.5"); never default it to 0.
+                line = mt.parse_totals_line(opt.get("line") or opt.get("value"), opt.get("market"))
                 market = opt.get("market")
                 break
     result = {}
@@ -2180,6 +2177,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         except Exception:
             _logger.warning("Soccer prediction engine failed for %s vs %s during tracking", home_name, away_name, exc_info=True)
             continue
+        prediction = evidence_services._with_ratings_model(ac, league_id, prediction, home_name, away_name, _logger)
 
         best_pick = prediction.get("best_pick", {})
         pred_winner = best_pick.get("prediction", "")
@@ -2187,6 +2185,7 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         conf = best_pick.get("confidence", "Low")
         game_key = mt._get_game_key("soccer", fixture_date, home_name, away_name, league_id)
         existing = game_key in existing_keys
+        quote = odds_fetcher.fetch_match_odds("soccer", home_name, away_name, kickoff=kickoff, league_id=league_id)
 
         try:
             mt.save_prediction(
@@ -2209,6 +2208,9 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                 totals_line=((_extract_totals_leg(prediction) or {}).get("line")),
                 totals_market=((_extract_totals_leg(prediction) or {}).get("market")),
                 kickoff=kickoff,
+                market_odds=_quote_odds(quote),
+                predicted_score=_soccer_score_forecast(prediction),
+                raw_probs=prediction.get("raw_win_probabilities"),
             )
             predictions_generated += 1
             if existing:
@@ -2299,6 +2301,9 @@ def _bootstrap_model_tracking() -> dict[str, int]:
                     totals_line=((_extract_totals_leg(prediction) or {}).get("line")),
                     totals_market=((_extract_totals_leg(prediction) or {}).get("market")),
                     kickoff=kickoff,
+                    market_odds=prediction.get("market_odds"),
+                    predicted_score=_nba_score_forecast(prediction),
+                    raw_probs=prediction.get("raw_win_probabilities"),
                 )
                 predictions_generated += 1
                 if existing:
@@ -2333,6 +2338,14 @@ def _bootstrap_model_tracking() -> dict[str, int]:
         "updated": updated,
         "results_updated": completed_updated,
     }
+
+
+def _run_prediction_tracking() -> dict[str, Any]:
+    """Scheduled every 30 minutes: record today's and tomorrow's published picks, then grade started games."""
+    with app.app_context():
+        recorded = _bootstrap_model_tracking()
+        graded = ru.update_pending_predictions(started_only=True)
+    return {"recorded": recorded, "graded": {k: graded.get(k) for k in ("checked", "found", "updated", "failed")}}
 
 
 def _ensure_model_tracking():
@@ -2392,6 +2405,33 @@ def _soccer_unavailable_page(team_a, team_b, selected, *, template, inputs=()):
 
 
 
+def _soccer_score_forecast(prediction: dict) -> dict | None:
+    """Expected goals and most likely exact score from the ratings model, when it produced the pick."""
+    fitted = prediction.get("ratings_model") or {}
+    goals, likely = fitted.get("expected_goals") or {}, fitted.get("most_likely_score") or {}
+    if goals.get("home") is None or goals.get("away") is None:
+        return None
+    forecast = {"a": goals["home"], "b": goals["away"]}
+    if likely.get("home") is not None:
+        forecast["likely"] = {"a": likely["home"], "b": likely["away"]}
+    return forecast
+
+
+def _nba_score_forecast(prediction: dict) -> dict | None:
+    model = prediction.get("model") or {}
+    if model.get("home_score") is None or model.get("away_score") is None:
+        return None
+    return {"a": model["home_score"], "b": model["away_score"]}
+
+
+def _quote_odds(quote: dict | None) -> dict | None:
+    """Tracker price shape from an odds_fetcher quote; None when the quote is unavailable."""
+    if not (quote or {}).get("available"):
+        return None
+    return {"a": quote.get("home_odds"), "b": quote.get("away_odds"), "draw": quote.get("draw_odds"),
+            "bookmaker": quote.get("bookmaker")}
+
+
 def _load_upcoming_fixtures(
     next_n: int = 20,
     max_deep_predictions: int = 6,
@@ -2399,6 +2439,7 @@ def _load_upcoming_fixtures(
     *,
     include_injuries: bool = True,
     include_standings: bool = True,
+    selected_date: str | None = None,
 ):
     return evidence_services.load_upcoming_fixtures(
         ac,
@@ -2412,22 +2453,25 @@ def _load_upcoming_fixtures(
         max_deep_predictions=max_deep_predictions,
         include_injuries=include_injuries,
         include_standings=include_standings,
+        selected_date=selected_date,
     )
 
 
-def load_fixtures_cached(league_id: int):
+def load_fixtures_cached(league_id: int, *, selected_date: str | None = None):
     def fresh(data):
         return bool(data) and all(not f.get("data_freshness") or freshness_state(f["data_freshness"]) == "fresh" for f in data[0] or [])
-    redis_key = cache_service.make_key("fixtures", league_id)
+    redis_key = (cache_service.make_key("fixtures-day-v1", league_id, selected_date) if selected_date
+                 else cache_service.make_key("fixtures", league_id))
+    local_key = (league_id, selected_date) if selected_date else league_id
     redis_cached = cache_service.get_json(redis_key)
     if redis_cached is not None and fresh(redis_cached):
         _logger.debug("fixture_cache hit(redis) league_id=%s", league_id)
         data = tuple(redis_cached)
         _restore_fixture_index(data[0])
         return data
-    if league_id in _local_fixture_cache and fresh(_local_fixture_cache[league_id]):
+    if local_key in _local_fixture_cache and fresh(_local_fixture_cache[local_key]):
         _logger.debug("fixture_cache hit league_id=%s", league_id)
-        data = _local_fixture_cache[league_id]
+        data = _local_fixture_cache[local_key]
         _restore_fixture_index(data[0])
         return data
     _logger.debug("fixture_cache miss league_id=%s", league_id)
@@ -2437,6 +2481,7 @@ def load_fixtures_cached(league_id: int):
         league=league_id,
         include_injuries=False,
         include_standings=True,
+        selected_date=selected_date,
     )
     fixtures = (data or ([], None, _football_data_source(), ""))[0]
     load_error = (data or ([], None, _football_data_source(), ""))[1]
@@ -2450,7 +2495,7 @@ def load_fixtures_cached(league_id: int):
         data = (fixtures, load_error, data[2], health)
     _restore_fixture_index(fixtures)
     if fixtures and not load_error:
-        _local_fixture_cache[league_id] = data
+        _local_fixture_cache[local_key] = data
         cache_service.set_json(redis_key, list(data), ttl=120)
     return data
 
@@ -2479,6 +2524,7 @@ def _analysis_from_fixture(fixture: dict[str, Any]) -> dict[str, Any] | None:
         "status": canonical.get("status", "scheduled"),
         "data_freshness": canonical.get("data_freshness") or fixture.get("data_freshness") or {},
         "prediction": pred_block,
+        "model_source": canonical.get("model_source"),
         "recommended_side": canonical.get("recommended_side"),
         "action": canonical.get("action", "SKIP"),
         "confidence": canonical.get("confidence", 0),
@@ -2584,10 +2630,10 @@ def cached_analyze_match(match_id: str | int):
         return sanitize_decision(result)
     redis_key = cache_service.make_key("match-analysis", key)
     redis_cached = cache_service.get_json(redis_key)
-    if redis_cached is not None:
+    if redis_cached is not None and not prediction_service.analysis_needs_refresh(redis_cached, _FIXTURE_INDEX.get(key)):
         _logger.debug("match_analysis_cache hit(redis) match_id=%s", key)
         return guard(redis_cached)
-    if key in _local_match_analysis_cache:
+    if key in _local_match_analysis_cache and not prediction_service.analysis_needs_refresh(_local_match_analysis_cache[key], _FIXTURE_INDEX.get(key)):
         _logger.debug("match_analysis_cache hit match_id=%s", key)
         return guard(_local_match_analysis_cache[key])
     _logger.debug("match_analysis_cache miss match_id=%s", key)
@@ -2713,6 +2759,7 @@ prediction_service.configure(
     get_fixture=_fixture_by_id,
     analyze_match=analyze_match,
     load_fixtures=load_fixtures_cached,
+    load_fixtures_for_date=lambda league_id, day: load_fixtures_cached(league_id, selected_date=day),
     card_from_fixture=_soccer_card_from_fixture_analysis,
     top_opportunities=lambda cards, limit: dui.top_opportunities(cards, limit=limit),
     plan_summary=dui.plan_summary,
@@ -2753,7 +2800,8 @@ def start_background_services():
         return
     if _pipeline_scheduler is None:
         _pipeline_scheduler = _sched_module.start(
-            app, prediction_service, ac, nc, _pipeline_monitor, match_brain=_MATCH_BRAIN
+            app, prediction_service, ac, nc, _pipeline_monitor, match_brain=_MATCH_BRAIN,
+            track_predictions=_run_prediction_tracking, build_best_props=build_best_props,
         )
         _warm_slate_cache()
 
@@ -4506,7 +4554,8 @@ def matchup():
     blocked = _soccer_unavailable_page(team_a, team_b, selected_fixture, template="matchup.html", inputs=fixtures_a + fixtures_b)
     if blocked is not None:
         return blocked
-    odds_result = odds_fetcher.fetch_match_odds("soccer", team_a["name"], team_b["name"], kickoff=selected_fixture.get("date"))
+    odds_result = odds_fetcher.fetch_match_odds("soccer", team_a["name"], team_b["name"], kickoff=selected_fixture.get("date"),
+                                               league_id=LEAGUE)
     odds_ctx: dict[str, Any] | None = None
     if odds_result.get("available"):
         odds_ctx = {
@@ -4587,27 +4636,8 @@ def matchup():
     threats_a = _build_key_threats(squad_a, injuries_a_raw, fixtures_a, id_a)
     threats_b = _build_key_threats(squad_b, injuries_b_raw, fixtures_b, id_b)
 
-    # Save prediction to tracker
-    try:
-        best_pick = scorpred.get("best_pick", {})
-        mt.save_prediction(
-            sport="soccer",
-            team_a=team_a["name"],
-            team_b=team_b["name"],
-            predicted_winner=best_pick.get("tracking_team") or best_pick.get("team", ""),
-            win_probs=scorpred.get("win_probabilities", {}),
-            confidence=best_pick.get("confidence", "Low"),
-            game_date=(selected_fixture or {}).get("date") or None,
-            kickoff=(selected_fixture or {}).get("date") or None,
-            team_a_id=team_a["id"],
-            team_b_id=team_b["id"],
-            league_id=LEAGUE,
-            season=SEASON,
-            model_probability=mastermind.get("model_probability"),
-            form_a_length=len(form_a),
-        )
-    except Exception:
-        app.logger.warning("Prediction tracking failed (matchup)", exc_info=True)
+    # Not tracked: this page runs ScorMastermind, while the track record measures the engine the
+    # dashboard publishes (scheduled tracking records every published fixture).
 
     return render_template(
         "matchup.html",
@@ -5145,28 +5175,7 @@ def prediction():
         prediction["confidence_pct"] = prediction["decision_card"].get("confidence")
     mastermind["ui_prediction"] = prediction
 
-    try:
-        best_pick = prediction.get("best_pick", {})
-        pred_winner = best_pick.get("tracking_team") or best_pick.get("team", "")
-        probs = prediction.get("win_probabilities", {})
-        conf = best_pick.get("confidence", "Medium")
-        mt.save_prediction(
-            sport="soccer",
-            team_a=team_a["name"],
-            team_b=team_b["name"],
-            predicted_winner=pred_winner,
-            win_probs=probs,
-            confidence=conf,
-            game_date=(selected_fixture or {}).get("date") or None,
-            kickoff=(selected_fixture or {}).get("date") or None,
-            team_a_id=team_a["id"],
-            team_b_id=team_b["id"],
-            league_id=LEAGUE,
-            season=SEASON,
-            model_probability=mastermind.get("model_probability"),
-        )
-    except Exception:
-        app.logger.warning("Prediction tracking failed (prediction)", exc_info=True)
+    # Not tracked for the same reason as /matchup: a different engine from the published one.
 
     return render_template(
         "prediction.html",
@@ -5812,12 +5821,26 @@ def football_prefetch_competition_api():
 @user_auth.login_required
 def my_bets():
     rows = bets_service.list_bets(user_id=g.current_user["id"])
-    bets = [{"id": row["id"], "date": row["created_at"][:10], "match": row["matchup"],
-             "pick": row["recommended_side"], "pick_type": row["action"], "score": "?",
-             "result_label": "Saved", "result_class": "push", "confidence": row["confidence"]}
-            for row in rows]
-    return render_template("my_bets.html", bets=bets, won_count=0, lost_count=0,
-                           pushed_count=len(bets), win_rate=None, lost_rate=None,
+    graded = {str(p.get("fixture_id")): p for p in mt._load_predictions() if p.get("fixture_id")}
+    bets = []
+    for row in rows:
+        tracked = graded.get(str(row.get("match_id") or ""))
+        final = (tracked or {}).get("final_score") if (tracked or {}).get("status") == "completed" else None
+        label, css, score = "Pending", "push", "—"
+        if isinstance(final, dict) and final.get("a") is not None:
+            team_a, team_b = tracked.get("team_a") or "", tracked.get("team_b") or ""
+            side = mt._canonical_outcome(re.sub(r"\s+win!?$", "", str(row["recommended_side"]), flags=re.I), team_a, team_b)
+            actual = mt._actual_result_from_score(final)
+            score = f'{final["a"]}-{final["b"]}'
+            label, css = ("Won", "won") if side and side == actual else ("Lost", "lost") if side else ("Final", "push")
+        bets.append({"id": row["id"], "date": row["created_at"][:10], "match": row["matchup"],
+                     "pick": row["recommended_side"], "pick_type": row["action"], "score": score,
+                     "result_label": label, "result_class": css, "confidence": row["confidence"]})
+    won, lost = sum(b["result_class"] == "won" for b in bets), sum(b["result_class"] == "lost" for b in bets)
+    return render_template("my_bets.html", bets=bets, won_count=won, lost_count=lost,
+                           pushed_count=len(bets) - won - lost,
+                           win_rate=round(100 * won / (won + lost)) if won + lost else None,
+                           lost_rate=round(100 * lost / (won + lost)) if won + lost else None,
                            roi="N/A", total_profit="N/A", total_stake="N/A", **_page_context())
 
 
@@ -6305,6 +6328,13 @@ def api_dashboard_soccer():
             fixture_date = calendar_date((fixture.get("fixture") or {}).get("date"))
             if fixture_date:
                 by_date[fixture_date]
+        # Keep navigation dates from already observed league schedules without
+        # waiting for their unrelated analyses on a single-day request.
+        for fixture in list(_FIXTURE_INDEX.values()):
+            if (fixture.get("league") or {}).get("id") == league_id:
+                fixture_date = calendar_date((fixture.get("fixture") or {}).get("date"))
+                if fixture_date:
+                    by_date[fixture_date]
         for c in cards:
             d = calendar_date(c.get("game_date"))
             if d:
@@ -6313,7 +6343,7 @@ def api_dashboard_soccer():
         available_dates = sorted(by_date.keys())
 
         # If a future date was requested but isn't in the cached batch, fetch it directly.
-        if date_filter and date_filter not in by_date:
+        if date_filter and not by_date.get(date_filter):
             try:
                 raw_extra = ac.get_fixtures_for_date(league_id, SEASON, date_filter)
                 if raw_extra:
@@ -6343,6 +6373,7 @@ def api_dashboard_soccer():
             visible = cards  # No date info at all → return all
 
         visible = [dict(sanitize_decision(card), slate_date=date_filter) for card in visible]
+        refresh_pending = bool(load_error and "still refreshing" in load_error)
         top = dui.top_opportunities([card for card in visible if card.get("action") != "SKIP"], limit=4)
         plan = dui.plan_summary(visible)
 
@@ -6352,10 +6383,11 @@ def api_dashboard_soccer():
             "plan": {"bet": plan.get("bet", 0), "consider": plan.get("consider", 0), "skip": plan.get("skip", 0)},
             "availableDates": available_dates,
             "selectedDate": date_filter,
-            "error": load_error,
+            "error": None if refresh_pending and visible else load_error,
+            "refresh_pending": refresh_pending,
             "last_updated": from_records(visible).get("observed_at"),
             "calendarTimezone": "America/New_York",
-        }), 503 if load_error and not cards else 200
+        }), 503 if load_error and not cards and not (refresh_pending and visible) else 200
     except Exception as exc:
         app.logger.warning("api_dashboard_soccer error: %s", exc)
         return jsonify({"slate": [], "topOpportunities": [], "plan": {"bet": 0, "consider": 0, "skip": 0}, "availableDates": [], "selectedDate": "", "error": "Soccer data is temporarily unavailable."}), 503
@@ -6402,9 +6434,9 @@ def api_dashboard_insights():
         "radarGroups": {name: cards[:4] for name, cards in groups.items()},
         "scenarioCards": groups["nfl"][:4],
         "volatilityRows": [{"side": item["side"], "matchup": item["matchup"], "action": item["action"], "confidence": item["confidence"], "note": item["reason"]} for item in volatility],
-        "confidenceGroups": {"Top rule confidence": sum(item["confidence"] >= 66 for item in rule_cards),
-                             "Mid rule confidence": sum(55 <= item["confidence"] < 66 for item in rule_cards),
-                             "Low rule confidence": sum(item["confidence"] < 55 for item in rule_cards)},
+        "confidenceGroups": {"Favourite at 66%+": sum(item["confidence"] >= 66 for item in rule_cards),
+                             "Favourite at 55-65%": sum(55 <= item["confidence"] < 66 for item in rule_cards),
+                             "Favourite below 55%": sum(item["confidence"] < 55 for item in rule_cards)},
         "plan": plan, "sportFilter": sport, "warnings": errors, "last_updated": _now_stamp(),
     }), 503 if errors and not decisions else 200
 
@@ -6427,6 +6459,7 @@ def api_match_decision(match_id):
     if sport not in {"soccer", "nba", "nfl"}:
         return jsonify({"error": "Invalid sport"}), 400
     # NFL pregame estimates must expire at kickoff, even inside the card TTL.
+    refresh_pending = False
     decision = None if sport == "nfl" else decision_store.get(sport, match_id)
     if decision is None and sport == "nba":
         from services import nba_matchup_context
@@ -6443,10 +6476,20 @@ def api_match_decision(match_id):
             import nba_routes
             response = app.make_response(nba_routes.api_dashboard_nba())
         if response.status_code >= 500:
+            if sport in {"nba", "soccer"}:
+                # Retain verified team/schedule identities for descriptive
+                # analysis during an outage. Sanitization still removes every
+                # expired probability and recommendation.
+                cached = decision_store.get(sport, match_id, allow_stale=True)
+                if cached is not None:
+                    return jsonify({"decision": sanitize_decision(cached),
+                                    "warnings": ["Schedule refresh failed; showing last observed matchup details without a prediction."]})
             return jsonify({"error": "Match data is temporarily unavailable."}), 503
         if response.status_code >= 400:
             return response
-        decision = next((item for item in (response.get_json() or {}).get("slate", []) if item.get("matchId") == match_id), None)
+        slate_payload = response.get_json() or {}
+        refresh_pending = bool(slate_payload.get("refresh_pending"))
+        decision = next((item for item in slate_payload.get("slate", []) if item.get("matchId") == match_id), None)
     if decision is None:
         if sport == "nba":
             from services import nba_matchup_context
@@ -6458,7 +6501,188 @@ def api_match_decision(match_id):
                 pass
     if decision is None:
         return jsonify({"error": "This match is no longer available. Choose a match from the current slate."}), 404
-    return jsonify({"decision": sanitize_decision(decision)})
+    return jsonify({"decision": sanitize_decision(decision), "refresh_pending": refresh_pending})
+
+
+@app.get("/api/soccer/matches/<match_id>/injuries")
+@limiter.limit("30 per minute")
+def api_soccer_injuries(match_id):
+    """Fantasy Premier League availability priced as win-chance changes for one fixture."""
+    from services import injury_impact, injury_reports
+    decision = decision_store.get("soccer", match_id)
+    if decision is None:
+        response = app.make_response(api_dashboard_soccer())
+        if response.status_code >= 400:
+            return jsonify({"error": "Match data is temporarily unavailable."}), 503
+        decision = next((item for item in (response.get_json() or {}).get("slate", []) if item.get("matchId") == match_id), None)
+    if decision is None:
+        return jsonify({"error": "This match is no longer available. Choose a match from the current slate."}), 404
+    decision = sanitize_decision(decision)
+    if not decision.get("pregameAvailable"):
+        return jsonify({"error": "Injury impact is available before kickoff only."}), 422
+    if str(decision.get("leagueId")) != "39":
+        return jsonify({"error": "Player availability is covered for the Premier League only (Fantasy Premier League). "
+                                 "Other leagues need an API-Football key."}), 422
+    home, draw = decision.get("homeProbability"), decision.get("drawProbability")
+    if home is None or draw is None:
+        return jsonify({"error": "This fixture has no win probabilities to adjust."}), 422
+    try:
+        payload, freshness = injury_reports.fpl()
+        players = injury_impact.soccer_players(payload, decision["teamA"], decision["teamB"])
+    except injury_reports.InjuryFeedUnavailable:
+        return jsonify({"error": "Fantasy Premier League availability is temporarily unavailable."}), 503
+    except injury_impact.ImpactUnavailable as exc:
+        return jsonify({"error": str(exc)}), 422
+    report = injury_impact.goals_report(home / 100, draw / 100, max(0.0, 1 - (home + draw) / 100), players)
+    result = injury_impact.summarize(report, {"home": decision["teamA"], "away": decision["teamB"]}, unit="goals")
+    result.update(sources=[freshness], warnings=[], base="match forecast",
+                  notice="Win chances start from this fixture's forecast and are adjusted for who is expected to play, "
+                         "valued from expected goals and assists. The forecast itself does not use injuries: in a backtest on "
+                         "1,140 Premier League matches, adjusting for the actual lineups did not measurably improve it, so treat "
+                         "these numbers as a guide to who matters, not as a better forecast.")
+    return jsonify(result=result)
+
+
+@app.get("/api/soccer/matches/<match_id>/props")
+@limiter.limit("20 per minute")
+def api_soccer_props(match_id):
+    """Five best player prop picks for a fixture, from ESPN box scores (any league ESPN covers).
+
+    Premier League fixtures also skip players Fantasy Premier League lists as unavailable and
+    add its tackles market, which ESPN box scores lack.
+    """
+    decision = decision_store.get("soccer", match_id)
+    if decision is None:
+        response = app.make_response(api_dashboard_soccer())
+        if response.status_code >= 400:
+            return jsonify({"error": "Match data is temporarily unavailable."}), 503
+        decision = next((item for item in (response.get_json() or {}).get("slate", []) if item.get("matchId") == match_id), None)
+    if decision is None:
+        return jsonify({"error": "This match is no longer available. Choose a match from the current slate."}), 404
+    payload, status = soccer_props_payload(decision)
+    return jsonify(payload), status
+
+
+def soccer_props_payload(decision: dict) -> tuple[dict, int]:
+    """Five best player prop picks for one slate decision: ({"result": ...} or {"error": ...}, HTTP status)."""
+    from services import fpl_props, injury_impact, injury_reports, soccer_props
+    from services.injury_reports import normalize_name
+    decision = sanitize_decision(decision)
+    kickoff = parse_kickoff(decision.get("matchDate"))
+    if not decision.get("pregameAvailable") or kickoff is None:
+        return {"error": "Player props are available before kickoff only."}, 422
+    home_id, away_id = str(decision.get("homeId") or ""), str(decision.get("awayId") or "")
+    if not home_id or not away_id:
+        return {"error": "This fixture is missing team identities."}, 422
+    premier_league = str(decision.get("leagueId")) == "39"
+    excluded, extra = frozenset(), []
+    if premier_league:
+        try:
+            payload, _freshness = injury_reports.fpl()
+            excluded = frozenset(normalize_name(f"{p.get('first_name', '')} {p.get('second_name', '')}")
+                                 for p in payload["elements"] if p.get("status") != "a")
+            extra = fpl_props.project(payload, decision["teamA"], decision["teamB"])["picks"]
+        except (injury_reports.InjuryFeedUnavailable, injury_impact.ImpactUnavailable):
+            pass
+    try:
+        result = soccer_props.project(decision.get("leagueId") or 39, home_id, away_id, kickoff, excluded)
+    except ValueError as exc:
+        return {"error": str(exc)}, 422
+    if not sanitize_decision(decision).get("pregameAvailable"):
+        return {"error": "Player props are available before kickoff only."}, 422
+    names = {home_id: decision["teamA"], away_id: decision["teamB"]}
+    picks = [{**pick, "team": names.get(pick["team"], pick["team"])} for pick in result["picks"]]
+    # FPL names players by surname ("Gibbs-White"); keep one pick per player across both sources.
+    surnames = {normalize_name(pick["name"]).split()[-1] for pick in picks if pick["name"]}
+    picks += [pick for pick in extra if normalize_name(pick["name"]).split()[-1:] and normalize_name(pick["name"]).split()[-1] not in surnames]
+    picks.sort(key=lambda pick: -pick["edge"])
+    from services import prop_markets
+    result = prop_markets.compare({"picks": picks[:5]}, "soccer", decision["teamA"], decision["teamB"],
+                                  kickoff, decision.get("leagueId"))
+    if not sanitize_decision(decision).get("pregameAvailable"):
+        return {"error": "Player props are available before kickoff only."}, 422
+    return {"result": result}, 200
+
+
+def _dashboard_slate(endpoint: str, path: str, *, attempts: int = 4) -> tuple[str | None, list[dict]]:
+    """(selected date, decisions) from a sport dashboard, called in-process as the props route does.
+
+    A cold soccer refresh answers "still refreshing" with an empty slate after 20 seconds; the
+    refresh keeps running, so ask again rather than publish a board without that league.
+    Views are unwrapped so these internal calls never spend the public rate limit, which a
+    local browser shares (as the Insights dashboard does).
+    """
+    for attempt in range(attempts):
+        with app.test_request_context(path):
+            response = app.make_response(unwrap(app.view_functions[endpoint])())
+        if response.status_code >= 400:
+            return None, []
+        payload = response.get_json() or {}
+        refreshing = "still refreshing" in str(payload.get("error") or "").lower()
+        if not refreshing or attempt == attempts - 1:
+            return payload.get("selectedDate"), payload.get("slate") or []
+        time.sleep(5)
+    return None, []
+
+
+def _best_props_slates(day: str) -> dict[str, tuple[str | None, list[dict]]]:
+    soccer = []
+    for league_id in SUPPORTED_LEAGUE_IDS:
+        _selected, decisions = _dashboard_slate("api_dashboard_soccer", f"/api/dashboard/soccer?league={league_id}&date={day}")
+        soccer += [d for d in decisions if calendar_date(d.get("matchDate")) == day]
+    _selected, nba = _dashboard_slate("nba_api.api_dashboard_nba", f"/api/dashboard/nba?date={day}")
+    nba = [d for d in nba if calendar_date(d.get("matchDate")) == day]
+    nfl_day, nfl = _dashboard_slate("nfl_api.api_dashboard_nfl", f"/api/dashboard/nfl?date={day}")
+    if not nfl:  # No NFL games that day: show the next NFL slate, labelled with its own date.
+        nfl_day, nfl = _dashboard_slate("nfl_api.api_dashboard_nfl", "/api/dashboard/nfl")
+    return {"soccer": (day, soccer), "nba": (day, nba), "nfl": (nfl_day, nfl)}
+
+
+def _fresh_soccer_decision(decision: dict, slate_date: str | None) -> dict:
+    """Soccer decisions carry a minutes-long freshness window; re-read the slate before using one."""
+    league_id = decision.get("leagueId") or DEFAULT_LEAGUE_ID
+    _selected, slate = _dashboard_slate("api_dashboard_soccer", f"/api/dashboard/soccer?league={league_id}&date={slate_date or ''}")
+    return next((d for d in slate if d.get("matchId") == decision.get("matchId")), decision)
+
+
+def _best_props_for(sport: str, decision: dict, slate_date: str | None) -> tuple[dict, int]:
+    import nba_routes as nba_module
+    import nfl_routes as nfl_module
+    with app.app_context():
+        if sport == "soccer":
+            payload, status = soccer_props_payload(_fresh_soccer_decision(decision, slate_date))
+            kickoff = parse_kickoff(decision.get("matchDate"))
+            if status == 422 and kickoff and kickoff > datetime.now(timezone.utc):
+                # The first call downloads box scores; a stale-by-then decision gets one retry, now fast.
+                payload, status = soccer_props_payload(_fresh_soccer_decision(decision, slate_date))
+            return payload, status
+        if sport == "nba":
+            return nba_module.nba_props_payload(str(decision["matchId"]), slate_date)
+        return nfl_module.nfl_props_payload(str(decision["matchId"]), date.fromisoformat(slate_date) if slate_date else None)
+
+
+def build_best_props(day: str) -> dict:
+    from services import best_props
+    return best_props.build(_best_props_slates(day), _best_props_for)
+
+
+@app.get("/api/props/best")
+@limiter.limit("10 per minute")
+def api_best_props():
+    """Best player props of the day: one ranked board across soccer and NBA, NFL listed separately."""
+    from services import best_props
+    day = (request.args.get("date") or "").strip() or calendar_date(datetime.now(timezone.utc))
+    try:
+        if date.fromisoformat(day).isoformat() != day:
+            raise ValueError
+    except ValueError:
+        return jsonify(error="Use a calendar date in YYYY-MM-DD format."), 400
+    try:
+        board = best_props.cached(day, lambda: build_best_props(day))
+    except Exception:
+        app.logger.exception("Best props board failed")
+        return jsonify(error="Player props are temporarily unavailable."), 503
+    return jsonify(result=best_props.without_started(board) | {"date": day})
 
 
 @app.route("/api/scoreline/soccer", methods=["GET", "POST"])
@@ -6491,8 +6715,9 @@ def api_scoreline_soccer():
         event_id = str(params.get("event_id") or params.get("match_id") or "").strip()
         if event_id:
             fixture = _FIXTURE_INDEX.get(event_id)
-            if not fixture:
-                loaded = load_fixtures_cached(league_id)
+            if not fixture or (fixture.get("data_freshness") and freshness_state(fixture["data_freshness"]) != "fresh"):
+                day = calendar_date(((fixture or {}).get("fixture") or {}).get("date") or validated["before"])
+                loaded = load_fixtures_cached(league_id, selected_date=day or None)
                 fixture = next((row for row in loaded[0] or [] if str((row.get("fixture") or {}).get("id")) == event_id), None)
             if not fixture:
                 return jsonify(status="error", message="The scheduled match could not be verified. Refresh the slate."), 404
@@ -6584,8 +6809,15 @@ def api_scoreline_soccer():
                 app.logger.debug("scoreline_soccer: ML blend skipped", exc_info=True)
 
         features = scoring_research.rolling_features(form_a, form_b, sport="soccer")
-        projection = scoring_research.project("soccer", features, before=validated["before"]) if league_id == 39 else {
-            "available": False, "reason": "The current trained soccer scoring model covers the Premier League only."}
+        from services import soccer_model
+        try:
+            projection = soccer_model.scoreline_projection(soccer_model.predict(ac, league_id, team_a_name, team_b_name))
+        except Exception:
+            app.logger.warning("scoreline_soccer: ratings projection failed", exc_info=True)
+            projection = None
+        if projection is None:
+            projection = scoring_research.project("soccer", features, before=validated["before"]) if league_id == 39 else {
+                "available": False, "reason": "The current trained soccer scoring model covers the Premier League only."}
         result = _scoreline_engine.predict_soccer_scoreline(
             form_a=form_a, form_b=form_b,
             h2h=h2h, injuries_a=injuries_a, injuries_b=injuries_b,

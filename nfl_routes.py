@@ -119,6 +119,97 @@ def api_nfl_research_matchup(game_id):
         return jsonify(error=str(exc)), 400
 
 
+@nfl_api_bp.get("/api/nfl/matches/<match_id>/props")
+@limiter.limit("30 per minute")
+def api_nfl_props(match_id):
+    """Pregame player prop projections for a real event on the selected slate."""
+    try:
+        selected = selected_date()
+    except ValueError:
+        return {"error": "Invalid date."}, 400
+    payload, status = nfl_props_payload(match_id, selected)
+    return jsonify(payload), status
+
+
+def nfl_props_payload(match_id: str, selected) -> tuple[dict, int]:
+    """({"result": ...} or {"error": ...}, HTTP status) for one slate game; shared with the best-props board."""
+    try:
+        payload, records = nfl_service.load_slate(selected)
+        if not any(item["matchId"] == match_id for item in payload["slate"]):
+            return {"error": "NFL match not found on this slate."}, 404
+        game = next(game for game in records if game["id"] == match_id)
+        if game.get("nflverse_id") and _reserved_game(game["nflverse_id"]):
+            return {"error": "Reserved holdout game research remains sealed."}, 423
+        from services import nfl_props
+        now = datetime.now(UTC)
+        source_freshness = nfl_service.prediction_freshness(game, records, now)
+        if reason := unavailable_reason(game["kickoff"], game.get("status_name"), source_freshness, now):
+            return {"error": reason, "dataFreshness": source_freshness}, 422
+        try:
+            result = nfl_props.project(game, records)
+        except nfl_props.PropsUnavailable as exc:
+            return {"error": str(exc)}, 422
+        from services import prop_markets
+        result = prop_markets.compare(result, "nfl", game.get("home_name"), game.get("away_name"), game["kickoff"])
+        # Projections are pregame only; recheck in case kickoff passed meanwhile.
+        if reason := unavailable_reason(game["kickoff"], game.get("status_name"), source_freshness, datetime.now(UTC)):
+            return {"error": reason, "dataFreshness": source_freshness}, 422
+        result["data_freshness"] = source_freshness
+        return {"result": result}, 200
+    except NFLProviderError:
+        return {"error": "NFL data is temporarily unavailable."}, 503
+    except Exception:
+        current_app.logger.exception("NFL player props failed")
+        return {"error": "NFL data is temporarily unavailable."}, 503
+
+
+@nfl_api_bp.get("/api/nfl/matches/<match_id>/injuries")
+@limiter.limit("30 per minute")
+def api_nfl_injuries(match_id):
+    """ESPN and official injury reports for a slate game, priced as win-chance changes."""
+    try:
+        selected = selected_date()
+    except ValueError:
+        return jsonify(error="Invalid date."), 400
+    from services import injury_impact, injury_reports
+    try:
+        payload, records = nfl_service.load_slate(selected)
+        if not any(item["matchId"] == match_id for item in payload["slate"]):
+            return jsonify(error="NFL match not found on this slate."), 404
+        game = next(game for game in records if game["id"] == match_id)
+        if not game.get("nflverse_id"):
+            return jsonify(error="Injury impact needs the local nflverse store; this game came from the ESPN fallback."), 422
+        if _reserved_game(game["nflverse_id"]):
+            return jsonify(error="Reserved holdout game research remains sealed."), 423
+        now = datetime.now(UTC)
+        analysis = nfl_service.analyze(game, records, now)
+        if analysis is None:
+            return jsonify(error="Injury impact needs an upcoming game with fresh data and three completed games per team."), 422
+        warnings, sources = [], []
+        try:
+            espn_rows, espn_freshness = injury_reports.espn("nfl")
+            sources.append(espn_freshness)
+        except injury_reports.InjuryFeedUnavailable:
+            espn_rows = []
+            warnings.append("ESPN injuries are unavailable; showing the latest synced official report only.")
+        players = injury_impact.nfl_players(game, records, espn_rows, now)
+        # Recent-scoring margin plus home field (the intercept in scripts/backtest_nfl_injuries.py).
+        base = analysis["projected_score"]["home"] - analysis["projected_score"]["away"] + (0.0 if game.get("neutral") else 1.5)
+        report = injury_impact.margin_report(base, injury_impact.NFL_SIGMA, players, priced=False)
+        result = injury_impact.summarize(report, {"home": game["home_name"], "away": game["away_name"]}, unit="points")
+        if reason := unavailable_reason(game["kickoff"], game.get("status_name"), analysis.get("data_freshness"), datetime.now(UTC)):
+            return jsonify(error=reason), 422
+        result.update(sources=sources, warnings=warnings, base="recent scoring",
+                      notice="Win chances come from recent scoring plus home field, adjusted for who is expected to play. "
+                             "Player values use EPA (quarterbacks, running backs, receivers); linemen and defenders are listed but not valued.")
+        return jsonify(result=result)
+    except NFLProviderError:
+        return jsonify(error="NFL data is temporarily unavailable."), 503
+    except Exception:
+        current_app.logger.exception("NFL injury impact failed")
+        return jsonify(error="NFL data is temporarily unavailable."), 503
+
+
 def selected_date():
     raw = request.args.get("date")
     if not raw:

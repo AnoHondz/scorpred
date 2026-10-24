@@ -13,10 +13,12 @@ export default function DataStatus({ cards, updated, loading, warnings = [] }: {
   const observed = dates.filter(value => Number.isFinite(Date.parse(value))).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
   const delayed = sources.some(source => !source || source.state !== 'fresh'
     || !Number.isFinite(Date.parse(source.expires_at || '')) || Date.parse(source.expires_at || '') <= now);
+  // Quiet when everything is current: only a delay or a provider warning earns a line.
+  if (loading || (!delayed && observed && !warnings.length) || !cards.length && !warnings.length) return null;
   return <div className="data-status" aria-label="Data availability">
-    <p className="quiet-label">{loading ? 'Checking available data…' : observed
-      ? `Source observed ${calendarFormat(observed, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET${delayed ? ' · Update needed; estimates may be unavailable' : ''}`
-      : 'Source observation time unavailable. Check individual matchup availability.'}</p>
+    {(delayed || !observed) && <p className="quiet-label">{observed
+      ? `Data from ${calendarFormat(observed, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET · update needed; some estimates may be unavailable`
+      : 'Data update time unavailable.'}</p>}
     {warnings.map(warning => <p key={warning} className="coverage-note">{warning}</p>)}
   </div>;
 }

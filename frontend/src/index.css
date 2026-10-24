@@ -387,3 +387,75 @@ select { max-width: 100%; min-height: 40px; color: var(--text); background: var(
 @keyframes refresh-turn { to { transform: rotate(360deg); } }
 @media (max-width: 600px) { .topbar .account-link { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* NFL player props: one player, with optional line comparisons. */
+.prop-team-switch { display: flex; flex-wrap: wrap; gap: 8px; }
+.prop-list { padding: 0; }
+.prop-player + .prop-player { border-top: 1px solid var(--line); }
+.prop-player > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px 16px; min-height: 56px; padding: 12px 16px; list-style: none; }
+.prop-player > summary::after { grid-column: 3; grid-row: 1; }
+@media (max-width: 640px) {
+  .prop-player > summary { grid-template-columns: minmax(0, 1fr) auto; }
+  .prop-player > summary .prop-headline { grid-column: 1; }
+  .prop-player > summary::after { grid-column: 2; grid-row: 1 / span 2; }
+}
+.prop-player > summary::-webkit-details-marker { display: none; }
+.prop-player > summary:hover, .prop-player[open] > summary { background: var(--surface-raised); }
+.prop-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-weight: 500; }
+.prop-injury { color: var(--warning); font-size: 11px; }
+.prop-headline { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 500 14px var(--font-mono); font-variant-numeric: tabular-nums; }
+.prop-headline small { color: var(--muted); font: 11px var(--font-sans); }
+.prop-markets { list-style: none; margin: 0; padding: 4px 16px 12px; }
+.prop-market { display: grid; grid-template-columns: minmax(0, 1fr) auto 88px; align-items: center; gap: 4px 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.prop-projection { font: 500 16px var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.prop-line-input { width: 88px; min-height: 40px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font: 12px var(--font-mono); }
+.prop-odds { grid-column: 1 / -1; font-size: 12px; color: var(--muted); }
+.prop-odds:empty { display: none; }
+.prop-odds b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.prop-about { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.prop-about > summary { min-height: 40px; padding: 8px 0; }
+
+/* Injury impact */
+.injury-team { display: grid; gap: 6px; align-content: start; }
+.injury-win { font-size: 13px; color: var(--muted); }
+.injury-win strong { font: 500 28px var(--font-mono); color: var(--text); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.injury-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.injury-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.injury-status { color: var(--warning); font-size: 11px; }
+.injury-cost { font: 500 15px var(--font-mono); color: var(--danger); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.injury-others { margin-top: 6px; line-height: 1.6; }
+
+/* Prop picks */
+.pick-list { list-style: none; margin: 0; padding: 0; }
+.pick-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 16px; }
+.pick-row + .pick-row { border-top: 1px solid var(--line); }
+.pick-rank { font: 500 13px var(--font-mono); color: var(--muted); }
+.pick-call { margin: 2px 0; color: var(--accent); font-size: 14px; }
+.pick-side { display: grid; justify-items: end; gap: 6px; }
+.pick-chance { font: 500 22px var(--font-mono); font-variant-numeric: tabular-nums; }
+.prop-market-status { margin: 0 0 12px; line-height: 1.6; }
+.pick-estimate-label { max-width: 70px; text-align: right; font-size: 10px; }
+.pick-market-source { margin-top: 4px; }
+.pick-comparison { margin-top: 6px; }
+.pick-comparison p { margin-top: 8px; line-height: 1.6; }
+@media (max-width: 480px) {
+  .pick-row { grid-template-columns: 18px minmax(0, 1fr) auto; gap: 8px; padding: 12px; }
+  .pick-body { min-width: 0; overflow-wrap: anywhere; }
+  .pick-side { max-width: 86px; }
+  .pick-chance { font-size: 20px; overflow-wrap: anywhere; }
+}
+
+/* Compact slate summary */
+.plan-line { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; color: var(--muted); font-size: 13px; }
+.plan-line .plan-stat-num { color: var(--text); font: 500 15px var(--font-mono); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.plan-line .plan-bet .plan-stat-num { color: var(--success); }
+.plan-line .plan-consider .plan-stat-num { color: var(--warning); }
+.outlook-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.outlook-facts b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.save-pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.save-pick { display: inline-flex; align-items: center; gap: 6px; }
+.prop-board-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); width: fit-content; }
+.prop-board-tabs button { min-height: 36px; padding: 6px 14px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; }
+.prop-board-tabs button:hover { color: var(--text); }
+.prop-board-tabs .prop-board-tab-active { color: var(--accent); background: #B8CA9B12; border-color: #B8CA9B25; }

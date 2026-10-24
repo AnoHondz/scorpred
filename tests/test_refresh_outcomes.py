@@ -144,6 +144,25 @@ def test_scheduler_empty_soccer_and_nba_schedules_can_be_healthy(monkeypatch):
         scheduler.stop()
 
 
+def test_scheduler_injury_refresh_cannot_hide_a_failed_feed(monkeypatch):
+    from services import injury_reports
+    observed = datetime.now(timezone.utc).isoformat()
+    outcomes = [{"status": "success", "observed_at": observed, "error": None}]
+    monkeypatch.setattr(injury_reports, "refresh_all", lambda: list(outcomes))
+    sched, monitor = _start_scheduler(monkeypatch, None)
+    try:
+        job = sched.get_job("injury_reports")
+        job.func()
+        assert monitor.get_status()["pipelines"]["injury_reports"]["status"] == "ok"
+        outcomes.append({"status": "failed", "observed_at": None, "error": "nfl injury feed is unavailable"})
+        job.func()
+        state = monitor.get_status()["pipelines"]["injury_reports"]
+        assert state["status"] == "degraded"
+        assert "nfl" in state["error"]
+    finally:
+        scheduler.stop()
+
+
 def test_started_fixture_does_not_generate_a_new_pregame_decision():
     fixture = _fixture()
     fixture["fixture"]["date"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()

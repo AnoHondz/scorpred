@@ -65,11 +65,13 @@ test('later schedule dates remain reachable and selected after reload', async ({
 test('unsupported scoring is an availability notice and does not invent a forecast', async ({ page }) => {
   await setup(page);
   await page.goto('/match-analysis?sport=nba&match_id=ready-game');
-  await expect(page.getByRole('heading', { name: 'Game outlook', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Match prediction', { exact: true })).toBeVisible();
+  await page.getByText('Score forecast & analysis', { exact: true }).click();
   await expect(page.getByLabel('Scoring predictor', { exact: true }).getByRole('status').filter({ hasText: 'At least three completed games' })).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(0);
-  await expect(page.getByText('Unavailable', { exact: true }).first()).toBeVisible();
+  await expect(page.getByLabel('Match prediction', { exact: true })).toContainText('Prediction unavailable');
+  await expect(page.locator('.field-measure')).toHaveCount(0);
 });
 
 test('provider warnings stay visible and failures preserve navigation and date controls', async ({ page }) => {
@@ -92,4 +94,23 @@ test('invalid match identifiers show an actionable error without loading scoring
   await expect(page.getByRole('alert')).toContainText('Choose a match from the current slate.');
   await page.getByLabel('Main navigation').getByRole('button', { name: 'Dashboard', exact: true }).click();
   await expect(page.getByLabel('NBA shortlist')).toBeVisible();
+});
+
+test('an open NBA matchup renews its expired source and retains comparisons without inventing a prediction', async ({ page }) => {
+  await setup(page);
+  let requests = 0;
+  await page.route('**/api/matches/ready-game*', route => {
+    requests++;
+    return route.fulfill({ json: { decision: { ...card, dataFreshness: { ...card.dataFreshness,
+      expires_at: requests === 1 ? '2026-10-22T12:00:02Z' : '2026-10-22T12:10:00Z' } } } });
+  });
+  await page.goto('/match-analysis?sport=nba&match_id=ready-game');
+  await expect(page.getByLabel('Match prediction', { exact: true })).toBeVisible();
+  expect(requests).toBe(1);
+  await page.clock.fastForward(2300);
+  await expect.poll(() => requests).toBe(2);
+  await expect(page.getByLabel('Match prediction', { exact: true })).toBeVisible();
+  await expect(page.locator('.field-pick')).toContainText('Prediction unavailable');
+  await page.clock.fastForward(1000);
+  expect(requests).toBe(2);
 });

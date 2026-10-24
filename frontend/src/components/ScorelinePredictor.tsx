@@ -2,7 +2,7 @@
  * ScorelinePredictor – full scoreline probability distribution widget.
  *
  * Soccer: Dixon-Coles corrected Poisson  → 7×7 heat-map + O/U table + BTTS
- * NBA:    Normal distribution blend       → projected score + O/U table + spread
+ * NBA:    Pregame ratings, margin × total  → score ranges, quarters, O/U, player box lines + matchups
  *
  * Usage:
  *   <ScorelinePredictor
@@ -99,12 +99,49 @@ interface SoccerResult {
   market_comparison?: MarketComparison | null;
 }
 
+interface Range { low: number; high: number }
+
+interface Quarter { period: string; home: number; away: number }
+
+interface PlayerLine {
+  id: string;
+  name: string;
+  position: string;
+  status: string;
+  availability: number;
+  value: number;
+  minutes: number;
+  pts: number;
+  reb: number;
+  ast: number;
+  fg3m: number;
+  stl: number;
+  blk: number;
+}
+
+interface TeamBox {
+  players: PlayerLine[];
+  unavailable: { id: string; name: string; status: string; pts: number }[];
+  unassigned_minutes: number;
+}
+
+interface Matchup { position: string; home: PlayerLine; away: PlayerLine; edge: 'home' | 'away' | 'even'; value_gap: number }
+
+interface Bench { players: number; pts: number; minutes: number; value: number }
+
 interface NBAResult {
   sport: 'nba';
   data_freshness?: SourceFreshness;
   team_a: string;
   team_b: string;
   projected_score: ProjectedScore;
+  intervals?: { home: Range; away: Range };
+  total_interval?: Range;
+  overtime_prob?: number;
+  spread?: { home_line: number; home_cover_prob: number } | null;
+  quarters?: Quarter[];
+  players?: { home: TeamBox | null; away: TeamBox | null };
+  matchups?: { starters: Matchup[]; bench: { home: Bench; away: Bench } } | null;
   proj_margin: number;
   spread_favorite: string;
   most_likely_range: TopScore | Record<string, unknown>;
@@ -393,6 +430,8 @@ function SoccerView({ data }: { data: SoccerResult }) {
         </div>
       </div>
 
+      <details className="prop-about"><summary>Full breakdown</summary>
+        <div className="space-y-5">
       {/* Win probabilities */}
       <div>
         <SectionHeader title="Score-model outcome probabilities" />
@@ -430,6 +469,8 @@ function SoccerView({ data }: { data: SoccerResult }) {
         </div>
       </div>
 
+        </div>
+      </details>
       {/* Market comparison */}
       {data.market_comparison && (
         <div className="rounded-lg border-l-2 border-teal-500/30 bg-teal-500/[0.03] p-4">
@@ -460,6 +501,86 @@ function SoccerView({ data }: { data: SoccerResult }) {
       )}
 
       <p className="text-[10px] text-slate-600 text-right">Model: {data.model}</p>
+    </div>
+  );
+}
+
+// ── NBA detail ────────────────────────────────────────────────────────────────
+
+function QuarterTable({ quarters, teamA, teamB }: { quarters: Quarter[]; teamA: string; teamB: string }) {
+  return (
+    <table className="w-full text-[11px] border-collapse">
+      <thead>
+        <tr className="text-slate-500 border-b border-white/5">
+          <th className="text-left py-1.5 pr-2 font-medium">Team</th>
+          {quarters.map(row => <th key={row.period} className="text-right py-1.5 px-2 font-medium">{row.period}</th>)}
+        </tr>
+      </thead>
+      <tbody>
+        {([['home', teamA], ['away', teamB]] as const).map(([side, name]) => (
+          <tr key={side} className="border-b border-white/5">
+            <td className="py-1.5 pr-2 text-slate-300">{name}</td>
+            {quarters.map(row => <td key={row.period} className="py-1.5 px-2 text-right tabular-nums text-slate-200">{row[side].toFixed(1)}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function PlayerTable({ team, box }: { team: string; box: TeamBox }) {
+  return (
+    <div className="overflow-x-auto">
+      <p className="text-[11px] font-semibold text-slate-300 mb-1">{team}</p>
+      <table className="w-full text-[11px] border-collapse">
+        <thead>
+          <tr className="text-slate-500 border-b border-white/5">
+            <th className="text-left py-1 pr-2 font-medium">Player</th>
+            {['MIN', 'PTS', 'REB', 'AST', '3PM', 'STL', 'BLK'].map(label => <th key={label} className="text-right py-1 px-1.5 font-medium">{label}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {box.players.map(row => (
+            <tr key={row.id} className="border-b border-white/5">
+              <td className="py-1 pr-2 text-slate-200 whitespace-nowrap">
+                {row.name} <span className="text-slate-500">{row.position}</span>
+                {row.availability < 1 && <span className="ml-1 text-[9px] text-amber-400 uppercase">{row.status}</span>}
+              </td>
+              {[row.minutes, row.pts, row.reb, row.ast, row.fg3m, row.stl, row.blk].map((value, index) => (
+                <td key={index} className={`py-1 px-1.5 text-right tabular-nums ${index === 1 ? 'text-slate-100 font-semibold' : 'text-slate-400'}`}>{value.toFixed(1)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {box.unavailable.length > 0 && (
+        <p className="text-[10px] text-rose-300 mt-1">Out: {box.unavailable.map(row => `${row.name} (${row.status}, ${row.pts.toFixed(1)} ppg)`).join(', ')}</p>
+      )}
+    </div>
+  );
+}
+
+function MatchupList({ matchups, teamA, teamB }: { matchups: NonNullable<NBAResult['matchups']>; teamA: string; teamB: string }) {
+  const line = (row: PlayerLine) => `${row.pts.toFixed(1)} pts · ${row.reb.toFixed(1)} reb · ${row.ast.toFixed(1)} ast`;
+  const { home, away } = matchups.bench;
+  return (
+    <div className="space-y-1.5">
+      {matchups.starters.map(pair => (
+        <div key={`${pair.home.id}-${pair.away.id}`} className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-[11px]">
+          <div className={pair.edge === 'home' ? 'text-emerald-300' : 'text-slate-300'}>
+            <p className="font-semibold">{pair.home.name}</p>
+            <p className="text-slate-500">{line(pair.home)}</p>
+          </div>
+          <span className="text-[9px] text-slate-500 uppercase tracking-widest">{pair.position || 'vs'}</span>
+          <div className={`text-right ${pair.edge === 'away' ? 'text-emerald-300' : 'text-slate-300'}`}>
+            <p className="font-semibold">{pair.away.name}</p>
+            <p className="text-slate-500">{line(pair.away)}</p>
+          </div>
+        </div>
+      ))}
+      <p className="text-[10px] text-slate-500 text-center">
+        Bench: {teamA} {home.pts.toFixed(1)} pts in {home.minutes.toFixed(0)} min · {teamB} {away.pts.toFixed(1)} pts in {away.minutes.toFixed(0)} min
+      </p>
     </div>
   );
 }
@@ -495,6 +616,14 @@ function NBAView({ data }: { data: NBAResult }) {
         </div>
       </div>
 
+      {data.intervals && data.total_interval && (
+        <p className="text-center text-[11px] text-slate-400">
+          80% ranges: {data.team_a} {data.intervals.home.low}–{data.intervals.home.high} · {data.team_b} {data.intervals.away.low}–{data.intervals.away.high} · total {data.total_interval.low}–{data.total_interval.high}
+          {data.overtime_prob != null && <> · overtime {data.overtime_prob.toFixed(1)}%</>}
+          {data.spread && <> · {data.team_a} {data.spread.home_line > 0 ? '+' : ''}{data.spread.home_line} covers {data.spread.home_cover_prob.toFixed(1)}%</>}
+        </p>
+      )}
+
       {/* Most likely total range */}
       {likelyRange && 'home' in likelyRange && (
         <div className="text-center">
@@ -502,6 +631,32 @@ function NBAView({ data }: { data: NBAResult }) {
             Most likely score: <strong className="text-slate-200">{likelyRange.score ?? `${likelyRange.home}–${likelyRange.away}`}</strong>
             <span className="ml-2 text-slate-500">({likelyRange.prob.toFixed(1)}%)</span>
           </span>
+        </div>
+      )}
+
+      <details className="prop-about"><summary>Full breakdown</summary>
+        <div className="space-y-5">
+      {data.quarters && data.quarters.length > 0 && (
+        <div>
+          <SectionHeader title="Projected Points by Quarter" />
+          <div className="overflow-x-auto"><QuarterTable quarters={data.quarters} teamA={data.team_a} teamB={data.team_b} /></div>
+        </div>
+      )}
+
+      {data.matchups && (
+        <div>
+          <SectionHeader title="Starting Matchups" />
+          <MatchupList matchups={data.matchups} teamA={data.team_a} teamB={data.team_b} />
+        </div>
+      )}
+
+      {data.players && (data.players.home || data.players.away) && (
+        <div>
+          <SectionHeader title="Projected Box Score" />
+          <div className="space-y-4">
+            {data.players.home && <PlayerTable team={data.team_a} box={data.players.home} />}
+            {data.players.away && <PlayerTable team={data.team_b} box={data.players.away} />}
+          </div>
         </div>
       )}
 
@@ -528,6 +683,9 @@ function NBAView({ data }: { data: NBAResult }) {
         </div>
       </div>
 
+        </div>
+      </details>
+      {data.notice && <p className="text-[10px] text-slate-500">{data.notice}</p>}
       <p className="text-[10px] text-slate-600 text-right">Model: {data.model}</p>
     </div>
   );
@@ -573,7 +731,7 @@ export default function ScorelinePredictor({
           <p className="section-label">
             Scoreline Predictor
             <span className="ml-2 text-[9px] text-slate-600 uppercase tracking-widest font-normal">
-              {data?.research?.available ? 'Trained scoring model' : 'Descriptive score model'}
+              {data?.sport === 'nba' ? 'Backtested pregame ratings' : data?.research?.available ? 'Trained scoring model' : 'Descriptive score model'}
             </span>
           </p>
           {data?.data_completeness && (

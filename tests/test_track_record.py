@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 import app as module
@@ -49,3 +51,62 @@ def test_endpoint_returns_summary_without_market_report(records):
     assert response.status_code == 200
     assert response.json["market_benchmark"] is None
     assert response.json["minimum_sample"] == track_record.MINIMUM_SAMPLE
+
+
+def scored(outcome, probs, *, pick="A", market=None, closing=None, kickoff="2026-10-20T15:00:00Z"):
+    row = {"sport": "soccer", "team_a": "Home", "team_b": "Away", "created_at": "2026-10-20T10:00:00Z",
+           "kickoff_at": kickoff, "status": "completed", "actual_result": outcome, "predicted_winner": pick,
+           "is_correct": pick == outcome, "prob_a": probs[0], "prob_draw": probs[1], "prob_b": probs[2]}
+    if market:
+        row["market_at_pick"] = {"fair": market}
+    if closing:
+        row["closing_market"] = {"fair": closing}
+    return row
+
+
+def test_probability_scores_market_comparison_and_closing_line_value(tmp_path, monkeypatch):
+    rows = [
+        scored("A", (50, 25, 25), market={"a": 0.4, "draw": 0.3, "b": 0.3}, closing={"a": 0.44, "draw": 0.28, "b": 0.28}),
+        scored("B", (60, 20, 20), market={"a": 0.5, "draw": 0.2, "b": 0.3}, closing={"a": 0.45, "draw": 0.27, "b": 0.28},
+               kickoff="2026-10-28T15:00:00Z"),
+    ]
+    monkeypatch.setattr(mt, "_load_predictions", lambda: rows)
+    monkeypatch.setattr(track_record, "_MARKET_REPORT", tmp_path / "missing.json")
+    soccer = track_record.summary()["sports"]["soccer"]
+    expected = (-math.log(0.5) - math.log(0.2)) / 2
+    assert soccer["probability"]["log_loss"] == pytest.approx(expected, abs=1e-4)
+    assert soccer["probability"]["scored"] == 2
+    assert [b["picks"] for b in soccer["probability"]["calibration"]] == [1, 1]
+    market = soccer["market"]
+    assert market["games"] == 2
+    assert market["market_log_loss"] == pytest.approx((-math.log(0.4) - math.log(0.3)) / 2, abs=1e-4)
+    assert market["model_minus_market"] > 0
+    clv = soccer["closing_line_value"]
+    assert clv["picks"] == 2
+    assert clv["mean"] == pytest.approx((0.44 / 0.4 - 1 + 0.45 / 0.5 - 1) / 2, abs=1e-4)
+    assert clv["positive_share"] == 0.5
+    assert [w["week"] for w in soccer["weekly"]] == ["2026-W43", "2026-W44"]
+    assert soccer["engines"] == {"unrecorded": 2}
+
+
+def test_market_benchmark_reads_the_published_model_research():
+    benchmark = track_record._market_benchmark()
+    assert benchmark["test_window"] == {"start": "2021-22", "end": "2025-26"}
+    assert benchmark["model_log_loss"] < benchmark["previous_engine_log_loss"]
+    assert benchmark["log_loss_gap"] > 0
+
+
+def test_recent_picks_and_score_accuracy(tmp_path, monkeypatch):
+    rows = [scored("A", (50, 25, 25)), scored("B", (60, 20, 20), kickoff="2026-10-28T15:00:00Z")]
+    rows[0].update(predicted_score={"a": 1.5, "b": 1.0, "likely": {"a": 1, "b": 0}}, final_score={"a": 1, "b": 0},
+                   score_grade={"error_a": 0.5, "error_b": 1.0, "error_total": 1.5, "exact_hit": True})
+    monkeypatch.setattr(mt, "_load_predictions", lambda: rows)
+    monkeypatch.setattr(track_record, "_MARKET_REPORT", tmp_path / "missing.json")
+    summary = track_record.summary()
+    forecast = summary["sports"]["soccer"]["score_forecast"]
+    assert forecast == {"graded": 1, "team_error": 0.75, "total_error": 1.5, "exact_score_hits": 1, "exact_score_rate": 1.0}
+    recent = summary["recent"]
+    assert [r["kickoff"] for r in recent] == ["2026-10-28T15:00:00Z", "2026-10-20T15:00:00Z"]
+    assert recent[1]["final_score"] == {"a": 1, "b": 0} and recent[1]["result"] == "correct"
+    assert recent[0]["result"] == "wrong" and recent[1]["pick_probability"] == 0.5
+    assert set(summary["learning"]["sports"]) == {"soccer", "nba"}

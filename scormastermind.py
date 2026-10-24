@@ -780,7 +780,8 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
         import odds_fetcher as _of
         _home_team_name = str(context.get("team_a_name") or context.get("team_a") or "")
         _away_team_name = str(context.get("team_b_name") or context.get("team_b") or "")
-        _live_odds = _of.fetch_match_odds("soccer", _home_team_name, _away_team_name)
+        _live_odds = _of.fetch_match_odds("soccer", _home_team_name, _away_team_name,
+                                         league_id=int(context.get("league_id") or 0) or None)
         if _live_odds.get("available"):
             _h = float(_live_odds.get("home_odds") or 0)
             _a = float(_live_odds.get("away_odds") or 0)

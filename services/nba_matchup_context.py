@@ -15,7 +15,7 @@ import uuid
 
 import nba_live_client as live
 from runtime_paths import cache_dir
-from services.prediction_lifecycle import CALENDAR_ZONE, calendar_date, parse_kickoff, sanitize_decision
+from services.prediction_lifecycle import CALENDAR_ZONE, calendar_date, freshness_state, parse_kickoff, sanitize_decision
 
 VERSION = "nba-descriptive-context-v1"
 ARCHIVE = cache_dir("score_models", "nba_raw")
@@ -131,7 +131,27 @@ def game_for_id(game_id, date_hint=None):
     day = day or datetime.now(CALENDAR_ZONE)
     if abs((day.astimezone(CALENDAR_ZONE).date() - datetime.now(CALENDAR_ZONE).date()).days) > 14:
         return None
-    return next((game for game in live.get_scoreboard_games(day, "page") if game["id"] == str(game_id)), None)
+    try:
+        return next((game for game in live.get_scoreboard_games(day, "page") if game["id"] == str(game_id)), None)
+    except RuntimeError:
+        from services import decision_store
+        saved = decision_store.get("nba", str(game_id), allow_stale=True)
+        if not saved:
+            raise
+        kickoff = parse_kickoff(saved.get("matchDate"))
+        ids = [str(saved.get(key) or "") for key in ("homeId", "awayId")]
+        if (kickoff is None or (date_hint and calendar_date(kickoff) != day.astimezone(CALENDAR_ZONE).date().isoformat())
+                or not all(value.isdigit() and 1 <= int(value) <= 30 for value in ids) or ids[0] == ids[1]):
+            raise
+        # Only recorded identities/tipoff are retained. Unknown competition
+        # type, venue neutrality and final score cannot become model inputs.
+        status = saved.get("eventStatus") or {}
+        if not isinstance(status, dict):
+            status = {"state": "unknown", "detail": str(status)}
+        return {"id": str(game_id), "date": {"start": saved["matchDate"]},
+                "status": status, "season_type": None, "neutral_site": None,
+                "teams": {"home": {"id": ids[0], "name": saved["teamA"]}, "visitors": {"id": ids[1], "name": saved["teamB"]}},
+                "data_freshness": saved.get("dataFreshness") or {}, "context_source": {"kind": "cached_schedule"}}
 
 
 def schedule_decision(game):
@@ -170,18 +190,28 @@ def _current(team_id, season):
     payload = live._espn_get(f"teams/{team_id}/schedule", params={"season": season}, ttl_seconds=live.NBA_SCHEDULE_TTL_SECONDS, request_profile="page")
     source = payload.get("_scorpred_source") or {}
     games = [dict(game, data_freshness=source) for event in payload.get("events", []) if (game := live._normalize_event(event))]
-    return {"games": games, "source": source, "status": "available" if source.get("state") == "fresh" else "delayed"}
+    return {"games": games, "source": source, "status": "available" if freshness_state(source) == "fresh" else "delayed"}
 
 
 def _current_snapshot(team_id, season):
     key = (str(team_id), season)
     with _form_lock:
         existing = _forms.get(key)
-        if existing is None or (existing[1].done() and time.monotonic() - existing[0] > 60):
+        expired = existing is None
+        if existing is not None and existing[1].done():
+            try:
+                expired = (time.monotonic() - existing[0] > 60
+                           or freshness_state(existing[1].result().get("source")) != "fresh")
+            except Exception:
+                expired = time.monotonic() - existing[0] > 5
+        if expired:
             existing = (time.monotonic(), _pool.submit(_current, team_id, season))
             _forms[key] = existing
     try:
-        return existing[1].result(timeout=.3)
+        snapshot = existing[1].result(timeout=.3)
+        source = dict(snapshot.get("source") or {})
+        source["state"] = freshness_state(source)
+        return {**snapshot, "source": source, "status": "available" if source["state"] == "fresh" else "delayed"}
     except TimeoutError:
         return {"games": [], "status": "refreshing", "source": {}}
     except Exception:
@@ -215,6 +245,7 @@ def context(game, *, now=None):
                                   "received_at": None, "historical_pregame_availability": "unverified"}}
     return {"version": VERSION, "role": "descriptive_only", "prediction_fallback": False,
             "game": {"id": game["id"], "kickoff": game["date"]["start"], "status": game["status"], "venue": game.get("venue"),
+                     "schedule_source": (game.get("context_source") or {}).get("kind", "provider"),
                      "season_type": game.get("season_type"), "neutral_site": game.get("neutral_site"),
                      "result": game.get("scores") if game["status"].get("completed") else None},
             "teams": teams, "statistics_cutoff": cutoff.isoformat(), "availability_lag_hours": 24,

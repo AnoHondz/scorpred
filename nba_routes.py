@@ -41,6 +41,8 @@ from extensions import limiter
 from runtime_paths import cache_dir
 from security import sanitize_error
 from services import decision_store
+from services import nba_pregame_model as pregame
+from services import recalibration
 from services.data_freshness import SOURCE_KEY, from_records, metadata, worst
 from services.decision_engine import DecisionEngine
 from services.prediction_lifecycle import (
@@ -659,6 +661,43 @@ def _build_nba_opp_strengths(nba_standings: dict | list | None) -> dict:
     return se.build_opp_strengths_from_standings(ranked) if ranked else {}
 
 
+def _nba_projection(game: dict, home_id: str, away_id: str, home_name: str, away_name: str) -> tuple[dict | None, list, str | None]:
+    """Fetch both seasons, rosters and player averages, then project; (None, contexts, reason) when it cannot."""
+    contexts, previous = [{}, {}], [[], []]
+    season = game.get("season") or nc._season_from_game_date(game) or nc.NBA_SEASON
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(nc.get_team_recent_form_context, team_id, season, 100, 0, "page") for team_id in (home_id, away_id)]
+        past = [executor.submit(nc.get_team_season_games, team_id, season - 1, "page") for team_id in (home_id, away_id)]
+        pools = executor.submit(_nba_player_pools, home_id, away_id, season)
+        for index, future in enumerate(futures):
+            try:
+                contexts[index] = future.result() or {}
+            except Exception:
+                current_app.logger.warning("NBA season games unavailable for team %s", (home_id, away_id)[index], exc_info=True)
+        for index, future in enumerate(past):
+            try:
+                previous[index] = future.result() or []
+            except Exception:
+                current_app.logger.warning("NBA previous-season games unavailable for team %s", (home_id, away_id)[index], exc_info=True)
+        try:
+            home_pool, away_pool = pools.result()
+        except Exception:
+            current_app.logger.warning("NBA rosters or player averages unavailable for %s vs %s", home_id, away_id, exc_info=True)
+            home_pool = away_pool = None
+    if any("current_games" not in context for context in contexts):
+        return None, contexts, "Current-season team results are unavailable right now."
+    if reason := _nba_form_reason(*contexts):
+        return None, contexts, reason
+    projection = pregame.project(contexts[0]["current_games"] + previous[0], contexts[1]["current_games"] + previous[1],
+                                 home_id, away_id, (game.get("date") or {}).get("start"), neutral=game.get("neutral_site") is True,
+                                 home_players=home_pool, away_players=away_pool)
+    if projection["min_sample"] < pregame.MIN_GAMES:
+        counts = (f"{home_name} {projection['home']['games']}+{projection['home']['previous_games']}, "
+                  f"{away_name} {projection['away']['games']}+{projection['away']['previous_games']}")
+        return None, contexts, f"Ratings need {pregame.MIN_GAMES} completed games per team this season or last (current+previous: {counts})."
+    return projection, contexts, None
+
+
 def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_opp_strengths: dict) -> dict:
     if reason := _nba_pregame_reason(game):
         return {**game, "prediction": None, "unavailable_reason": reason}
@@ -670,110 +709,122 @@ def _build_upcoming_prediction_card(game: dict, team_map: dict[str, dict], nba_o
     if not home_team.get("name") or not away_team.get("name"):
         return {**game, "prediction": None}
 
-    form_home = []
-    form_away = []
-    form_home_context = {"using_historical_context": False}
-    form_away_context = {"using_historical_context": False}
-    season = game.get("season") or nc._season_from_game_date(game) or nc.NBA_SEASON
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_map = {
-            "form_home": executor.submit(nc.get_team_recent_form_context, home_id, season, 10, 0, "page"),
-            "form_away": executor.submit(nc.get_team_recent_form_context, away_id, season, 10, 0, "page"),
-        }
-
-        for key, future in future_map.items():
-            try:
-                result = future.result()
-            except Exception:
-                continue
-
-            if key == "form_home":
-                form_home_context = result or form_home_context
-                form_home_raw = form_home_context.get("current_games") or []
-                form_home = np_nba.extract_recent_form(form_home_raw, home_id, n=5)
-            elif key == "form_away":
-                form_away_context = result or form_away_context
-                form_away_raw = form_away_context.get("current_games") or []
-                form_away = np_nba.extract_recent_form(form_away_raw, away_id, n=5)
-
-    if reason := _nba_form_reason(form_home_context, form_away_context):
+    home_name, away_name = home_team["name"], away_team["name"]
+    projection, contexts, reason = _nba_projection(game, home_id, away_id, home_name, away_name)
+    if reason:
         return {**game, "prediction": None, "unavailable_reason": reason}
-    if min(len(form_home), len(form_away)) < 2:
-        return {**game, "prediction": None, "unavailable_reason": "At least two completed current-season games per team are needed for a pregame estimate."}
+    kickoff = (game.get("date") or {}).get("start")
+    home_pool = projection["availability"]["home"]
+    raw_home = projection["home_probability"]
+    projection["home_probability"] = recalibration.adjust("nba", raw_home, 0.0, 1 - raw_home)[0]
 
-    prediction = se.scorpred_predict(
-        form_a=form_home,
-        form_b=form_away,
-        h2h_form_a=[],
-        h2h_form_b=[],
-        injuries_a=[],
-        injuries_b=[],
-        team_a_is_home=True,
-        team_a_name=home_team.get("nickname") or home_team["name"],
-        team_b_name=away_team.get("nickname") or away_team["name"],
-        sport="nba",
-        opp_strengths=nba_opp_strengths,
+    market_card, market = _nba_market(game)
+    decision = pregame.decide(projection, market, home_name, away_name)
+    p_home = projection["home_probability"]
+    favorite_home = p_home >= 0.5
+    favorite_probability = max(p_home, 1 - p_home)
+    side_name = home_name if decision["side_home"] else away_name
+    sample = projection["min_sample"]
+    data_quality = "Strong Data" if sample >= 20 and home_pool is not None else "Partial Data" if sample >= 8 else "Limited Data"
+    card = dui.build_decision_card(
+        analysis={
+            "match_id": str(game.get("id") or ""),
+            "matchup": f"{home_name} vs {away_name}",
+            "action": decision["action"],
+            "recommended_side": side_name,
+            "confidence": round(decision["side_probability"] * 100),
+            "probabilities": {"a": round(p_home * 100, 1), "draw": 0, "b": round((1 - p_home) * 100, 1)},
+            "reason": decision["reason"],
+            "data_quality": data_quality,
+            "metric_breakdown": None,
+        },
+        sport="nba", team_a=home_name, team_b=away_name, competition="NBA",
+        team_a_logo=home_team.get("logo") or "", team_b_logo=away_team.get("logo") or "",
     )
-    prediction = _apply_nba_confidence_profile(
-        prediction,
-        form_a_games=len(form_home),
-        form_b_games=len(form_away),
-        stats_a_available=False,
-        stats_b_available=False,
-        used_historical_context=bool(
-            form_home_context.get("using_historical_context")
-            or form_away_context.get("using_historical_context")
-        ),
-        data_limited=(len(form_home) < 2 or len(form_away) < 2),
+    card.update(
+        team_a_id=home_id, team_b_id=away_id, model_source=pregame.VERSION, market=market_card,
+        edge_score=None if decision["edge"] is None else round(decision["edge"], 4),
+        game_date=kickoff, event_status=game.get("status"),
+        data_freshness=worst([game.get("data_freshness"), *[context.get("data_freshness") for context in contexts]]),
+        cta_payload={"team_a": home_id, "team_b": away_id, "team_a_name": home_name, "team_b_name": away_name,
+                     "team_a_logo": home_team.get("logo") or "", "team_b_logo": away_team.get("logo") or "",
+                     "event_id": game.get("id") or "", "event_date": kickoff or "",
+                     "event_status": ((game.get("status") or {}).get("long") or ""),
+                     "venue_name": ((game.get("venue") or {}).get("name") or ""), "short_name": game.get("short_name") or ""},
     )
-    data_completeness = _nba_data_completeness(
-        form_a_games=len(form_home),
-        form_b_games=len(form_away),
-        stats_a_available=False,
-        stats_b_available=False,
-        used_historical_context=bool(
-            form_home_context.get("using_historical_context")
-            or form_away_context.get("using_historical_context")
-        ),
-        data_limited=(len(form_home) < 2 or len(form_away) < 2),
-    )
-    prediction = _apply_nba_product_presentation(
-        prediction,
-        data_completeness=data_completeness,
-        team_a_name=home_team.get("nickname") or home_team["name"],
-        team_b_name=away_team.get("nickname") or away_team["name"],
-        team_a_logo=home_team.get("logo") or "",
-        team_b_logo=away_team.get("logo") or "",
-        form_strip=form_home,
-    )
-    if prediction.get("decision_card"):
-        prediction["decision_card"].update(
-            {
-                "cta_url": "/nba/select-game",
-                "cta_method": "post",
-                "cta_label": "Analyze Match",
-                "cta_payload": {
-                    "team_a": home_id,
-                    "team_b": away_id,
-                    "team_a_name": home_team.get("name") or home_team.get("nickname") or "Home",
-                    "team_b_name": away_team.get("name") or away_team.get("nickname") or "Away",
-                    "team_a_logo": home_team.get("logo") or "",
-                    "team_b_logo": away_team.get("logo") or "",
-                    "event_id": game.get("id") or "",
-                    "event_date": ((game.get("date") or {}).get("start") or ""),
-                    "event_status": ((game.get("status") or {}).get("long") or ""),
-                    "venue_name": ((game.get("venue") or {}).get("name") or ""),
-                    "short_name": game.get("short_name") or "",
-                },
-            }
-        )
-        prediction["decision_card"].update(game_date=(game.get("date") or {}).get("start"), event_status=game.get("status"),
-                                           data_freshness=worst([game.get("data_freshness"), form_home_context.get("data_freshness"), form_away_context.get("data_freshness")]))
-        prediction["decision_card"] = sanitize_decision(prediction["decision_card"])
+    favorite = home_name if favorite_home else away_name
+    prediction = {
+        "model": projection | {"home": _rating_summary(projection["home"]), "away": _rating_summary(projection["away"]),
+                               "availability": {side: _availability_summary(projection["availability"][side])
+                                                for side in ("home", "away")}},
+        "win_probabilities": card["probabilities"],
+        "confidence": "High" if favorite_probability >= 0.7 else "Medium" if favorite_probability >= 0.6 else "Low",
+        "best_pick": {"prediction": f"{favorite} Win", "team": "A" if favorite_home else "B",
+                      "reasoning": decision["reason"]},
+        "components_a": _rating_summary(projection["home"]),
+        "components_b": _rating_summary(projection["away"]),
+        "play_type": decision["action"],
+        "decision_card": sanitize_decision(card),
+        "raw_win_probabilities": {"a": round(raw_home * 100, 1), "draw": 0, "b": round((1 - raw_home) * 100, 1)},
+        "market_odds": None if not market or not (market["home_decimal"] and market["away_decimal"]) else
+        {"a": market["home_decimal"], "b": market["away_decimal"], "bookmaker": market["bookmaker"]},
+    }
+    prediction["best_pick"]["confidence"] = prediction["confidence"]
+    if market and market.get("total") is not None:
+        prediction.update(totals_pick="Over" if projection["total"] > market["total"] else "Under",
+                          totals_line=market["total"], totals_market="Total Points")
     if reason := _nba_pregame_reason(game):
         return {**game, "prediction": None, "unavailable_reason": reason}
     return {**game, "prediction": prediction}
+
+
+def _rating_summary(team: dict) -> dict:
+    return {"games": team["games"], "previous_games": team["previous_games"], "sample": round(team["sample"], 1),
+            "record": team["record"], "rating": round(team["rating"], 2),
+            "raw_margin": None if team["raw_margin"] is None else round(team["raw_margin"], 1),
+            "back_to_back": team.get("back_to_back", False)}
+
+
+def _availability_summary(lineup: dict | None) -> dict | None:
+    if lineup is None:
+        return None
+    players = [{"id": row["id"], "name": row["name"], "status": row["status"], "on_roster": row["on_roster"],
+                "availability": row["availability"], "minutes": round(row["minutes"], 1), "pts": round(row["pts"], 1),
+                "reb": round(row["reb"], 1), "ast": round(row["ast"], 1), "value": round(row["value"], 2),
+                "played_share": round(row["played_share"], 2), "delta": round(row["delta"], 2)}
+               for row in lineup["players"] if row["on_roster"] or abs(row["delta"]) >= 0.25]
+    return {"adjustment": round(lineup["adjustment"], 2), "players": players[:12]}
+
+
+def _nba_player_pools(home_id: str, away_id: str, season: int) -> tuple[list | None, list | None]:
+    """Rosters with injury status plus this season's and last season's player averages for both teams."""
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        rosters = [executor.submit(nc.get_team_roster, team_id, season, "page") for team_id in (home_id, away_id)]
+        lines = {year: executor.submit(nc.get_league_player_stats, year, "page") for year in (season, season - 1)}
+        lines = {year: future.result() for year, future in lines.items()}
+        pools = []
+        for team_id, future in zip((home_id, away_id), rosters):
+            roster = [{"id": player.get("id"), "name": player.get("displayName") or
+                       f"{player.get('firstname', '')} {player.get('lastname', '')}".strip(),
+                       "position": (player.get("leagues") or {}).get("standard", {}).get("pos") or "",
+                       "status": ((player.get("injuries") or [{}])[0] or {}).get("status") or ""}
+                      for player in future.result() or []]
+            pools.append(pregame.player_pool(team_id, roster, lines) if roster else None)
+    return pools[0], pools[1]
+
+
+def _nba_market(game: dict) -> tuple[dict | None, dict | None]:
+    """Return (display market, model market) only when the schedule snapshot carrying the odds is recent."""
+    market = pregame.market_from_odds(game.get("odds"))
+    freshness = game.get("data_freshness") or {}
+    observed = parse_kickoff(freshness.get("observed_at"))
+    if not market or observed is None or freshness_state(freshness) != "fresh" \
+            or not 0 <= (datetime.now(UTC) - observed).total_seconds() < 900:
+        return None, None
+    display = {"bookmaker": market["bookmaker"], "updated_at": freshness["observed_at"], "data_freshness": freshness,
+               "home_decimal": market["home_decimal"], "away_decimal": market["away_decimal"],
+               "home_spread": market["home_spread"], "total": market["total"]}
+    return display, market
 
 
 def _confidence_display_label(conf_key: str) -> str:
@@ -1989,39 +2040,8 @@ def _prediction_inner():
     scorpred = _nba_guard_prediction(scorpred, game_snapshot or selected_game or {}, form_context_a, form_context_b)
     if scorpred is None:
         market_analysis = None
-    # Track this prediction
-    try:
-        if scorpred:
-            best_pick = scorpred.get("best_pick", {})
-            pred_winner = best_pick.get("tracking_team") or best_pick.get("team", "")
-            probs = scorpred.get("win_probabilities", {})
-            conf = best_pick.get("confidence", "Medium")
-            totals_leg_data = (market_analysis or {}).get("totals_leg") or {}
-            totals_pick_text = str(totals_leg_data.get("recommendation") or "").strip()
-            totals_match = re.match(r"^(Over|Under)\s+([0-9]+(?:\.[0-9]+)?)$", totals_pick_text, flags=re.IGNORECASE)
-            totals_leg = {
-                "pick": totals_match.group(1).title() if totals_match else None,
-                "line": float(totals_match.group(2)) if totals_match else None,
-                "market": f"Total Points O/U {totals_match.group(2)}" if totals_match else None,
-            }
-            
-            mt.save_prediction(
-                sport="nba",
-                team_a=team_a.get("nickname") or team_a["name"],
-                team_b=team_b.get("nickname") or team_b["name"],
-                predicted_winner=pred_winner,
-                win_probs=probs,
-                confidence=conf,
-                game_date=(selected_game or {}).get("date") or None,
-                kickoff=(selected_game or {}).get("date") or None,
-                team_a_id=team_a["id"],
-                team_b_id=team_b["id"],
-                totals_pick=totals_leg.get("pick"),
-                totals_line=totals_leg.get("line"),
-                totals_market=totals_leg.get("market"),
-            )
-    except Exception:
-        current_app.logger.warning("Prediction tracking failed (nba)", exc_info=True)
+    # Not tracked: this page runs ScorMastermind; the track record measures the pregame margin
+    # model the dashboard publishes, which scheduled tracking records for every game.
 
     _store_assistant_page_context(
         "nba_prediction",
@@ -2632,6 +2652,99 @@ def api_nba_matchup_context(game_id):
         return jsonify(error="NBA comparisons are temporarily unavailable. Schedule and prediction availability remain separate."), 503
 
 
+@nba_api_bp.get("/api/nba/matches/<game_id>/props")
+@limiter.limit("20 per minute")
+def api_nba_props(game_id):
+    """Five best player prop picks for an upcoming game, from ESPN box scores."""
+    payload, status = nba_props_payload(game_id, request.args.get("date"))
+    return jsonify(payload), status
+
+
+def nba_props_payload(game_id: str, date_hint: str | None) -> tuple[dict, int]:
+    """({"result": ...} or {"error": ...}, HTTP status) for one game; shared with the best-props board."""
+    from services import injury_reports, nba_props
+    from services import nba_matchup_context as context_service
+    from services.injury_reports import normalize_name
+    try:
+        game = context_service.game_for_id(game_id, date_hint)
+        if not game:
+            return {"error": "NBA game not found in the available schedule or local archive."}, 404
+        if reason := _nba_pregame_reason(game):
+            return {"error": reason}, 422
+        home, away = _game_side(game, "home"), _game_side(game, "away")
+        home_id, away_id = str(home.get("id") or ""), str(away.get("id") or "")
+        tipoff = parse_kickoff((game.get("date") or {}).get("start"))
+        if not home_id or not away_id or tipoff is None:
+            return {"error": "This game is missing team or tip-off details."}, 422
+        names = {home_id: home.get("name") or "Home", away_id: away.get("name") or "Away"}
+        teams = {(home.get("abbrev") or "").upper(), (away.get("abbrev") or "").upper()} - {""}
+        try:
+            reports, _freshness = injury_reports.espn("nba")
+            # Anyone listed for either team; without abbreviations, anyone listed in the league.
+            excluded = frozenset(normalize_name(r["name"]) for r in reports if not teams or r["team"] in teams)
+        except injury_reports.InjuryFeedUnavailable:
+            excluded = frozenset()
+        result = nba_props.project(home_id, away_id, pregame.season_of(tipoff), tipoff, excluded)
+        from services import prop_markets
+        picks = [{**pick, "team": names.get(pick["team"], pick["team"])} for pick in result["picks"]]
+        result = prop_markets.compare({"picks": picks, "roster_verification": result.get("roster_verification")},
+                                     "nba", names[home_id], names[away_id], tipoff)
+        if reason := _nba_pregame_reason(game):
+            return {"error": reason}, 422
+        return {"result": result}, 200
+    except nba_props.RosterUnavailable as exc:
+        return {"error": str(exc)}, 503
+    except ValueError as exc:
+        return {"error": str(exc)}, 400
+    except Exception:
+        current_app.logger.exception("NBA player props failed")
+        return {"error": "NBA player props are temporarily unavailable."}, 503
+
+
+@nba_api_bp.get("/api/nba/matches/<game_id>/injuries")
+@limiter.limit("30 per minute")
+def api_nba_injuries(game_id):
+    """ESPN injury statuses priced through the pregame model's lineup adjustment."""
+    from services import injury_impact, injury_reports
+    from services import nba_matchup_context as context_service
+    try:
+        game = context_service.game_for_id(game_id, request.args.get("date"))
+        if not game:
+            return jsonify(error="NBA game not found in the available schedule or local archive."), 404
+        if reason := _nba_pregame_reason(game):
+            return jsonify(error=reason), 422
+        home, away = _game_side(game, "home"), _game_side(game, "away")
+        home_id, away_id = str(home.get("id") or ""), str(away.get("id") or "")
+        names = {"home": home.get("name") or "Home", "away": away.get("name") or "Away"}
+        projection, _contexts, reason = _nba_projection(game, home_id, away_id, names["home"], names["away"])
+        if reason:
+            return jsonify(error=reason), 422
+        warnings, sources = [], []
+        try:
+            espn_rows, freshness = injury_reports.espn("nba")
+            sources.append(freshness)
+        except injury_reports.InjuryFeedUnavailable:
+            espn_rows = []
+            warnings.append("The ESPN league injury feed is unavailable; statuses come from team rosters only.")
+        try:
+            players = injury_impact.nba_players(projection, espn_rows)
+        except injury_impact.ImpactUnavailable as exc:
+            return jsonify(error=str(exc)), 422
+        report = injury_impact.margin_report(projection["margin"], projection["sigma"], players, priced=True)
+        result = injury_impact.summarize(report, names, unit="points")
+        if reason := _nba_pregame_reason(game):
+            return jsonify(error=reason), 422
+        result.update(sources=sources, warnings=warnings, base="pregame model",
+                      notice="Win chances are the pregame model's, which already accounts for these statuses. "
+                             "Player values come from box-score averages this season and last.")
+        return jsonify(result=result)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except Exception:
+        current_app.logger.exception("NBA injury impact failed")
+        return jsonify(error="NBA injury data is temporarily unavailable."), 503
+
+
 @nba_api_bp.get("/api/nba/research/early-season")
 @limiter.limit("60 per minute")
 def api_nba_early_season_report():
@@ -2700,18 +2813,20 @@ def api_scoreline_nba():
         team_b_id   str   Away team provider ID
         team_a_name str   (optional) Override display name
         team_b_name str   (optional) Override display name
-        odds_total  float (optional) Market total points line for anchoring
-        ou_lines    csv   (optional) Comma-separated O/U lines e.g. "215.5,220.5,225.5"
+        odds_total  float (optional) Market total points; over/under lines centre on it
+        event_id    str   (optional) ESPN event; verifies the fixture and supplies its odds
+
+    Scores, quarters, over/unders and player box lines come from nba_game_projection, built on
+    the same pregame projection as the decision card.
     """
+    from services import nba_game_projection as game_projection
     from services import scoreline_engine as scoreline_service
-    from services import scoring_research
     from services.scoreline_inputs import ScorelineInputError, validate
     try:
         params = request.get_json(silent=True) or request.form or request.args
         validated = validate(params, "nba")
         event_id = str(params.get("event_id") or params.get("match_id") or "").strip()
         game_snapshot = None
-        input_freshness = {}
         if event_id:
             try:
                 game_snapshot = nc.get_event_snapshot(event_id, validated["before"], "page")
@@ -2729,88 +2844,21 @@ def api_scoreline_nba():
         team_b_id = str(params.get("team_b_id") or params.get("away_id") or "").strip()
         team_a_name = str(params.get("team_a_name") or params.get("team_a") or "Home").strip()
         team_b_name = str(params.get("team_b_name") or params.get("team_b") or "Away").strip()
-        odds_total, ou_lines = validated["odds_total"], validated["ou_lines"]
-
-        stats_a: dict = {}
-        stats_b: dict = {}
-        form_a: list[dict] = []
-        form_b: list[dict] = []
-        injuries_a = None
-        injuries_b = None
-        ml_prob_a: float | None = None
-        ml_prob_b: float | None = None
-        opp_strength_a = None
-        opp_strength_b = None
-        preseason_form = False
-
-        if team_a_id and team_b_id:
-            try:
-                _nc, _np = nc, np_nba
-
-                def safe_fetch(function, *args, **kwargs):
-                    try:
-                        return function(*args, **kwargs)
-                    except Exception:
-                        current_app.logger.warning("Optional NBA scoring input unavailable: %s", function.__name__)
-                        return None
-
-                # Optional standings/injuries must not prevent scored games loading.
-                standings_raw = safe_fetch(_nc.get_standings) or {}
-                opp_str = _build_nba_opp_strengths(standings_raw)
-                # Extract individual opponent strengths
-                opp_strength_b = opp_str.get(se._norm(team_a_name))
-                opp_strength_a = opp_str.get(se._norm(team_b_name))
-
-                raw_stats_a = safe_fetch(_nc.get_team_season_stats, team_a_id) or {}
-                raw_stats_b = safe_fetch(_nc.get_team_season_stats, team_b_id) or {}
-                stats_a = {
-                    "ppg": raw_stats_a.get("ppg"),
-                    "opp_ppg": raw_stats_a.get("opp_ppg"),
-                }
-                stats_b = {
-                    "ppg": raw_stats_b.get("ppg"),
-                    "opp_ppg": raw_stats_b.get("opp_ppg"),
-                }
-                raw_form_a = safe_fetch(_nc.get_team_recent_form, team_a_id, n=10) or []
-                raw_form_b = safe_fetch(_nc.get_team_recent_form, team_b_id, n=10) or []
-                preseason_form = any(game.get("season_type") == 1 for game in raw_form_a + raw_form_b)
-                input_freshness = worst([(game_snapshot or {}).get("data_freshness"), from_records(raw_form_a), from_records(raw_form_b), raw_stats_a.get("data_freshness"), raw_stats_b.get("data_freshness")])
-                if input_freshness and freshness_state(input_freshness) != "fresh":
-                    return jsonify(status="error", message="NBA scoring inputs need a fresh provider update."), 422
-                feature_season = (game_snapshot or {}).get("season") or nc.NBA_SEASON
-                raw_form_a = scoring_research.prior_games(raw_form_a, "nba", before=validated["before"], season=feature_season)
-                raw_form_b = scoring_research.prior_games(raw_form_b, "nba", before=validated["before"], season=feature_season)
-                form_a = _np.extract_recent_form(raw_form_a, team_a_id, n=6)
-                form_b = _np.extract_recent_form(raw_form_b, team_b_id, n=6)
-                injuries_a = safe_fetch(_nc.get_team_injuries, team_a_id)
-                injuries_b = safe_fetch(_nc.get_team_injuries, team_b_id)
-            except Exception:
-                current_app.logger.warning("scoreline_nba: data fetch failed", exc_info=True)
-
-        try:
-            features = scoring_research.rolling_features(form_a, form_b, sport="nba")
-            projection = scoring_research.project("nba", features, before=validated["before"])
-        except ValueError:
-            projection = {"available": False, "reason": "The trained NBA scoring model needs at least three completed games per team."}
-        if preseason_form:
-            projection = {"available": False, "reason": "Current form includes preseason games. The research scoring model was evaluated on regular-season and playoff games; this remains a descriptive estimate."}
-        result = scoreline_service.predict_nba_scoreline(
-            stats_a=stats_a, stats_b=stats_b,
-            form_a=form_a, form_b=form_b,
-            injuries_a=injuries_a, injuries_b=injuries_b,
-            is_home_a=True,
-            ml_prob_a=ml_prob_a, ml_prob_b=ml_prob_b,
-            odds_total=odds_total,
-            team_a_name=team_a_name, team_b_name=team_b_name,
-            ou_lines=ou_lines,
-            opp_strength_a=opp_strength_a,
-            opp_strength_b=opp_strength_b,
-            research_projection=projection,
-        )
+        odds_total = validated["odds_total"]
+        if not team_a_id or not team_b_id or team_a_id == team_b_id:
+            raise ScorelineInputError("Choose a match with two valid teams.")
+        game = game_snapshot or {"date": {"start": validated["before"] or datetime.now(UTC).isoformat()},
+                                 "teams": {"home": {"id": team_a_id}, "visitors": {"id": team_b_id}}}
+        projection, contexts, reason = _nba_projection(game, team_a_id, team_b_id, team_a_name, team_b_name)
+        if reason:
+            raise scoreline_service.InsufficientScoreData(reason)
+        _, market = _nba_market(game_snapshot) if game_snapshot else (None, None)
+        if odds_total:
+            market = {**(market or {}), "total": odds_total}
+        result = game_projection.build(projection, market, team_a_name, team_b_name)
+        input_freshness = worst([(game_snapshot or {}).get("data_freshness"), *[context.get("data_freshness") for context in contexts]])
         if game_snapshot and (reason := _nba_pregame_reason(game_snapshot)):
             raise ScorelineInputError(reason)
-        if input_freshness and freshness_state(input_freshness) != "fresh":
-            return jsonify(status="error", message="NBA scoring inputs expired during calculation. Refresh the match."), 422
         if validated["before"] and not parse_kickoff(validated["before"]) > datetime.now(UTC):
             raise ScorelineInputError("Pregame scoring predictions are unavailable after kickoff.")
         result["data_freshness"] = input_freshness

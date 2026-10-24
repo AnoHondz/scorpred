@@ -77,6 +77,7 @@ class PipelineMonitor:
         "soccer_fixtures": timedelta(hours=2),
         "nba_games":       timedelta(hours=2),
         "ml_predictions":  timedelta(hours=3),
+        "injury_reports":  timedelta(hours=1),
     }
     FAILURE_ALERT_THRESHOLD = 3
 

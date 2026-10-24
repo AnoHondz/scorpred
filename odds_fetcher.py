@@ -34,6 +34,12 @@ _SPORT_KEY_MAP = {
     "soccer": "soccer_epl",      # English Premier League
     "nba": "basketball_nba",
 }
+# Soccer feeds are per league; anything unlisted falls back to the default soccer key above.
+_SOCCER_LEAGUE_KEYS = {
+    39: "soccer_epl",
+    78: "soccer_germany_bundesliga",
+    140: "soccer_spain_la_liga",
+}
 
 
 def _cache_path(cache_key: str) -> Path:
@@ -72,6 +78,7 @@ def fetch_match_odds(
     markets: str = "h2h",
     regions: str = "uk,eu,us",
     kickoff: str | None = None,
+    league_id: int | None = None,
 ) -> dict[str, Any]:
     """Fetch a fresh, complete bookmaker quote for a specific upcoming match.
 
@@ -91,6 +98,8 @@ def fetch_match_odds(
         return _unavailable("No ODDS_API_KEY set")
 
     sport_key = _SPORT_KEY_MAP.get(sport.lower())
+    if sport.lower() == "soccer" and league_id is not None:
+        sport_key = _SOCCER_LEAGUE_KEYS.get(int(league_id), sport_key)
     if not sport_key:
         return _unavailable(f"Unsupported sport: {sport}")
 
@@ -100,6 +109,26 @@ def fetch_match_odds(
         cached["source"] = "cache"
         return cached
 
+    games = _league_games(sport_key, markets, regions)
+    if games is None:
+        return _unavailable("The odds provider could not refresh prices.")
+
+    result = _find_match(games, team_a, team_b, kickoff=kickoff)
+    _save_cached(cache_key, result)
+    result["source"] = "live"
+    return result
+
+
+_LEAGUE_GAMES: dict[tuple[str, str, str], tuple[float, list]] = {}
+_LEAGUE_TTL = 120
+
+
+def _league_games(sport_key: str, markets: str, regions: str) -> list | None:
+    """One request prices a whole league, so matches looked up together share it (the API bills per request)."""
+    key = (sport_key, markets, regions)
+    cached = _LEAGUE_GAMES.get(key)
+    if cached and 0 <= time.time() - cached[0] < _LEAGUE_TTL:
+        return cached[1]
     try:
         url = f"{_ODDS_API_BASE}/sports/{sport_key}/odds"
         params = {
@@ -113,12 +142,11 @@ def fetch_match_odds(
         games = resp.json()
     except Exception as exc:
         logger.warning("odds_fetcher: API call failed (%s)", type(exc).__name__)
-        return _unavailable("The odds provider could not refresh prices.")
-
-    result = _find_match(games, team_a, team_b, kickoff=kickoff)
-    _save_cached(cache_key, result)
-    result["source"] = "live"
-    return result
+        return None
+    if not isinstance(games, list):
+        return None
+    _LEAGUE_GAMES[key] = (time.time(), games)
+    return games
 
 
 def _current(result, kickoff=None):

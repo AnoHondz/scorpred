@@ -124,3 +124,18 @@ def test_missing_report_is_explicit_and_default_disabled(tmp_path, monkeypatch):
     assert response.json['available'] is False
     assert response.json['production_enabled'] is False
     assert response.json['research_enabled'] is False
+
+
+def test_prospective_snapshot_is_immutable_and_never_captures_a_post_tipoff_outcome(tmp_path):
+    from scripts.snapshot_nba_early_season import capture
+    context, artifact = preview_inputs()
+    artifact['protocol_sha256'] = 'frozen-protocol'
+    path = tmp_path/'prospective.json'
+    assert capture(context, artifact, path, now=NOW)['status'] == 'research_snapshot_saved'
+    original = path.read_bytes()
+    context['game']['kickoff'] = NOW.isoformat()
+    context['game']['result'] = {'home': 120, 'away': 100}
+    assert capture(context, artifact, path, now=NOW)['status'] == 'existing_snapshot_preserved'
+    assert path.read_bytes() == original
+    with pytest.raises(ValueError): capture(context, artifact, tmp_path/'late.json', now=NOW)
+    assert not (tmp_path/'late.json').exists()
