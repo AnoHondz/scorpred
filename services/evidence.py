@@ -10,8 +10,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from services.data_freshness import from_records, worst
+from services.prediction_lifecycle import calendar_date, freshness_state, unavailable_reason
 
-_UPCOMING_FIXTURE_CACHE_TTL_SECONDS = 600
+_UPCOMING_FIXTURE_CACHE_TTL_SECONDS = 120
 _TEAM_FORM_CACHE_TTL_SECONDS = 900
 _H2H_CACHE_TTL_SECONDS = 900
 _INJURY_CACHE_TTL_SECONDS = 900
@@ -29,7 +31,13 @@ def _cache_get(cache: dict[tuple[Any, ...], dict[str, Any]], key: tuple[Any, ...
     if not entry:
         return None
     if entry.get("expires_at") and entry["expires_at"] > now:
-        return deepcopy(entry.get("value"))
+        value = deepcopy(entry.get("value"))
+        def current(item):
+            if isinstance(item, dict):
+                meta = item.get("data_freshness") or item.get("_scorpred_source")
+                return (not meta or freshness_state(meta, now) == "fresh") and all(current(v) for k, v in item.items() if k not in {"data_freshness", "_scorpred_source"})
+            return all(current(v) for v in item) if isinstance(item, (list, tuple)) else True
+        return value if current(value) else None
     return None
 
 
@@ -37,7 +45,8 @@ def _cache_get_stale(cache: dict[tuple[Any, ...], dict[str, Any]], key: tuple[An
     entry = cache.get(key)
     if not entry:
         return None
-    return deepcopy(entry.get("value"))
+    # Expired evidence must be re-observed by a provider before it can be scored.
+    return None
 
 
 def _cache_set(
@@ -142,6 +151,19 @@ def _safe_call(call: Callable[[], Any], *, logger, label: str, default: Any) -> 
     except Exception as exc:  # pragma: no cover - defensive logging path
         logger.warning("[EVIDENCE] %s: failed (%s)", label, exc)
         return default
+
+
+def _with_ratings_model(api_client, league: int, prediction: dict, home_name: str, away_name: str, logger) -> dict:
+    """Publish the fitted ratings model's probabilities; the rules engine's stay only when ratings are unavailable."""
+    from services import soccer_model
+    try:
+        fitted = soccer_model.predict(api_client, league, home_name, away_name)
+    except Exception as exc:
+        logger.warning("[EVIDENCE] ratings_model failed league=%s %s vs %s: %s", league, home_name, away_name, exc)
+        fitted = None
+    if fitted is None:
+        logger.info("[EVIDENCE] ratings_model unavailable league=%s %s vs %s", league, home_name, away_name)
+    return soccer_model.apply(prediction, fitted, home_name, away_name)
 
 
 def _limited_prediction(engine, *, team_a_name: str, team_b_name: str, opp_strengths: dict, reason: str) -> dict:
@@ -293,6 +315,7 @@ def load_upcoming_fixtures(
     include_standings: bool = True,
     competition: str | None = None,
     days: int | None = None,
+    selected_date: str | None = None,
     **legacy_kwargs,
 ) -> tuple[list[dict], str | None, str, str]:
     """Load and score upcoming soccer fixtures with robust fallbacks and diagnostics.
@@ -335,6 +358,7 @@ def load_upcoming_fixtures(
         competition or "",
         int(days or 0),
         source_hint,
+        selected_date,
     )
 
     if not force_refresh:
@@ -357,7 +381,8 @@ def load_upcoming_fixtures(
 
     # Layer 1: primary provider
     try:
-        upcoming_raw = api_client.get_upcoming_fixtures(league, season, next_n=next_n)
+        upcoming_raw = (api_client.get_fixtures_for_date(league, season, selected_date) if selected_date
+                        else api_client.get_upcoming_fixtures(league, season, next_n=next_n))
         source = source_hint
         logger.info("[EVIDENCE] fixture_fetch primary_ok count=%d source=%s", len(upcoming_raw), source)
     except Exception as exc:
@@ -368,7 +393,7 @@ def load_upcoming_fixtures(
             print(f"[LOG FAILSAFE] {exc}")
 
     # Layer 2: explicit fallback source when available
-    if not upcoming_raw and hasattr(api_client, "get_espn_fixtures"):
+    if not upcoming_raw and not selected_date and hasattr(api_client, "get_espn_fixtures"):
         slug_map = getattr(api_client, "ESPN_SLUG_BY_LEAGUE", {}) or {}
         espn_slug = str(slug_map.get(league, ""))
         if espn_slug:
@@ -416,6 +441,8 @@ def load_upcoming_fixtures(
         item = _normalize_fixture_shape(fixture, league=league, logger=logger)
         if not item:
             continue
+        if selected_date and calendar_date(item["fixture"]["date"]) != selected_date:
+            continue
         if competition and competition.strip():
             league_name = str((item.get("league") or {}).get("name") or "").strip().lower()
             if competition.strip().lower() not in league_name:
@@ -431,6 +458,11 @@ def load_upcoming_fixtures(
     deep_fixtures = []
     shallow_fixtures = []
     for idx, fixture in enumerate(normalized[:next_n]):
+        info = fixture.get("fixture") or {}
+        blocked = unavailable_reason(info.get("date"), info.get("status"), fixture.get("data_freshness"))
+        if blocked:
+            fixture["prediction"] = {"action": "SKIP", "confidence_pct": 0, "best_pick": {}, "win_probabilities": {}, "reason": blocked}
+            continue
         teams = fixture.get("teams") or {}
         home = teams.get("home") or {}
         away = teams.get("away") or {}
@@ -494,13 +526,14 @@ def load_upcoming_fixtures(
                     prefetched[idx] = {}
 
     # Build all predictions in original order
-    all_items: dict[int, dict] = {}
+    all_items: dict[int, dict] = {idx: fixture for idx, fixture in enumerate(normalized[:next_n]) if "prediction" in fixture and unavailable_reason((fixture.get("fixture") or {}).get("date"), (fixture.get("fixture") or {}).get("status"), fixture.get("data_freshness"))}
 
     for idx, fixture, home_id, away_id, home_name, away_name, reason in shallow_fixtures:
         prediction = _limited_prediction(
             engine, team_a_name=home_name, team_b_name=away_name,
             opp_strengths=opp_strengths, reason=reason,
         )
+        prediction = _with_ratings_model(api_client, league, prediction, home_name, away_name, logger)
         if reason == "Deep prediction cap reached":
             logger.info("[EVIDENCE] prediction_context degraded fixture_id=%s reason=deep_limit",
                         (fixture.get("fixture") or {}).get("id"))
@@ -511,6 +544,10 @@ def load_upcoming_fixtures(
         try:
             form_home, fixtures_home = data.get("form_home") or ([], [])
             form_away, fixtures_away = data.get("form_away") or ([], [])
+            fixture["data_freshness"] = worst([fixture.get("data_freshness"), from_records(fixtures_home), from_records(fixtures_away), from_records(standings)])
+            if unavailable_reason((fixture.get("fixture") or {}).get("date"), (fixture.get("fixture") or {}).get("status"), fixture.get("data_freshness")):
+                all_items[idx] = {**fixture, "prediction": {"action": "SKIP", "confidence_pct": 0, "best_pick": {}, "win_probabilities": {}}}
+                continue
             h2h_result = data.get("h2h") or ([], [], [])
             _, h2h_home, h2h_away = h2h_result
             injuries_home = (data.get("inj_home") or []) if include_injuries else []
@@ -543,6 +580,7 @@ def load_upcoming_fixtures(
                 prediction["h2h_form_b"] = h2h_away
                 if downgraded_reason:
                     prediction["data_quality"] = "Limited"
+                prediction = _with_ratings_model(api_client, league, prediction, home_name, away_name, logger)
         except Exception as exc:
             logger.warning("[EVIDENCE] prediction_context failed fixture_id=%s reason=%s",
                            (fixture.get("fixture") or {}).get("id"), exc)

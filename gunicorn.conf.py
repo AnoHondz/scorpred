@@ -1,18 +1,11 @@
-"""
-Gunicorn configuration for Render (free tier, 512 MB RAM).
-
---preload loads the app once in the master process; workers fork from it,
-sharing the read-only pages via copy-on-write.  The post_fork hook disposes
-SQLAlchemy's connection pool so each worker opens its own fresh connections
-rather than sharing the master's file descriptors.
-"""
+"""Single-worker deployment; scheduler starts after worker initialization."""
 
 import os
 
 workers = 1
 threads = 4
 timeout = 120
-preload_app = True
+preload_app = False
 bind = f"0.0.0.0:{os.environ.get('PORT', '10000')}"
 
 # Keep gunicorn's access log quiet unless DEBUG is set
@@ -21,10 +14,11 @@ errorlog = "-"
 loglevel = "info"
 
 
-def post_fork(server, worker):
-    """Dispose SQLAlchemy engine after fork to avoid shared connections."""
-    try:
-        from app import db
-        db.engine.dispose()
-    except Exception:
-        pass
+def post_worker_init(worker):
+    from app import start_background_services
+    start_background_services()
+
+
+def worker_exit(server, worker):
+    from app import stop_background_services
+    stop_background_services()

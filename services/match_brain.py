@@ -1,17 +1,30 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import threading
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from typing import Any, Callable
 
 from services.calibration_engine import CalibrationEngine
+from services.data_freshness import metadata as source_metadata
+from services.data_freshness import worst
 from services.decision_engine import DecisionEngine
 from services.drift_engine import DriftEngine
 from services.feature_attribution_engine import FeatureAttributionEngine
+from services.pipeline_monitor import (
+    combine_refresh_outcomes,
+    fixture_refresh_outcome,
+    parse_observed_at,
+)
+from services.prediction_lifecycle import (
+    calendar_date,
+    freshness_state,
+    sanitize_decision,
+    unavailable_reason,
+)
 
 
 @dataclass(slots=True)
@@ -29,6 +42,12 @@ class MatchBrain:
     _analysis_checksum: dict[str, str] = field(default_factory=dict)
     _status_memory: dict[str, str] = field(default_factory=dict)
     _last_successful_fixtures: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    _fixture_observed_at: dict[int, datetime] = field(default_factory=dict)
+    _fixture_refresh_outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
+    _last_refresh_attempts: dict[int, datetime] = field(default_factory=dict)
+    _refresh_outcomes: dict[int, dict[str, Any]] = field(default_factory=dict)
+    _results_read_outcome: dict[str, Any] = field(default_factory=dict)
+    _result_refresh_outcome: dict[str, Any] = field(default_factory=dict)
     _last_successful_results: list[dict[str, Any]] = field(default_factory=list)
     _active_computations: set[str] = field(default_factory=set)
     _tracked_match_ids: set[str] = field(default_factory=set)
@@ -62,7 +81,7 @@ class MatchBrain:
         kickoff = self._parse_kickoff((fixture.get("fixture") or {}).get("date"))
         if kickoff is None:
             return "upcoming"
-        delta = (kickoff.date() - now.date()).days
+        delta = (date.fromisoformat(calendar_date(kickoff)) - date.fromisoformat(calendar_date(now))).days
         if delta == 0:
             return "today"
         if delta == 1:
@@ -98,6 +117,21 @@ class MatchBrain:
             return None
 
         self._fixture_index[str(fixture_id)] = fixture
+        reason = unavailable_reason(
+            (fixture.get("fixture") or {}).get("date"),
+            (fixture.get("fixture") or {}).get("status"), fixture.get("data_freshness"),
+        )
+        from services.input_contracts import three_way_probabilities
+        if not three_way_probabilities((fixture.get("prediction") or {}).get("win_probabilities")):
+            reason = reason or "Prediction probabilities are missing or malformed; no estimate is available."
+        if reason:
+            canonical = self._safe_unavailable(fixture_id)
+            canonical.update(matchup=f"{home_name} vs {away_name}", teams={"home": home, "away": away},
+                             kickoff=(fixture.get("fixture") or {}).get("date") or "",
+                             status=self.get_match_status(fixture), league=(fixture.get("league") or {}).get("name") or "Soccer",
+                             event_status=(fixture.get("fixture") or {}).get("status"), data_freshness=fixture.get("data_freshness"),
+                             date_bucket=self.get_date_bucket(fixture), reason=reason)
+            return self._sanitize_canonical(canonical)
         _pred = fixture.get("prediction") or {}
         raw_probs = _pred.get("win_probabilities") or {}
         best_pick = _pred.get("best_pick") or {}
@@ -109,7 +143,8 @@ class MatchBrain:
             trust_score = None
         drift_status = self.get_drift_status()
         adaptive = self.get_adaptive_thresholds(model_metrics=model_metrics, drift_status=drift_status)
-        feature_attribution = self.get_feature_attribution()
+        # Feature feedback is learned from the rules engine's components; it does not apply to the ratings model.
+        feature_attribution = {} if _pred.get("ratings_model") else self.get_feature_attribution()
 
         decision = self.decision_engine.build_decision(
             {
@@ -135,6 +170,10 @@ class MatchBrain:
             }
         )
 
+        # No soccer model has beaten bookmaker prices in walk-forward testing
+        # (docs/SOCCER_MODEL_RESEARCH.md), so the strongest soccer call is CONSIDER.
+        if decision.get("action") == "BET":
+            decision["action"] = "CONSIDER"
         kickoff = (fixture.get("fixture") or {}).get("date") or ""
         status = self.get_match_status(fixture)
         league = (fixture.get("league") or {}).get("name") or "Soccer"
@@ -169,10 +208,13 @@ class MatchBrain:
             "risk_level": breakdown.get("risk_level"),
             "decision_grade": breakdown.get("decision_grade"),
             "prediction": decision,
+            "model_source": _pred.get("model_source"),
             "teams": {"home": home, "away": away},
             "date_bucket": self.get_date_bucket(fixture),
+            "event_status": (fixture.get("fixture") or {}).get("status"),
+            "data_freshness": fixture.get("data_freshness"),
         }
-        return self._validate_canonical_decision(canonical)
+        return self._sanitize_canonical(self._validate_canonical_decision(canonical))
 
     def get_match_analysis(self, match_id: str | int) -> dict[str, Any] | None:
         match_key = str(match_id)
@@ -180,7 +222,21 @@ class MatchBrain:
             return self._safe_unavailable(match_id)
         cached = self._analysis_cache.get(match_key)
         if cached is not None:
-            return cached
+            fixture = self._fixture_index.get(match_key) or self.get_fixture_by_id(match_key)
+            if fixture:
+                previous_source = cached.get("data_freshness")
+                current_source = fixture.get("data_freshness")
+                if (previous_source and freshness_state(previous_source) != "fresh"
+                        and current_source and freshness_state(current_source) == "fresh"):
+                    regenerated = self.canonical_from_fixture(fixture)
+                    if regenerated:
+                        self._analysis_cache[match_key] = regenerated
+                        self._analysis_checksum[match_key] = self._checksum(regenerated)
+                        return self._sanitize_canonical(regenerated)
+                cached = dict(cached, kickoff=(fixture.get("fixture") or {}).get("date") or "",
+                              status=self.get_match_status(fixture), event_status=(fixture.get("fixture") or {}).get("status"),
+                              data_freshness=worst([previous_source, current_source]) or (previous_source if previous_source is not None else current_source))
+            return self._sanitize_canonical(cached)
         if match_key in self._active_computations:
             return cached or self._safe_unavailable(match_id)
 
@@ -196,10 +252,10 @@ class MatchBrain:
             existing_checksum = self._analysis_checksum.get(match_key)
             if existing_checksum and existing_checksum != checksum:
                 self._log.error("canonical_mismatch match_id=%s", match_key)
-                return self._analysis_cache.get(match_key, canonical)
+                return self._sanitize_canonical(self._analysis_cache.get(match_key, canonical))
             self._analysis_cache[match_key] = canonical
             self._analysis_checksum[match_key] = checksum
-            return canonical
+            return self._sanitize_canonical(canonical)
         finally:
             self._active_computations.discard(match_key)
 
@@ -307,12 +363,19 @@ class MatchBrain:
     def refresh_tracked_matches(self) -> list[dict[str, Any]]:
         if self.refresh_results:
             try:
-                self.refresh_results()
-            except Exception:
+                result = self.refresh_results()
+                if isinstance(result, dict) and (result.get("failed") or result.get("status") in {"failed", "degraded"}):
+                    raise RuntimeError(f"Result refresh reported failures: {result.get('errors') or result.get('error') or result.get('failed')}")
+                self._result_refresh_outcome = {"status": "success", "observed_at": datetime.now(timezone.utc).isoformat(), "error": None}
+            except Exception as exc:
                 self._error_count += 1
+                self._result_refresh_outcome = {"status": "failed", "observed_at": None, "error": str(exc)}
+                self._log.warning("Result refresh failed: %s", exc)
+        else:
+            self._result_refresh_outcome = {"status": "success", "observed_at": datetime.now(timezone.utc).isoformat(), "error": None}
         if not self.tracker_recent:
             return []
-        tracked = self.tracker_recent(300) or []
+        tracked = self.safe_fetch_results()
         rows: list[dict[str, Any]] = []
         for row in tracked:
             fixture_id = str(row.get("fixture_id") or "")
@@ -323,44 +386,113 @@ class MatchBrain:
         return rows
 
     def safe_fetch_fixtures(self, league_id: int) -> list[dict[str, Any]]:
+        now = datetime.now(timezone.utc)
         try:
-            fixtures, *_ = self.load_fixtures(league_id)
-            if fixtures:
+            fixtures, error, source, marker = self.load_fixtures(league_id)
+            if not isinstance(fixtures, list):
+                raise ValueError("Fixture loader did not return a schedule list")
+            outcome = fixture_refresh_outcome(fixtures, error, source, marker)
+            observed = parse_observed_at(outcome.get("observed_at"))
+            if observed and (now - observed).total_seconds() > 7200:
+                outcome = {"status": "failed", "observed_at": observed.isoformat(), "error": "Fixture source is older than two hours"}
+                fixtures = []
+            if outcome["status"] == "success":
+                # A fresh empty schedule clears old games instead of resurrecting them.
                 self._last_successful_fixtures[league_id] = fixtures
-                self._last_fetch_at = datetime.now(timezone.utc)
-                self._api_status = "ok"
+                self._fixture_observed_at[league_id] = observed or now
             else:
-                self._api_status = "degraded"
-            return fixtures or self._last_successful_fixtures.get(league_id, [])
-        except Exception:
+                self._error_count += 1
+                if observed is None or observed > now:
+                    fixtures = []
+            self._fixture_refresh_outcomes[league_id] = outcome
+        except Exception as exc:
             self._error_count += 1
-            self._api_status = "degraded"
-            return self._last_successful_fixtures.get(league_id, [])
+            fixtures = []
+            self._fixture_refresh_outcomes[league_id] = {"status": "failed", "observed_at": None, "error": str(exc)}
+            self._log.warning("Fixture refresh failed league=%s: %s", league_id, exc)
+        outcome = self._fixture_refresh_outcomes[league_id]
+        if outcome["status"] != "success" and not fixtures:
+            previous_observed = self._fixture_observed_at.get(league_id)
+            if previous_observed and 0 <= (now - previous_observed).total_seconds() <= 7200:
+                fixtures = self._last_successful_fixtures.get(league_id, [])
+                if fixtures:
+                    outcome.update(status="degraded", observed_at=previous_observed.isoformat())
+        if outcome["status"] != "success" and fixtures:
+            # Fallback rows retain their source time and cannot generate fresh recommendations.
+            observed = parse_observed_at(outcome.get("observed_at"))
+            refreshed = []
+            for fixture in fixtures:
+                freshness = dict(fixture.get("data_freshness") or source_metadata("soccer", observed, 900, 7200, degraded=True))
+                freshness.update(state="degraded", warning=outcome.get("error") or "Provider refresh failed; showing a cached schedule")
+                refreshed.append(dict(fixture, data_freshness=freshness))
+            fixtures = refreshed
+        self._update_refresh_health()
+        return fixtures
 
     def safe_fetch_results(self) -> list[dict[str, Any]]:
         if not self.tracker_recent:
+            self._results_read_outcome = {"status": "success", "observed_at": datetime.now(timezone.utc).isoformat(), "error": None}
             return self._last_successful_results
         try:
             results = self.tracker_recent(300) or []
-            if results:
-                self._last_successful_results = results
-            return results or self._last_successful_results
-        except Exception:
+            self._last_successful_results = results
+            self._results_read_outcome = {"status": "success", "observed_at": datetime.now(timezone.utc).isoformat(), "error": None}
+            return results
+        except Exception as exc:
             self._error_count += 1
+            self._results_read_outcome = {"status": "degraded" if self._last_successful_results else "failed", "observed_at": None, "error": str(exc)}
+            self._api_status = "degraded"
             return self._last_successful_results
 
-    def refresh_cycle(self, league_id: int, min_interval_seconds: int = 60) -> None:
+    def refresh_cycle(self, league_id: int, min_interval_seconds: int = 60) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
-        if self._last_refresh_at and (now - self._last_refresh_at).total_seconds() < min_interval_seconds:
-            return
+        last_attempt = self._last_refresh_attempts.get(league_id)
+        if last_attempt and (now - last_attempt).total_seconds() < min_interval_seconds:
+            return {"status": "skipped", "observed_at": None, "error": "Refresh interval has not elapsed"}
         with self._refresh_lock:
             now = datetime.now(timezone.utc)
-            if self._last_refresh_at and (now - self._last_refresh_at).total_seconds() < min_interval_seconds:
-                return
+            last_attempt = self._last_refresh_attempts.get(league_id)
+            if last_attempt and (now - last_attempt).total_seconds() < min_interval_seconds:
+                return {"status": "skipped", "observed_at": None, "error": "Refresh interval has not elapsed"}
+            self._last_refresh_attempts[league_id] = now
             self.safe_fetch_fixtures(league_id)
             self.refresh_tracked_matches()
-            self._last_successful_results = self.safe_fetch_results()
-            self._last_refresh_at = now
+            self.safe_fetch_results()
+            outcome = combine_refresh_outcomes([
+                self._fixture_refresh_outcomes[league_id], self._result_refresh_outcome, self._results_read_outcome,
+            ])
+            outcome["league_id"] = league_id
+            self._refresh_outcomes[league_id] = outcome
+            if all(row["status"] == "success" for row in self._refresh_outcomes.values()):
+                self._last_refresh_at = min(parse_observed_at(row["observed_at"]) for row in self._refresh_outcomes.values())
+            self._update_refresh_health()
+            return dict(outcome)
+
+    def _update_refresh_health(self) -> None:
+        outcomes = list(self._fixture_refresh_outcomes.values())
+        outcomes.extend(row for row in (self._results_read_outcome, self._result_refresh_outcome) if row)
+        self._api_status = "ok" if outcomes and all(row.get("status") == "success" for row in outcomes) else "degraded"
+        # A single freshly fetched league must not make another league's old data look new.
+        stamps = [parse_observed_at(row.get("observed_at")) for row in self._fixture_refresh_outcomes.values()]
+        self._last_fetch_at = min(stamps) if stamps and all(stamps) else None
+
+    @staticmethod
+    def _sanitize_canonical(canonical: dict[str, Any]) -> dict[str, Any]:
+        result = sanitize_decision(canonical)
+        if result.get("pregame_available"):
+            return result
+        reason = result.get("reason") or "Pregame prediction is unavailable"
+        result.update(data_quality=0, model_probability=None, implied_probability=None,
+                      edge_score=None, expected_value=None)
+        prediction = dict(result.get("prediction") or {})
+        prediction.update(action="SKIP", side="Unavailable", recommended_side="Unavailable", confidence=0,
+                          probabilities={}, model_probability=None, implied_probability=None, edge_score=None,
+                          expected_value=None, data_quality=0, reason=reason,
+                          reasoning={"strengths": [], "risks": [reason]})
+        result["prediction"] = prediction
+        result["metric_breakdown"] = dict(result.get("metric_breakdown") or {}, model_probability=None,
+                                          implied_probability=None, edge_score=None, expected_value=None)
+        return result
 
     def get_performance_snapshot(self, completed: list[dict[str, Any]]) -> dict[str, Any]:
         wins = sum(1 for row in completed if row.get("is_correct") is True)
@@ -415,6 +547,8 @@ class MatchBrain:
             "calibration_status": "ready" if len(evaluated) >= 2 else "insufficient_data",
             "error_count": self._error_count,
             "degraded_mode": self._api_status != "ok",
+            "fixture_refreshes": {str(league): dict(outcome) for league, outcome in self._fixture_refresh_outcomes.items()},
+            "result_refresh": dict(self._result_refresh_outcome),
         }
 
     def get_model_metrics(self) -> dict[str, Any]:
@@ -703,12 +837,12 @@ class MatchBrain:
             "status": "unavailable",
             "recommended_side": "Unavailable",
             "action": "SKIP",
-            "confidence": 50,
-            "probabilities": {"home": 0.3333, "draw": 0.3333, "away": 0.3333},
+            "confidence": 0,
+            "probabilities": {},
             "data_quality": 0,
             "reason": "Data not ready",
             "metric_breakdown": {
-                "model_probability": 0.5,
+                "model_probability": None,
                 "implied_probability": None,
                 "edge_score": None,
                 "expected_value": None,
@@ -716,7 +850,7 @@ class MatchBrain:
                 "risk_level": "HIGH",
                 "decision_grade": "D",
             },
-            "model_probability": 0.5,
+            "model_probability": None,
             "implied_probability": None,
             "edge_score": None,
             "expected_value": None,

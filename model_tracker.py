@@ -16,6 +16,7 @@ import uuid
 import re
 from runtime_paths import prediction_tracking_path
 from utils.parsing import normalize_date
+from utils.atomic import atomic_write_json, transaction
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,32 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware_datetime(value: Any) -> datetime | None:
+    """Parse a kickoff timestamp; date-only or naive values are not precise enough to freeze picks."""
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and "T" in value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo is not None else None
+
+
+def _isoformat_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def verified_pregame(prediction: dict) -> bool:
+    """True only when the pick was first recorded before a known, precise kickoff."""
+    kickoff = _aware_datetime(prediction.get("kickoff_at"))
+    created = _aware_datetime(prediction.get("created_at"))
+    return kickoff is not None and created is not None and created < kickoff
+
+
+@transaction(lambda: _TRACKING_FILE)
 def _ensure_tracking_file() -> None:
     """Create tracking file if it doesn't exist."""
     if os.path.exists(_TRACKING_FILE):
@@ -35,20 +62,22 @@ def _ensure_tracking_file() -> None:
     folder = os.path.dirname(_TRACKING_FILE)
     if folder and not os.path.isdir(folder):
         os.makedirs(folder, exist_ok=True)
-    with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-        json.dump({"predictions": []}, f, indent=2)
+    atomic_write_json(_TRACKING_FILE, {"predictions": []})
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _migrate_predictions() -> None:
     """Migrate existing predictions to add status field if missing."""
     try:
         with open(_TRACKING_FILE, "r", encoding="utf-8") as f:
             try:
                 data = json.load(f)
-            except (json.JSONDecodeError, FileNotFoundError):
-                data = {"predictions": []}
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Prediction history is corrupt; restore a backup before writing.") from exc
 
         predictions = data.get("predictions", [])
+        if not isinstance(data, dict) or not isinstance(data.get("predictions"), list):
+            raise RuntimeError("Prediction history has an invalid schema")
         migrated = False
 
         for pred in predictions:
@@ -75,6 +104,12 @@ def _migrate_predictions() -> None:
 
             if pred.get("totals_pick") and "totals_line" not in pred:
                 pred["totals_line"] = _default_totals_line(pred.get("sport", ""))
+                migrated = True
+
+            # A line of 0 came from a parsing fallback; the real line is in the market name.
+            if pred.get("totals_pick") and pred.get("totals_line") is not None and not (pred.get("totals_line") or 0) > 0:
+                pred["totals_line"] = parse_totals_line(None, pred.get("totals_market")) or _default_totals_line(pred.get("sport", ""))
+                pred["totals_line_repaired"] = True
                 migrated = True
 
             if pred.get("totals_pick") and "totals_market" not in pred:
@@ -116,8 +151,9 @@ def _migrate_predictions() -> None:
 
             if pred.get("status") == "completed" or pred.get("actual_result"):
                 outcome = _compute_prediction_outcome(pred)
-                if pred.get("is_correct") != outcome["game_win"]:
-                    pred["is_correct"] = outcome["game_win"]
+                # The tracked pick is the winner; the totals leg is graded separately (overall_result).
+                if pred.get("is_correct") != outcome["winner_hit"]:
+                    pred["is_correct"] = outcome["winner_hit"]
                     migrated = True
                 if pred.get("actual_winner") != outcome["actual_winner"]:
                     pred["actual_winner"] = outcome["actual_winner"]
@@ -133,12 +169,13 @@ def _migrate_predictions() -> None:
                     migrated = True
 
         if migrated:
-            with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-                json.dump({"predictions": predictions}, f, indent=2)
+            atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
     except Exception:
         logger.warning("Prediction migration failed", exc_info=True)
+        raise
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _load_predictions() -> list[dict]:
     """Load all tracked predictions."""
     _ensure_tracking_file()
@@ -151,21 +188,22 @@ def _load_predictions() -> list[dict]:
             if pred.get("status") == "completed":
                 changed = _apply_grading(pred) or changed
         if changed:
-            with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-                json.dump({"predictions": predictions}, f, indent=2)
+            atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
         return predictions
     except Exception:
-        return []
+        logger.error("Unable to read prediction history", exc_info=True)
+        raise
 
 
+@transaction(lambda: _TRACKING_FILE)
 def _save_predictions(predictions: list[dict]) -> None:
     """Save predictions to file."""
     try:
         _ensure_tracking_file()
-        with open(_TRACKING_FILE, "w", encoding="utf-8") as f:
-            json.dump({"predictions": predictions}, f, indent=2)
+        atomic_write_json(_TRACKING_FILE, {"predictions": predictions})
     except Exception:
         logger.error("Failed to save predictions to %s", _TRACKING_FILE, exc_info=True)
+        raise
 
 
 def _get_game_key(
@@ -189,6 +227,18 @@ def _get_game_key(
 def _normalized_text(value: str | None) -> str:
     """Return a lowercase, alphanumeric-only token stream for fuzzy comparisons."""
     return re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).strip()
+
+
+def parse_totals_line(value: Any, market: str | None = None) -> float | None:
+    """A positive totals line from an explicit value or the number in a market name; None otherwise."""
+    for candidate in (value, *re.findall(r"\d+(?:\.\d+)?", str(market or ""))[-1:]):
+        try:
+            line = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if line > 0:
+            return line
+    return None
 
 
 def _default_totals_line(sport: str) -> float:
@@ -479,6 +529,7 @@ def _totals_line_for_sport(sport: str) -> float:
 def _apply_grading(pred: dict[str, Any]) -> bool:
     """Recompute winner/totals/overall grading for one prediction record."""
     changed = False
+    _grade_score(pred)
     sport = str(pred.get("sport") or "").lower()
     team_a = str(pred.get("team_a") or "")
     team_b = str(pred.get("team_b") or "")
@@ -595,6 +646,74 @@ def _apply_grading(pred: dict[str, Any]) -> bool:
     return changed
 
 
+def market_snapshot(odds: dict | None, bookmaker: str | None = None) -> dict | None:
+    """Decimal prices keyed a/b/draw plus their margin-free probabilities; None unless every side is priced."""
+    if not isinstance(odds, dict):
+        return None
+    prices: dict[str, float] = {}
+    for side in ("a", "b", "draw"):
+        try:
+            price = float(odds.get(side)) if odds.get(side) is not None else None
+        except (TypeError, ValueError):
+            return None
+        if price is not None:
+            if not price > 1.0:
+                return None
+            prices[side] = price
+    if "a" not in prices or "b" not in prices:
+        return None
+    overround = sum(1.0 / price for price in prices.values())
+    return {
+        "odds": prices,
+        "fair": {side: round((1.0 / price) / overround, 6) for side, price in prices.items()},
+        "bookmaker": bookmaker or odds.get("bookmaker"),
+        "captured_at": _isoformat_z(_utc_now()),
+    }
+
+
+def _score_forecast(predicted: dict | None) -> dict | None:
+    """Validated expected score {"a", "b"} with an optional most likely exact score."""
+    if not isinstance(predicted, dict):
+        return None
+    try:
+        forecast = {"a": round(float(predicted["a"]), 2), "b": round(float(predicted["b"]), 2)}
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(0 <= value < 500 for value in forecast.values()):
+        return None
+    likely = predicted.get("likely")
+    if isinstance(likely, dict) and isinstance(likely.get("a"), int) and isinstance(likely.get("b"), int):
+        forecast["likely"] = {"a": likely["a"], "b": likely["b"]}
+    return forecast
+
+
+def _grade_score(pred: dict[str, Any]) -> None:
+    """Compare the predicted score with the final score: per-team and total error, exact-score hit."""
+    forecast, final = pred.get("predicted_score"), pred.get("final_score")
+    if not isinstance(forecast, dict) or not isinstance(final, dict):
+        return
+    try:
+        actual_a, actual_b = int(final["a"]), int(final["b"])
+    except (KeyError, TypeError, ValueError):
+        return
+    grade = {"error_a": round(abs(forecast["a"] - actual_a), 2), "error_b": round(abs(forecast["b"] - actual_b), 2),
+             "error_total": round(abs(forecast["a"] + forecast["b"] - actual_a - actual_b), 2)}
+    likely = forecast.get("likely")
+    if likely:
+        grade["exact_hit"] = likely["a"] == actual_a and likely["b"] == actual_b
+    pred["score_grade"] = grade
+
+
+def _engine_fingerprint(sport: str) -> dict[str, Any] | None:
+    try:
+        from services import engine_fingerprint
+        return engine_fingerprint.for_sport(sport)
+    except Exception:
+        logger.warning("Engine fingerprint unavailable for %s", sport, exc_info=True)
+        return None
+
+
+@transaction(lambda: _TRACKING_FILE)
 def save_prediction(
     sport: str,
     team_a: str,
@@ -619,6 +738,10 @@ def save_prediction(
     implied_probability: float | None = None,  # market implied probability (reserved)
     form_a_length: int | None = None,          # home team's form list length (for recency_bias detection)
     elo_diff: float | None = None,             # home_elo - away_elo (for popular_team_overrating)
+    kickoff: str | datetime | None = None,     # scheduled start; picks are frozen from this moment
+    market_odds: dict | None = None,           # decimal prices {"a", "b", "draw"?, "bookmaker"?} seen at pick time
+    predicted_score: dict | None = None,       # {"a", "b"} expected goals/points, optional "likely": {"a", "b"}
+    raw_probs: dict | None = None,             # model probabilities before recalibration (what learning fits)
 ) -> str:
     """
     Save or update a prediction in the tracking file.
@@ -634,12 +757,7 @@ def save_prediction(
     normalized_market = str(prediction_market or "winner").strip().lower() or "winner"
     fixture_id_value = str(fixture_id).strip() if fixture_id is not None and str(fixture_id).strip() else None
     normalized_totals_pick = _normalize_totals_pick(totals_pick)
-    totals_line_value = None
-    if totals_line is not None:
-        try:
-            totals_line_value = float(totals_line)
-        except (TypeError, ValueError):
-            totals_line_value = None
+    totals_line_value = parse_totals_line(totals_line, totals_market)
     if normalized_totals_pick and totals_line_value is None:
         totals_line_value = _default_totals_line(sport)
     totals_market_value = str(totals_market or _default_totals_market(sport)).strip().lower() if normalized_totals_pick else None
@@ -647,8 +765,14 @@ def save_prediction(
     game_date_normalized = normalize_date(game_date)
     if not game_date_normalized:
         return ""
-    game_key = _get_game_key(sport, game_date_normalized, team_a, team_b)
-    
+    game_key = _get_game_key(sport, game_date_normalized, team_a, team_b, league_id)
+    kickoff_at = _aware_datetime(kickoff)
+    started = kickoff_at is not None and kickoff_at <= _utc_now()
+    engine = _engine_fingerprint(sport)
+    market_at_pick = market_snapshot(market_odds)
+    score_forecast = _score_forecast(predicted_score)
+    raw = {k: round(float(raw_probs.get(k) or 0), 2) for k in ("a", "draw", "b")} if isinstance(raw_probs, dict) else None
+
     # Check for existing prediction with same game key
     for existing in predictions:
         existing_key = _get_game_key(
@@ -659,7 +783,9 @@ def save_prediction(
             existing.get("league_id"),
         )
         if existing_key == game_key:
-            if existing.get("status") != "completed":
+            stored_kickoff = _aware_datetime(existing.get("kickoff_at"))
+            frozen = started or (stored_kickoff is not None and stored_kickoff <= _utc_now())
+            if existing.get("status") != "completed" and not frozen:
                 existing["predicted_winner"] = normalized_pick
                 existing["predicted_pick_label"] = predicted_pick_label
                 existing["prob_a"] = round(win_probs.get("a", 0), 1)
@@ -683,10 +809,22 @@ def save_prediction(
                 existing["fixture_id"] = fixture_id_value
                 existing["prediction_notes"] = prediction_notes
                 existing["model_factors"] = model_factors if isinstance(model_factors, dict) else {}
+                if kickoff_at is not None:
+                    existing["kickoff_at"] = _isoformat_z(kickoff_at)
+                existing["engine"] = engine
+                if market_at_pick is not None:
+                    existing["market_at_pick"] = market_at_pick
+                if score_forecast is not None:
+                    existing["predicted_score"] = score_forecast
+                if raw is not None:
+                    existing["raw_probs"] = raw
                 existing["updated_at"] = _utc_now().isoformat().replace("+00:00", "Z")
                 _save_predictions(predictions)
             return existing.get("id", "")
-    
+
+    if started:
+        return ""
+
     pred_id = str(uuid.uuid4())[:8]
     now = _utc_now().isoformat().replace("+00:00", "Z")
     
@@ -723,6 +861,15 @@ def save_prediction(
         "created_at": now,
         "updated_at": now,
     }
+    if kickoff_at is not None:
+        prediction["kickoff_at"] = _isoformat_z(kickoff_at)
+    prediction["engine"] = engine
+    if market_at_pick is not None:
+        prediction["market_at_pick"] = market_at_pick
+    if score_forecast is not None:
+        prediction["predicted_score"] = score_forecast
+    if raw is not None:
+        prediction["raw_probs"] = raw
     if team_a_id is not None:
         prediction["team_a_id"] = str(team_a_id)
     if team_b_id is not None:
@@ -745,6 +892,7 @@ def save_prediction(
     return pred_id
 
 
+@transaction(lambda: _TRACKING_FILE)
 def clean_duplicate_predictions() -> int:
     """
     Remove duplicate predictions, keeping the most recent one for each game.
@@ -779,6 +927,26 @@ def clean_duplicate_predictions() -> int:
     return removed
 
 
+@transaction(lambda: _TRACKING_FILE)
+def record_closing_market(pred_id: str, market_odds: dict | None, *, bookmaker: str | None = None) -> bool:
+    """Store the latest pre-kickoff price as the closing line; refused once the game has started."""
+    snapshot = market_snapshot(market_odds, bookmaker)
+    if snapshot is None:
+        return False
+    predictions = _load_predictions()
+    for pred in predictions:
+        if pred.get("id") != pred_id:
+            continue
+        kickoff_at = _aware_datetime(pred.get("kickoff_at"))
+        if kickoff_at is None or kickoff_at <= _utc_now() or pred.get("status") == "completed":
+            return False
+        pred["closing_market"] = snapshot
+        _save_predictions(predictions)
+        return True
+    return False
+
+
+@transaction(lambda: _TRACKING_FILE)
 def update_prediction_result(
     pred_id: str,
     actual_result: str,

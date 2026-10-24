@@ -1,0 +1,230 @@
+{
+  "generated_at": "2026-10-16T18:21:24.606249+00:00",
+  "source": "nflverse",
+  "role": "research",
+  "live_use": false,
+  "method": "chronological_60_20_20_logistic_sigmoid_and_ridge",
+  "feature_names": [
+    "home_points_for",
+    "home_points_against",
+    "home_win_rate",
+    "home_off_epa_per_play",
+    "home_def_epa_per_play",
+    "home_passing_cpoe",
+    "home_giveaways",
+    "away_points_for",
+    "away_points_against",
+    "away_win_rate",
+    "away_off_epa_per_play",
+    "away_def_epa_per_play",
+    "away_passing_cpoe",
+    "away_giveaways",
+    "neutral",
+    "rest_difference",
+    "postseason",
+    "home_samples",
+    "away_samples"
+  ],
+  "schema": "af28eab6051eba5fb6bb3b368792f877355b15c3d38fed9f47f0a90a4aa26b62",
+  "sklearn_version": "1.8.0",
+  "sources": [
+    {
+      "dataset": "schedules",
+      "season": 2022,
+      "synced_at": "2026-10-16T18:15:25.928510+00:00",
+      "row_count": 284,
+      "sha256": "50bf6637cbf50f5dfa6a0ca4862e964869569e2937bec6f2c3bbcdd63feb331b"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2023,
+      "synced_at": "2026-10-16T18:15:25.948150+00:00",
+      "row_count": 285,
+      "sha256": "5bcf30c576b5d30b3456ea5d9af9b11aea449b6d362ab5a283834e6f493337c0"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2024,
+      "synced_at": "2026-10-16T18:15:25.982237+00:00",
+      "row_count": 285,
+      "sha256": "88d2e03cdadf56cd3e2136f946d15adb638d372db7b44f166ccce0cae41ddf43"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2025,
+      "synced_at": "2026-10-16T18:15:25.998873+00:00",
+      "row_count": 285,
+      "sha256": "05cf1239334c92c6bcdb5aa0d2bb9338fea731c9d0f985bd259f405603c6b6c1"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:26.031221+00:00",
+      "row_count": 272,
+      "sha256": "e008d38e97c8b94f8a9d68962a36c3df7d55ac119578f2b560440712fffe4167"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2022,
+      "synced_at": "2026-10-16T18:15:26.986509+00:00",
+      "row_count": 568,
+      "sha256": "b6f86b75028a35751cfd396b1c834fa315e41e9222cbff9670d9ced4aeaeb492"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2023,
+      "synced_at": "2026-10-16T18:15:27.331535+00:00",
+      "row_count": 570,
+      "sha256": "abff22c27bc90a43aa89eb6c12f427366e33359428f059327145b5f5d58b838c"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2024,
+      "synced_at": "2026-10-16T18:15:27.556918+00:00",
+      "row_count": 570,
+      "sha256": "cb2a585f2725bf06f64bb3f9e9a348afa8772df9cc70bd4b1f4dfcaf92349b07"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2025,
+      "synced_at": "2026-10-16T18:15:27.777417+00:00",
+      "row_count": 570,
+      "sha256": "9a226bdfa16e1b8d71f0b22cae1ac8d0e9e1b6926c23fa0e1332eb3e543885f9"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:27.896483+00:00",
+      "row_count": 160,
+      "sha256": "f40750c26f3abac5c70d3ac8bc2e44b9d61bdfe5eb24a05cefa3b170064aae0d"
+    }
+  ],
+  "dataset_sha256": "695a794d66f0583e637bc05f441f96e8190b95cf31de1f5dda7325b76f3d947d",
+  "windows": {
+    "train": {
+      "count": 578,
+      "start": "2022-09-29",
+      "end": "2024-11-14"
+    },
+    "calibration": {
+      "count": 205,
+      "start": "2024-11-17",
+      "end": "2025-10-27"
+    },
+    "test": {
+      "count": 196,
+      "start": "2025-10-30",
+      "end": "2026-10-15"
+    }
+  },
+  "metrics": {
+    "accuracy": 0.6122448979591837,
+    "log_loss": 0.6787416659908823,
+    "brier_mean_three_classes": 0.1551209035420996,
+    "ece": 0.0630477192880323,
+    "predicted_class_counts": {
+      "0": 132,
+      "1": 0,
+      "2": 64
+    }
+  },
+  "training_class_prior_baseline": {
+    "accuracy": 0.49489795918367346,
+    "log_loss": 0.7354515577899965,
+    "brier_mean_three_classes": 0.17221449947778825,
+    "ece": 0.07776640067791823,
+    "predicted_class_counts": {
+      "0": 196,
+      "1": 0,
+      "2": 0
+    }
+  },
+  "feature_missing_fraction": {
+    "home_points_for": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_points_against": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_win_rate": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_off_epa_per_play": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_def_epa_per_play": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_passing_cpoe": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_giveaways": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_points_for": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_points_against": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_win_rate": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_off_epa_per_play": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_def_epa_per_play": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_passing_cpoe": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_giveaways": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "neutral": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "rest_difference": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "postseason": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "home_samples": {
+      "train": 0.0,
+      "test": 0.0
+    },
+    "away_samples": {
+      "train": 0.0,
+      "test": 0.0
+    }
+  },
+  "majority_baseline_accuracy": 0.49489795918367346,
+  "projected_points_mae": 7.466681527428608,
+  "training_mean_points_baseline_mae": 7.820086858272719,
+  "limitations": [
+    "Retrospective corrected statistics, not archived game-day data vintages.",
+    "No injury, depth-chart, starting-quarterback, forecast-weather or bookmaker inputs.",
+    "Ties are rare; inspect predicted class counts before using draw estimates.",
+    "No live accuracy or profitability evaluation. Research artifact is not used by dashboard decisions."
+  ],
+  "artifact_sha256": "406b8e745eda33dfdbd3adb9affb55f02de3765fdcd435f39fbc31da6c424ec3"
+}

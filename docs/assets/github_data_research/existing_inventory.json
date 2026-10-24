@@ -1,0 +1,803 @@
+{
+  "observed_at": "2026-10-22T01:56:17.984991+00:00",
+  "nfl_database_read_only": true,
+  "nfl_sql_scope": "datasets metadata and aggregate collection_receipts only",
+  "holdout_outcomes_read": 0,
+  "holdout_games": 109,
+  "holdout_protocol_sha256": "a4b906096d31dccbeceabdf4ffa1a275dccdd6a08206b2b636bac8026f202281",
+  "nfl_dataset_metadata": [
+    {
+      "dataset": "advanced_qb_games",
+      "season": 2022,
+      "row_count": 693,
+      "synced_at": "2026-10-18T23:09:31.036782+00:00",
+      "sha256": "b0cc564f20d23f6c5f4767b6c81962f3e67e592856a87ab520f1880cdc16d7c1"
+    },
+    {
+      "dataset": "advanced_qb_games",
+      "season": 2023,
+      "row_count": 714,
+      "synced_at": "2026-10-18T23:20:06.127833+00:00",
+      "sha256": "7913aaf4df0fa7bcb3daed8adf306c23194bfe12832a16f05a602aff8232318b"
+    },
+    {
+      "dataset": "advanced_qb_games",
+      "season": 2024,
+      "row_count": 706,
+      "synced_at": "2026-10-18T23:09:33.985638+00:00",
+      "sha256": "d730571b0efd1d7f655c45891e1fcfbd5b975eb0f24787171705f4979f49831b"
+    },
+    {
+      "dataset": "advanced_qb_games",
+      "season": 2025,
+      "row_count": 689,
+      "synced_at": "2026-10-18T23:20:08.637660+00:00",
+      "sha256": "40e8f27861ca35811e5abd3b2b3bcac39553079b49924fe1e5128b3617683cac"
+    },
+    {
+      "dataset": "advanced_qb_games",
+      "season": 2026,
+      "row_count": 187,
+      "synced_at": "2026-10-18T23:09:36.968828+00:00",
+      "sha256": "dd976b19c760f884a3b8fc1f2cb5b00177a67a9178afaa7cbe59f89abf2a7e1f"
+    },
+    {
+      "dataset": "advanced_team_games",
+      "season": 2022,
+      "row_count": 568,
+      "synced_at": "2026-10-18T23:09:31.036782+00:00",
+      "sha256": "43d9d8b4b321c302d17b451224807718a7e47c9bd85692b2f86e013799cb0cec"
+    },
+    {
+      "dataset": "advanced_team_games",
+      "season": 2023,
+      "row_count": 570,
+      "synced_at": "2026-10-18T23:20:06.127833+00:00",
+      "sha256": "319a5c7fdc3950cf2a2d9fec1e541db1d719356774df5cf7226c07664618de0b"
+    },
+    {
+      "dataset": "advanced_team_games",
+      "season": 2024,
+      "row_count": 570,
+      "synced_at": "2026-10-18T23:09:33.985638+00:00",
+      "sha256": "d156e373f811b98c3bb2501be193586b453da3f21a87708d3591f8411f428f90"
+    },
+    {
+      "dataset": "advanced_team_games",
+      "season": 2025,
+      "row_count": 570,
+      "synced_at": "2026-10-18T23:20:08.637660+00:00",
+      "sha256": "9238a11d8088bc7df274f4336c1194ad3db8f63cd812bdb2cdcaad656ebe1fdc"
+    },
+    {
+      "dataset": "advanced_team_games",
+      "season": 2026,
+      "row_count": 160,
+      "synced_at": "2026-10-18T23:09:36.968828+00:00",
+      "sha256": "becdb3a8b2bc8d055d3c2062e0c0e4f3a0bbbac95b7779fb5d56dcba6f995369"
+    },
+    {
+      "dataset": "depth_charts",
+      "season": 2022,
+      "row_count": 37609,
+      "synced_at": "2026-10-18T23:07:41.355109+00:00",
+      "sha256": "89e68f3ab74ea917c0a6ba5f99792cd74089cc0816b88bffa7003098d490b36e"
+    },
+    {
+      "dataset": "depth_charts",
+      "season": 2024,
+      "row_count": 37105,
+      "synced_at": "2026-10-18T23:05:17.461856+00:00",
+      "sha256": "ed1f88e9b4194f2805246f53da9bff52b163d8475e0eeaa4ee351af7136e570b"
+    },
+    {
+      "dataset": "depth_charts",
+      "season": 2026,
+      "row_count": 668543,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "53c0faaad0662819f7511cc8a8d843a484a2d3d49571960ec0ec142b60a686fc"
+    },
+    {
+      "dataset": "ftn_charting",
+      "season": 2022,
+      "row_count": 41643,
+      "synced_at": "2026-10-18T23:08:11.127425+00:00",
+      "sha256": "bd9b8d3353b761d291e89e3692d42285248d803f33f90622abb7cf802c9e3a72"
+    },
+    {
+      "dataset": "ftn_charting",
+      "season": 2024,
+      "row_count": 48031,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "0bd32aef58ada637389835dbfaa68eab70727cb0b28fa1c103f72b42eff6da3b"
+    },
+    {
+      "dataset": "ftn_charting",
+      "season": 2026,
+      "row_count": 13621,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "e5c87b6918b7fee73aaa6059fce7f47b2490f078e9401a72c39dac12ea076c36"
+    },
+    {
+      "dataset": "injuries",
+      "season": 2022,
+      "row_count": 5682,
+      "synced_at": "2026-10-18T23:07:59.281649+00:00",
+      "sha256": "fa715bf45a0ab0bba06782ae0791b0b6f7e5d6f368ad45bc9aff3d8c3714f910"
+    },
+    {
+      "dataset": "injuries",
+      "season": 2024,
+      "row_count": 6215,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "8fdd2e709bd6a7674a1d0ac21ba703949487d2a42fee1f36072a776831e2b32a"
+    },
+    {
+      "dataset": "injuries",
+      "season": 2026,
+      "row_count": 1789,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "12ef429381eb5fe15c569f9ceffe8a757a188c075be766965a43ff68a1583f8b"
+    },
+    {
+      "dataset": "ngs_passing",
+      "season": 2022,
+      "row_count": 603,
+      "synced_at": "2026-10-18T23:07:46.230763+00:00",
+      "sha256": "754bd0ea9eec459396e8f31e9ba161e77cb81197134bc40040317c2bf26bddea"
+    },
+    {
+      "dataset": "ngs_passing",
+      "season": 2024,
+      "row_count": 614,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "1ac2a7afa9ef209f1df31f9816bd76147156ba7ef2b05fbc77e1eff4711b7a48"
+    },
+    {
+      "dataset": "ngs_passing",
+      "season": 2026,
+      "row_count": 200,
+      "synced_at": "2026-10-18T22:56:31.169504+00:00",
+      "sha256": "536fca5e3ef7b7d82f1898a3550fd9ccd2affc376210f8dc6542025a0f062dfe"
+    },
+    {
+      "dataset": "ngs_receiving",
+      "season": 2022,
+      "row_count": 1466,
+      "synced_at": "2026-10-18T23:07:46.406753+00:00",
+      "sha256": "9da261d574c27196fd19765658332ee17f3c497a3ac08cc96b1089ee0b7d7bfa"
+    },
+    {
+      "dataset": "ngs_receiving",
+      "season": 2024,
+      "row_count": 1435,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "c140c051b8729505f5af58b8b5655252ab581d3fe979ac622a86a6413d947069"
+    },
+    {
+      "dataset": "ngs_receiving",
+      "season": 2026,
+      "row_count": 487,
+      "synced_at": "2026-10-18T22:56:31.469436+00:00",
+      "sha256": "818b54b48333fed2f4dc65c13d422d681dde6da4597463df68d332ddbc43bd92"
+    },
+    {
+      "dataset": "ngs_rushing",
+      "season": 2022,
+      "row_count": 617,
+      "synced_at": "2026-10-18T23:07:46.318224+00:00",
+      "sha256": "2692f71d04db7fdd690947e50b9cbee4dd836c4b93192f2a0da1247629139fd7"
+    },
+    {
+      "dataset": "ngs_rushing",
+      "season": 2024,
+      "row_count": 601,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "8f60f4e6eeda8bd5fa7c3ea1b4314b93e43457a9576d14e1a8b34e5509e18b3b"
+    },
+    {
+      "dataset": "ngs_rushing",
+      "season": 2026,
+      "row_count": 203,
+      "synced_at": "2026-10-18T22:56:31.271232+00:00",
+      "sha256": "baaf4b0d91e9485cc103448506feb3397ca4b7864894cc96509ade09e5e7d882"
+    },
+    {
+      "dataset": "participation",
+      "season": 2022,
+      "row_count": 50150,
+      "synced_at": "2026-10-18T23:08:05.888906+00:00",
+      "sha256": "774b5c65a6238da4ad7769ae22c1786df80973e765c15e7df2398b88d4d66517"
+    },
+    {
+      "dataset": "participation",
+      "season": 2024,
+      "row_count": 45919,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "cbcb8c431a25b4eb3f45403ec67dde1c2e7862f4a4c77703320412ad00eb8530"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2022,
+      "row_count": 49434,
+      "synced_at": "2026-10-18T23:08:00.448825+00:00",
+      "sha256": "128945e8ba14199e8414bfb85839c14238c87a92d48fcfb4bab1c473c63bc386"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2023,
+      "row_count": 49665,
+      "synced_at": "2026-10-18T23:19:53.706322+00:00",
+      "sha256": "3b108841350cabbc2c7733536e62fb7c50c11b8e8ad8d80e604d66f2cf7199d4"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2024,
+      "row_count": 49492,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "6baf1203e582ffca51fca24c41956e00d3634b956c70e05a626f4921bd709f3a"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2025,
+      "row_count": 48771,
+      "synced_at": "2026-10-18T23:20:00.500599+00:00",
+      "sha256": "cde75c9ab4b9d19b00148675e73b4e2f642ed36e363e281251c4f3ee527f5ba2"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2026,
+      "row_count": 16380,
+      "synced_at": "2026-10-22T00:12:18.412147+00:00",
+      "sha256": "d26cd7330d6f42ce4a05a4b8c6fd9f4564fc98e2d9a71b9b65f0a0a1afe412bf"
+    },
+    {
+      "dataset": "pfr_def_season",
+      "season": 2022,
+      "row_count": 940,
+      "synced_at": "2026-10-18T23:08:18.881687+00:00",
+      "sha256": "55b84bc049f40c3b649ae31405e0eb367ae0b7ff0b0320729a39b850b91c5cee"
+    },
+    {
+      "dataset": "pfr_def_season",
+      "season": 2024,
+      "row_count": 1030,
+      "synced_at": "2026-10-18T23:06:45.040999+00:00",
+      "sha256": "4366d67632bc4389b7ecf07c0fc8766a418359e6d91c927bd5a2aaa7bbea36bc"
+    },
+    {
+      "dataset": "pfr_def_season",
+      "season": 2026,
+      "row_count": 609,
+      "synced_at": "2026-10-18T23:06:45.140530+00:00",
+      "sha256": "f7460e1057ddb31791e6250bc68be75d87383001b1b1dac7fe1a8323eae6edb4"
+    },
+    {
+      "dataset": "pfr_def_week",
+      "season": 2022,
+      "row_count": 7878,
+      "synced_at": "2026-10-18T23:08:17.971809+00:00",
+      "sha256": "4b8400e57e366b4bfbbc107c187ab837d15128bb632984e229f8b01e60577033"
+    },
+    {
+      "dataset": "pfr_def_week",
+      "season": 2024,
+      "row_count": 7992,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "a0862807b2dd4af0a9563fc54324ba9ede36edf877c432f85abfe6c967407506"
+    },
+    {
+      "dataset": "pfr_def_week",
+      "season": 2026,
+      "row_count": 2282,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "6fd637dcecbd0181b4c7bdb4e12ae873682f1713ddff1681f9d6dfa37d88ca31"
+    },
+    {
+      "dataset": "pfr_pass_season",
+      "season": 2022,
+      "row_count": 106,
+      "synced_at": "2026-10-18T23:08:16.951980+00:00",
+      "sha256": "6832b4a27d7d57e1f1ff00046e69ff8d9b8f114c48f68a39626411dfeb8bf3d0"
+    },
+    {
+      "dataset": "pfr_pass_season",
+      "season": 2024,
+      "row_count": 105,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "0a099a3228312827117e6723700da92b0fe325c89bc007366b5e1bfe1329ca36"
+    },
+    {
+      "dataset": "pfr_pass_week",
+      "season": 2022,
+      "row_count": 685,
+      "synced_at": "2026-10-18T23:08:16.845475+00:00",
+      "sha256": "3a6f1a2fe8c1dd450dd182c0ad6735c72f2cb3fda5d34228938152f48fa3f3c8"
+    },
+    {
+      "dataset": "pfr_pass_week",
+      "season": 2024,
+      "row_count": 697,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "e241432a95ca082737646c6843c15cf700cf3bfd2e5c929c70b62979035a72cb"
+    },
+    {
+      "dataset": "pfr_pass_week",
+      "season": 2026,
+      "row_count": 186,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "601033e0bcfc0bee0197035895640a8ca8a175b1c2a4e5743502bdb562e54207"
+    },
+    {
+      "dataset": "pfr_rec_season",
+      "season": 2022,
+      "row_count": 508,
+      "synced_at": "2026-10-18T23:08:17.778976+00:00",
+      "sha256": "49cbb052991ccbd8855f9e4dc1579bb08a2440a9b4ddde7b9b3e07c0470c6a55"
+    },
+    {
+      "dataset": "pfr_rec_season",
+      "season": 2024,
+      "row_count": 523,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "a734e9ed2a4bc833be9618faab4cc38219832e72d6ebc0e056fa8233baf52336"
+    },
+    {
+      "dataset": "pfr_rec_season",
+      "season": 2026,
+      "row_count": 346,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "4d102d7535f7ada9e241e8f0ffca5a24931d10cec380cfa637b7b055308b5902"
+    },
+    {
+      "dataset": "pfr_rec_week",
+      "season": 2022,
+      "row_count": 4547,
+      "synced_at": "2026-10-18T23:08:17.419399+00:00",
+      "sha256": "fb133cc84b41c241deb6f9f516f14d1b0b9a232f5a60601a4f662d63ee333a0b"
+    },
+    {
+      "dataset": "pfr_rec_week",
+      "season": 2024,
+      "row_count": 4453,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "a0042a57efa6638947ec10e6c9eda01f626c5eed367aabe6219f804e1e1c55af"
+    },
+    {
+      "dataset": "pfr_rec_week",
+      "season": 2026,
+      "row_count": 1293,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "223f5d83d92435c233db53e07e367a211333f2085c4686ba29690cce30e8b369"
+    },
+    {
+      "dataset": "pfr_rush_season",
+      "season": 2022,
+      "row_count": 366,
+      "synced_at": "2026-10-18T23:08:17.278751+00:00",
+      "sha256": "1a046c041976f9e7d5e211e9325e4a0496e79920258092e22efe4deb2b282343"
+    },
+    {
+      "dataset": "pfr_rush_season",
+      "season": 2024,
+      "row_count": 341,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "f3dfe8f87b4197e176a5d18b79445026409e8ca08e49866eb48ae1127ad24e7c"
+    },
+    {
+      "dataset": "pfr_rush_season",
+      "season": 2026,
+      "row_count": 176,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "aeb7a4bc4d18eee2ad54003b8ea233ebd9e91a677a5e9ba117eac01245cc1dda"
+    },
+    {
+      "dataset": "pfr_rush_week",
+      "season": 2022,
+      "row_count": 2389,
+      "synced_at": "2026-10-18T23:08:17.079108+00:00",
+      "sha256": "d584a9a85a7f3ce87cb111e3563b5471c766eabc59e5394dcb6155254b22ab6f"
+    },
+    {
+      "dataset": "pfr_rush_week",
+      "season": 2024,
+      "row_count": 2359,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "6de03aa2741904c16f64fd536406199997b751ed242d201780f605935c37da4e"
+    },
+    {
+      "dataset": "pfr_rush_week",
+      "season": 2026,
+      "row_count": 639,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "54d53599e708768601b954fbeef0f77d21a282cf5164159956307be67658f663"
+    },
+    {
+      "dataset": "player_season",
+      "season": 2022,
+      "row_count": 2011,
+      "synced_at": "2026-10-18T23:08:15.945871+00:00",
+      "sha256": "7a9fa1a8bcde61e921761309ea95011da9a92c34166fccee441d21ef040c5261"
+    },
+    {
+      "dataset": "player_season",
+      "season": 2024,
+      "row_count": 2002,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "d8b41e7fc6cc1476ac198a6be299e242fa28ceb66c3aaa7e5777a9c7b58b475e"
+    },
+    {
+      "dataset": "player_season",
+      "season": 2026,
+      "row_count": 1633,
+      "synced_at": "2026-10-18T23:04:58.060674+00:00",
+      "sha256": "94e65e18e9c81af1982b1c4baf6e191e35e11b4489c10e74891ba0d53ca44955"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2022,
+      "row_count": 18831,
+      "synced_at": "2026-10-18T23:07:33.997899+00:00",
+      "sha256": "2a67db8bb3e5bdd1ba4fa8f9038f535dedc0f25a403ee316ed29fc6aaba1170f"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2023,
+      "row_count": 18643,
+      "synced_at": "2026-10-18T23:19:38.372171+00:00",
+      "sha256": "f9c10ce9a1b8487dc9666350ee1e7c5870b9898f40080073833bf34d577ef054"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2024,
+      "row_count": 18983,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "1c4f3608170631195fb53eacce35bd30335a01f3e9d9c2c267c2fc6d092d5b91"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2025,
+      "row_count": 19422,
+      "synced_at": "2026-10-18T23:19:45.547516+00:00",
+      "sha256": "e2ae7adae6b0ed942ae8d773be76e4b5b13f9a5b3e5093ddc9c097298bb3d0d3"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2026,
+      "row_count": 6131,
+      "synced_at": "2026-10-18T22:56:27.096461+00:00",
+      "sha256": "61aab99b10d55101af5f385d7f20dfd3704ff3cb6baf0f12980525b773df444e"
+    },
+    {
+      "dataset": "players",
+      "season": 0,
+      "row_count": 24854,
+      "synced_at": "2026-10-18T22:56:32.806646+00:00",
+      "sha256": "4c325b22f0c779340dde43f61570fe20065f7af4552609e7e3100fcdc53a1e96"
+    },
+    {
+      "dataset": "rosters",
+      "season": 2022,
+      "row_count": 3134,
+      "synced_at": "2026-10-18T23:07:40.856857+00:00",
+      "sha256": "8e1b2414fc41f1ad29768225787ac3fbd97e9bb530005d22a403efd39395a36c"
+    },
+    {
+      "dataset": "rosters",
+      "season": 2024,
+      "row_count": 3216,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "3e0b7651a05dd793ceb363228321a348593122c15a4d85214f536e12115e8fef"
+    },
+    {
+      "dataset": "rosters",
+      "season": 2026,
+      "row_count": 3043,
+      "synced_at": "2026-10-18T22:56:29.823555+00:00",
+      "sha256": "5ebdd3cca07592e3b558b74b75b77cd349dd5c299754108037589398ccecbc4e"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2022,
+      "row_count": 284,
+      "synced_at": "2026-10-16T18:15:25.928510+00:00",
+      "sha256": "50bf6637cbf50f5dfa6a0ca4862e964869569e2937bec6f2c3bbcdd63feb331b"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2023,
+      "row_count": 285,
+      "synced_at": "2026-10-16T18:15:25.948150+00:00",
+      "sha256": "5bcf30c576b5d30b3456ea5d9af9b11aea449b6d362ab5a283834e6f493337c0"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2024,
+      "row_count": 285,
+      "synced_at": "2026-10-16T18:15:25.982237+00:00",
+      "sha256": "88d2e03cdadf56cd3e2136f946d15adb638d372db7b44f166ccce0cae41ddf43"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2025,
+      "row_count": 285,
+      "synced_at": "2026-10-16T18:15:25.998873+00:00",
+      "sha256": "05cf1239334c92c6bcdb5aa0d2bb9338fea731c9d0f985bd259f405603c6b6c1"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2026,
+      "row_count": 272,
+      "synced_at": "2026-10-22T01:53:29.690355+00:00",
+      "sha256": "cf0e04df503bc6df951fdec1668abe9b4ccda5cd68e8b322e07f20613b60eaa6"
+    },
+    {
+      "dataset": "snap_counts",
+      "season": 2022,
+      "row_count": 26381,
+      "synced_at": "2026-10-18T23:07:43.915839+00:00",
+      "sha256": "b29f54250b1039670e7dbe6d4cdb43d17b648452a8e6a1b27fcf4325e1734834"
+    },
+    {
+      "dataset": "snap_counts",
+      "season": 2024,
+      "row_count": 26615,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "ea911f48406772db82c259d2bcdf3c1f153a7859557a1b89a3ae3245c4d138dd"
+    },
+    {
+      "dataset": "snap_counts",
+      "season": 2026,
+      "row_count": 7463,
+      "synced_at": "2026-10-18T22:56:30.702749+00:00",
+      "sha256": "9670a8ccaf43631cc078916d896bb42e3094d8f2b5092291767d9186fafbcb1b"
+    },
+    {
+      "dataset": "team_season",
+      "season": 2022,
+      "row_count": 32,
+      "synced_at": "2026-10-18T23:08:15.779249+00:00",
+      "sha256": "7fc9c23379a4cb4aa038d740af4168a9cdd2b397984276ffaae66375ae5f5167"
+    },
+    {
+      "dataset": "team_season",
+      "season": 2024,
+      "row_count": 32,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "d5b75086f8c7412ed97a411582d05da595cbe12d02eeb1a1acb03b4c1e3295d9"
+    },
+    {
+      "dataset": "team_season",
+      "season": 2026,
+      "row_count": 32,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "49c762bd48eaf5e8308396a9236f89a0b78090ff8b4b463c85e0927f51cf8c71"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2022,
+      "row_count": 568,
+      "synced_at": "2026-10-16T18:15:26.986509+00:00",
+      "sha256": "b6f86b75028a35751cfd396b1c834fa315e41e9222cbff9670d9ced4aeaeb492"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2023,
+      "row_count": 570,
+      "synced_at": "2026-10-16T18:15:27.331535+00:00",
+      "sha256": "abff22c27bc90a43aa89eb6c12f427366e33359428f059327145b5f5d58b838c"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2024,
+      "row_count": 570,
+      "synced_at": "2026-10-16T18:15:27.556918+00:00",
+      "sha256": "cb2a585f2725bf06f64bb3f9e9a348afa8772df9cc70bd4b1f4dfcaf92349b07"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2025,
+      "row_count": 570,
+      "synced_at": "2026-10-16T18:15:27.777417+00:00",
+      "sha256": "9a226bdfa16e1b8d71f0b22cae1ac8d0e9e1b6926c23fa0e1332eb3e543885f9"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2026,
+      "row_count": 176,
+      "synced_at": "2026-10-18T22:56:26.964424+00:00",
+      "sha256": "05e952d231d6f4e1068f90085c24312ca055bf18ed2147f00dde0bf076fa75c3"
+    },
+    {
+      "dataset": "teams",
+      "season": 0,
+      "row_count": 36,
+      "synced_at": "2026-10-18T22:56:26.836258+00:00",
+      "sha256": "ce660dae77623575e3cbe7d87413259afdcd4290319481310dfcdfbf106255d5"
+    },
+    {
+      "dataset": "weekly_rosters",
+      "season": 2022,
+      "row_count": 46163,
+      "synced_at": "2026-10-18T23:07:46.733005+00:00",
+      "sha256": "5991819bb737e0a5f3264d208c87122b8b3e45f7c6c2e7df8beec02fbe0d35ec"
+    },
+    {
+      "dataset": "weekly_rosters",
+      "season": 2024,
+      "row_count": 46579,
+      "synced_at": "2026-10-18T23:03:32.789278+00:00",
+      "sha256": "c6086093a72262d12558622c2acb75ae7f8b78f314b5c98b7bef403e86ba4e68"
+    },
+    {
+      "dataset": "weekly_rosters",
+      "season": 2026,
+      "row_count": 15327,
+      "synced_at": "2026-10-18T22:56:31.502694+00:00",
+      "sha256": "1888c66e8171ccee844880a111ccbc7b910796727f4b232820813b493e5e6184"
+    }
+  ],
+  "nfl_latest_success_receipts": [
+    {
+      "dataset": "pbp",
+      "season": 2026,
+      "last_success": "2026-10-22T00:12:18.412147+00:00"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2026,
+      "last_success": "2026-10-22T01:53:29.690355+00:00"
+    }
+  ],
+  "nfl_current_projection_columns": [
+    "game_id",
+    "play_id",
+    "season",
+    "week",
+    "posteam",
+    "defteam",
+    "play_type",
+    "no_play",
+    "epa",
+    "success",
+    "yards_gained",
+    "pass_attempt",
+    "rush_attempt",
+    "qb_kneel",
+    "qb_spike",
+    "qb_dropback",
+    "sack",
+    "qb_scramble",
+    "complete_pass",
+    "interception",
+    "fumble_lost",
+    "third_down_converted",
+    "third_down_failed",
+    "down",
+    "yardline_100",
+    "fixed_drive",
+    "drive",
+    "pass_touchdown",
+    "rush_touchdown",
+    "touchdown",
+    "passer_player_id",
+    "passing_yards",
+    "qb_hit",
+    "two_point_attempt",
+    "play_type_nfl"
+  ],
+  "collector": {
+    "pid": 18664,
+    "state": "waiting",
+    "heartbeat_at": "2026-10-22T01:56:15.617599+00:00",
+    "interval_seconds": 240,
+    "pbp_interval_seconds": 21600,
+    "research_only": true,
+    "enabled": false,
+    "production_active": false
+  },
+  "application_health": {
+    "observed_at": "2026-10-22T01:56:17.938350+00:00",
+    "http_status": 503,
+    "overall": "degraded",
+    "pipelines": {
+      "ml_predictions": {
+        "status": "degraded",
+        "last_attempt": "2026-10-22T01:45:53.618628+00:00",
+        "last_success": "2026-10-21T20:11:36.877156+00:00",
+        "last_success_mins_ago": 344,
+        "consecutive_failures": 1
+      },
+      "nba_games": {
+        "status": "ok",
+        "last_attempt": "2026-10-22T01:51:36.020860+00:00",
+        "last_success": "2026-10-22T01:51:35.004972+00:00",
+        "last_success_mins_ago": 4,
+        "consecutive_failures": 0
+      },
+      "soccer_fixtures": {
+        "status": "ok",
+        "last_attempt": "2026-10-22T01:52:11.599760+00:00",
+        "last_success": "2026-10-22T01:45:24.067090+00:00",
+        "last_success_mins_ago": 10,
+        "consecutive_failures": 0
+      }
+    }
+  },
+  "audit_snapshot_date": "2026-10-20; counts are historical measurements, not recomputed live",
+  "audit_evidence": {
+    "nba_archive_gaps.json": {
+      "path": "cache\\diagnostics\\2026-10-20_multisport\\nba_archive_gaps.json",
+      "sha256": "22efefe5f1164ca7e0ca0e3bb542bd4778ea5a51e1066d58fa9291f656284e2a"
+    },
+    "soccer_league_coverage.json": {
+      "path": "cache\\diagnostics\\2026-10-20_multisport\\soccer_league_coverage.json",
+      "sha256": "a31a72671f2f05a5d191758e186e9b5034b145ad119f8b04833fdaa2ef133f7d"
+    },
+    "nfl_data_audit.json": {
+      "path": "cache\\diagnostics\\2026-10-20_multisport\\nfl_data_audit.json",
+      "sha256": "97580e2e2f1270ccc01d63de3a879da003ea11442128be6285636880d2bee26f"
+    },
+    "cached_event_coverage.json": {
+      "path": "cache\\diagnostics\\2026-10-20_multisport\\cached_event_coverage.json",
+      "sha256": "d574b4b7e5807022aaa61b6be7cef3f804e01759cbec03db731048824432937b"
+    },
+    "soccer_csv_integrity.json": {
+      "path": "cache\\diagnostics\\2026-10-20_multisport\\soccer_csv_integrity.json",
+      "sha256": "b3e39cd75c4ef06fd25985636b4020d0687c04caa3ac7b4da86279fdb1aa135b"
+    }
+  },
+  "soccer_stage1_version": {
+    "issue_id": "SOC-001",
+    "accepted": [
+      {
+        "file": "data\\raw\\E0_2019.csv",
+        "sha256": "100037618b94f94057400bb02bf6bac4ef74ddaa58cde4b38370839c39caee61",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2020.csv",
+        "sha256": "5afe63f69401457b8354eaacee24f9a3e520b3c3af6329564a9783e20d789c62",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2021.csv",
+        "sha256": "335afcbabeb2939fa10ab39ba3e8215072d0b577cb8d0705c1e44c56e934e703",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2022.csv",
+        "sha256": "8442792d3b614c94ea3cf381bd2736805889cc1713169035368fff19c3d02380",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2023.csv",
+        "sha256": "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2024.csv",
+        "sha256": "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4",
+        "rows": 380
+      },
+      {
+        "file": "data\\raw\\E0_2025.csv",
+        "sha256": "4cb7f75e1780ba7cb55664b750de3ef19d8d9733fea38b96722eb88f7487ac05",
+        "rows": 319
+      }
+    ],
+    "quarantined": [
+      {
+        "file": "data\\raw\\E0_2018.csv",
+        "sha256": "4cb7f75e1780ba7cb55664b750de3ef19d8d9733fea38b96722eb88f7487ac05",
+        "rows": 319,
+        "reason": "Date outside filename season; quarantined by manifest, original retained"
+      }
+    ],
+    "rows": 2599,
+    "duplicate_excess": 0,
+    "original_data_modified": false,
+    "output_sha256": "7c03dfef6e777714bc4b6cc677428ba2bf6385f601cbd6e1f5cc89f1ce8cb3bf"
+  },
+  "runtime_source_changes": "Stage1 plus local NBA machine-status correction; no Phase3 product source modifications"
+}

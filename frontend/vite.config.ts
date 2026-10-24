@@ -14,6 +14,8 @@ export default defineConfig({
       '/login': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/signup': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/logout': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/my-bets': { target: 'http://127.0.0.1:5001', changeOrigin: true },
+      '/settings': { target: 'http://127.0.0.1:5001', changeOrigin: true },
       '/admin': { target: 'http://127.0.0.1:5001', changeOrigin: true },
     },
   },

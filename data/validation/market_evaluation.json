@@ -1,0 +1,376 @@
+{
+  "generated_at": "2026-10-22T20:16:27.955148+00:00",
+  "model_artifact": "data\\models\\soccer_random_forest_clean.pkl",
+  "reproduced_test_accuracy": 0.5204216073781291,
+  "test_window": {
+    "start": "2025-05-23",
+    "end": "2026-04-19"
+  },
+  "matching": {
+    "test_rows": 1518,
+    "matched": 1518,
+    "unmatched": 0,
+    "result_disagreements": 0,
+    "unmatched_examples": [],
+    "evaluated_with_complete_prices": 1518
+  },
+  "market_reference": "Market-average closing prices with the margin removed proportionally",
+  "model": {
+    "accuracy": 0.5204216073781291,
+    "log_loss": 1.002598725024555,
+    "brier_score": 0.19953463068940264
+  },
+  "market": {
+    "accuracy": 0.541501976284585,
+    "log_loss": 0.9734496129176612,
+    "brier_score": 0.1929501529560081
+  },
+  "pinnacle_subset": {
+    "matches": 912,
+    "model": {
+      "accuracy": 0.5328947368421053,
+      "log_loss": 0.9920222874699707,
+      "brier_score": 0.1970907968356965
+    },
+    "pinnacle": {
+      "accuracy": 0.5405701754385965,
+      "log_loss": 0.9657122345253358,
+      "brier_score": 0.19138844672178543
+    }
+  },
+  "model_minus_market_log_loss": {
+    "mean": 0.02914911210689364,
+    "95ci": [
+      0.020796701983405292,
+      0.03744662678593493
+    ],
+    "interpretation": "Positive means the model's probabilities are worse than the market's."
+  },
+  "model_predicted_draws": 0,
+  "market_favourite_draws": 2,
+  "betting": {
+    "average_early": {
+      "matches": 1518,
+      "model_top_pick": {
+        "bets": 1518,
+        "hit_rate": 0.5204216073781291,
+        "average_price": 1.9964888010540185,
+        "profit_units": -59.46000000000001,
+        "roi": -0.039169960474308305,
+        "roi_95ci": [
+          -0.0915321014722485,
+          0.014150810772182824
+        ]
+      },
+      "market_favourite": {
+        "bets": 1518,
+        "hit_rate": 0.541501976284585,
+        "average_price": 1.9193017127799736,
+        "profit_units": -15.590000000000003,
+        "roi": -0.010270092226613969,
+        "roi_95ci": [
+          -0.06616387204888752,
+          0.04457444006680027
+        ]
+      },
+      "value_edge_over_0pct": {
+        "bets": 1327,
+        "hit_rate": 0.2690278824415976,
+        "average_price": 4.345041446872645,
+        "profit_units": -202.87,
+        "roi": -0.15287867370007535,
+        "roi_95ci": [
+          -0.22008094585095267,
+          -0.08398644034978667
+        ]
+      },
+      "value_edge_over_5pct": {
+        "bets": 1060,
+        "hit_rate": 0.24622641509433962,
+        "average_price": 4.637990566037735,
+        "profit_units": -183.85,
+        "roi": -0.17344339622641508,
+        "roi_95ci": [
+          -0.25096854197285384,
+          -0.08861715332427486
+        ]
+      },
+      "value_edge_over_10pct": {
+        "bets": 829,
+        "hit_rate": 0.2255729794933655,
+        "average_price": 5.0298673100120626,
+        "profit_units": -162.31,
+        "roi": -0.19579010856453558,
+        "roi_95ci": [
+          -0.29932248374637355,
+          -0.08781776681192857
+        ]
+      }
+    },
+    "average_closing": {
+      "matches": 1518,
+      "model_top_pick": {
+        "bets": 1518,
+        "hit_rate": 0.5204216073781291,
+        "average_price": 2.0179380764163373,
+        "profit_units": -44.68,
+        "roi": -0.029433465085639,
+        "roi_95ci": [
+          -0.0820471996134485,
+          0.023620805087138527
+        ]
+      },
+      "market_favourite": {
+        "bets": 1518,
+        "hit_rate": 0.541501976284585,
+        "average_price": 1.924064558629776,
+        "profit_units": -9.570000000000004,
+        "roi": -0.006304347826086959,
+        "roi_95ci": [
+          -0.05879334667638179,
+          0.050636289518896864
+        ]
+      },
+      "value_edge_over_0pct": {
+        "bets": 1348,
+        "hit_rate": 0.2767062314540059,
+        "average_price": 4.408063798219584,
+        "profit_units": -142.3,
+        "roi": -0.10556379821958457,
+        "roi_95ci": [
+          -0.17235987602403285,
+          -0.03504055476403921
+        ]
+      },
+      "value_edge_over_5pct": {
+        "bets": 1109,
+        "hit_rate": 0.2651036970243463,
+        "average_price": 4.679233543733093,
+        "profit_units": -126.72,
+        "roi": -0.11426510369702435,
+        "roi_95ci": [
+          -0.1956005691292159,
+          -0.029915253013252617
+        ]
+      },
+      "value_edge_over_10pct": {
+        "bets": 899,
+        "hit_rate": 0.23692992213570635,
+        "average_price": 4.989833147942157,
+        "profit_units": -147.85,
+        "roi": -0.16446051167964404,
+        "roi_95ci": [
+          -0.26474672787963266,
+          -0.06070792632318205
+        ]
+      }
+    },
+    "pinnacle_closing": {
+      "matches": 912,
+      "model_top_pick": {
+        "bets": 912,
+        "hit_rate": 0.5328947368421053,
+        "average_price": 2.069550438596491,
+        "profit_units": 23.920000000000005,
+        "roi": 0.026228070175438604,
+        "roi_95ci": [
+          -0.04288424445892865,
+          0.1038271756497118
+        ]
+      },
+      "market_favourite": {
+        "bets": 912,
+        "hit_rate": 0.5416666666666666,
+        "average_price": 1.9723026315789474,
+        "profit_units": 13.079999999999998,
+        "roi": 0.014342105263157892,
+        "roi_95ci": [
+          -0.04346098608837972,
+          0.0769847354268646
+        ]
+      },
+      "value_edge_over_0pct": {
+        "bets": 891,
+        "hit_rate": 0.28170594837261503,
+        "average_price": 4.677194163860831,
+        "profit_units": -83.74000000000001,
+        "roi": -0.09398428731762067,
+        "roi_95ci": [
+          -0.18423167118327693,
+          -0.0016465463951067343
+        ]
+      },
+      "value_edge_over_5pct": {
+        "bets": 783,
+        "hit_rate": 0.2656449553001277,
+        "average_price": 4.927828863346105,
+        "profit_units": -73.35,
+        "roi": -0.09367816091954022,
+        "roi_95ci": [
+          -0.19100131082574404,
+          -6.57157269364631e-05
+        ]
+      },
+      "value_edge_over_10pct": {
+        "bets": 650,
+        "hit_rate": 0.25846153846153846,
+        "average_price": 5.246246153846155,
+        "profit_units": -51.94000000000001,
+        "roi": -0.07990769230769233,
+        "roi_95ci": [
+          -0.18968017965807007,
+          0.02856450886102583
+        ]
+      }
+    }
+  },
+  "by_league": {
+    "Bundesliga": {
+      "matches": 267,
+      "model": {
+        "accuracy": 0.5767790262172284,
+        "log_loss": 0.9682981415925176,
+        "brier_score": 0.19111945546539907
+      },
+      "market": {
+        "accuracy": 0.5767790262172284,
+        "log_loss": 0.9402180246959511,
+        "brier_score": 0.18451586456715394
+      }
+    },
+    "La Liga": {
+      "matches": 316,
+      "model": {
+        "accuracy": 0.5189873417721519,
+        "log_loss": 0.9948524661515403,
+        "brier_score": 0.19760063136019348
+      },
+      "market": {
+        "accuracy": 0.5443037974683544,
+        "log_loss": 0.9626201207987533,
+        "brier_score": 0.19025017552873297
+      }
+    },
+    "Ligue 1": {
+      "matches": 264,
+      "model": {
+        "accuracy": 0.4962121212121212,
+        "log_loss": 1.0031222223697316,
+        "brier_score": 0.19966107992991028
+      },
+      "market": {
+        "accuracy": 0.5416666666666666,
+        "log_loss": 0.9686287120418166,
+        "brier_score": 0.19215036302509017
+      }
+    },
+    "Premier League": {
+      "matches": 335,
+      "model": {
+        "accuracy": 0.48656716417910445,
+        "log_loss": 1.0385606702286143,
+        "brier_score": 0.20877346599287885
+      },
+      "market": {
+        "accuracy": 0.5014925373134328,
+        "log_loss": 1.0154336835149285,
+        "brier_score": 0.2032709420062162
+      }
+    },
+    "Serie A": {
+      "matches": 336,
+      "model": {
+        "accuracy": 0.5297619047619048,
+        "log_loss": 1.0008743757321152,
+        "brier_score": 0.19872987814976115
+      },
+      "market": {
+        "accuracy": 0.5505952380952381,
+        "log_loss": 0.9719704693042989,
+        "brier_score": 0.19252999842263202
+      }
+    }
+  },
+  "method": {
+    "stake": "Flat one unit per bet, no commission",
+    "value_rule": "Bet the outcome with the highest model expected value when it exceeds the edge",
+    "bootstrap": "Weekly calendar blocks, 2000 resamples, seed 20261022",
+    "price_notes": {
+      "average_early": "Market average collected before the weekend (the price a user could typically take)",
+      "average_closing": "Market average at kickoff",
+      "pinnacle_closing": "Sharpest closing price; hardest to beat"
+    }
+  },
+  "sources": [
+    {
+      "league": "Premier League",
+      "season": "2425",
+      "url": "https://www.football-data.co.uk/mmz4281/2425/E0.csv",
+      "sha256": "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4",
+      "rows": 380
+    },
+    {
+      "league": "La Liga",
+      "season": "2425",
+      "url": "https://www.football-data.co.uk/mmz4281/2425/SP1.csv",
+      "sha256": "c086e96d6a53f6e6c0fce4e35db0d1728c773b4362323da0161a34769e315a36",
+      "rows": 380
+    },
+    {
+      "league": "Serie A",
+      "season": "2425",
+      "url": "https://www.football-data.co.uk/mmz4281/2425/I1.csv",
+      "sha256": "79d87a5b18771e066ac7419b7876bfd9771a68ca117a9712375d6bc9685abee3",
+      "rows": 380
+    },
+    {
+      "league": "Bundesliga",
+      "season": "2425",
+      "url": "https://www.football-data.co.uk/mmz4281/2425/D1.csv",
+      "sha256": "a295c58033cfe6393cbbc28f7db85671839b960c5f1153fd3678e20ad2adb92e",
+      "rows": 306
+    },
+    {
+      "league": "Ligue 1",
+      "season": "2425",
+      "url": "https://www.football-data.co.uk/mmz4281/2425/F1.csv",
+      "sha256": "fe6ae6a0c30d05f0ac88e0fc4a31452c7203e2b444703dfa941e22f38f20ab63",
+      "rows": 306
+    },
+    {
+      "league": "Premier League",
+      "season": "2526",
+      "url": "https://www.football-data.co.uk/mmz4281/2526/E0.csv",
+      "sha256": "3e3a8352f9ada6789c508d6ca184424421fed56a30400904a4a327c583407e62",
+      "rows": 380
+    },
+    {
+      "league": "La Liga",
+      "season": "2526",
+      "url": "https://www.football-data.co.uk/mmz4281/2526/SP1.csv",
+      "sha256": "4ca2e285f3ee0702f6bc55fcaa4f5a15cb3aef6220735a1d15398131e21d63f5",
+      "rows": 380
+    },
+    {
+      "league": "Serie A",
+      "season": "2526",
+      "url": "https://www.football-data.co.uk/mmz4281/2526/I1.csv",
+      "sha256": "709ae279617d16af226312bcceac941e71241745ddaf950bdac2b83afad4fcbb",
+      "rows": 380
+    },
+    {
+      "league": "Bundesliga",
+      "season": "2526",
+      "url": "https://www.football-data.co.uk/mmz4281/2526/D1.csv",
+      "sha256": "618301a4b39918225a8ccc57f0f839d675e1abd92fa3a3ccd9a67acd7c79dd7f",
+      "rows": 306
+    },
+    {
+      "league": "Ligue 1",
+      "season": "2526",
+      "url": "https://www.football-data.co.uk/mmz4281/2526/F1.csv",
+      "sha256": "898b7ddcd373cfe955ae353b1a98cf7f1c8757ca10b69d53039f4e098e88f192",
+      "rows": 306
+    }
+  ]
+}

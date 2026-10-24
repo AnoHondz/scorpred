@@ -10,7 +10,7 @@ import logging
 import types
 import pytest
 from unittest.mock import patch, MagicMock
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import sys
 import os
@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import app as flask_app_module
 import security
 import nba_predictor as np_nba_module
+from tests.source_contracts import fresh_source
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ def _mock_teams():
 
 def _mock_fixture():
     return {
+        "data_freshness": fresh_source(),
         "fixture": {"id": 1, "date": "2025-04-10T15:00:00+00:00"},
         "teams": {
             "home": {"id": 33, "name": "Manchester United", "logo": ""},
@@ -510,7 +512,12 @@ class TestPredictionRoute:
         assert b"Trust Check" in rv.data
         assert b"Limited Data" in rv.data
 
-    def test_prediction_tracks_selected_fixture_date(self, client):
+    def test_prediction_page_does_not_track_its_engine(self, client):
+        kickoff = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        flask_app_module._FIXTURE_INDEX["stage1-tracking"] = {
+            "fixture": {"id": "stage1-tracking", "date": kickoff, "status": {"short": "NS"}},
+            "data_freshness": fresh_source(),
+        }
         with client.session_transaction() as sess:
             sess["team_a_id"] = 33
             sess["team_a_name"] = "Manchester United"
@@ -519,7 +526,8 @@ class TestPredictionRoute:
             sess["team_b_name"] = "Liverpool"
             sess["team_b_logo"] = ""
             sess["selected_fixture"] = {
-                "date": "2026-04-21T19:45:00+00:00",
+                "fixture_id": "stage1-tracking",
+                "date": kickoff,
                 "data_source": "configured",
             }
 
@@ -532,8 +540,8 @@ class TestPredictionRoute:
             rv = client.get("/prediction")
 
         assert rv.status_code == 200
-        assert mock_save.call_count == 1
-        assert mock_save.call_args.kwargs["game_date"] == "2026-04-21T19:45:00+00:00"
+        # This page runs a different engine from the published one, so it never writes the track record.
+        mock_save.assert_not_called()
 
 
 class TestNbaPredictionRoute:
@@ -675,6 +683,10 @@ class TestNbaPredictionRoute:
         assert "failure_reason=home=no canonical match for seattle supersonics; away=matched by canonical name heat" in caplog.text
 
     def test_nba_prediction_renders_current_payload(self, client):
+        upcoming = _mock_nba_game()
+        upcoming["data_freshness"] = fresh_source()
+        upcoming["date"]["start"] = (datetime.now(UTC) + timedelta(days=1)).isoformat()
+        upcoming["status"] = {"state": "pre", "short": "Scheduled"}
         with client.session_transaction() as sess:
             sess["nba_team_a_id"] = "1610612747"
             sess["nba_team_a_name"] = "Los Angeles Lakers"
@@ -688,7 +700,7 @@ class TestNbaPredictionRoute:
             sess["nba_team_b_city"] = "Boston"
             sess["nba_selected_game"] = {
                 "event_id": "401000001",
-                "date": "2026-04-21T19:30:00Z",
+                "date": upcoming["date"]["start"],
                 "status": "Scheduled",
                 "venue_name": "Test Arena",
                 "short_name": "Celtics @ Lakers",
@@ -739,13 +751,13 @@ class TestNbaPredictionRoute:
         }
         stats_by_team = {id_a: stats_a, id_b: stats_b}
 
-        with patch("nba_live_client.get_event_snapshot", return_value=home_game), \
-             patch("nba_live_client.get_h2h", return_value=[home_game, away_game]), \
-             patch("nba_live_client.get_team_recent_form_context", side_effect=lambda tid, *a, **kw: form_by_team[tid]), \
-             patch("nba_live_client.get_team_injuries", return_value=[]), \
-             patch("nba_live_client.get_team_season_stats", side_effect=lambda tid, *a, **kw: stats_by_team[tid]), \
-             patch("nba_live_client.get_standings", return_value={"west": [{"team": {"name": "Lakers"}, "rank": 3}], "east": [{"team": {"name": "Celtics"}, "rank": 1}]}), \
-             patch("scormastermind.predict_match", return_value={"ui_prediction": _mock_nba_scorpred()}), \
+        with patch("nba_routes.nc.get_event_snapshot", return_value=upcoming), \
+             patch("nba_routes.nc.get_h2h", return_value=[home_game, away_game]), \
+             patch("nba_routes.nc.get_team_recent_form_context", side_effect=lambda tid, *a, **kw: form_by_team[tid]), \
+             patch("nba_routes.nc.get_team_injuries", return_value=[]), \
+             patch("nba_routes.nc.get_team_season_stats", side_effect=lambda tid, *a, **kw: stats_by_team[tid]), \
+             patch("nba_routes.nc.get_standings", return_value={"west": [{"team": {"name": "Lakers"}, "rank": 3}], "east": [{"team": {"name": "Celtics"}, "rank": 1}]}), \
+             patch("nba_routes.sm.predict_match", return_value={"ui_prediction": _mock_nba_scorpred()}), \
              patch("model_tracker.save_prediction") as mock_save:
             rv = client.get("/nba/prediction")
 
@@ -754,8 +766,7 @@ class TestNbaPredictionRoute:
         assert b"Lakers" in rv.data
         assert b"Trust Check" in rv.data
         assert b"Data Confidence" not in rv.data
-        assert mock_save.call_count == 1
-        assert mock_save.call_args.kwargs["game_date"] == "2026-04-21T19:30:00Z"
+        mock_save.assert_not_called()
 
     def test_nba_index_never_renders_no_confidence_phrase(self, client):
         game = _mock_nba_game(date="2026-04-21")
@@ -2072,7 +2083,7 @@ class TestNbaFailureHandling:
             rv = client.get("/nba/")
         assert rv.status_code == 200
 
-    def test_nba_index_shows_predicted_winner_for_upcoming_game(self, client):
+    def test_nba_index_keeps_upcoming_game_when_prediction_data_is_unavailable(self, client):
         teams = [
             {"id": "1", "name": "Boston Celtics", "nickname": "Celtics", "city": "Boston", "logo": ""},
             {"id": "2", "name": "Orlando Magic", "nickname": "Magic", "city": "Orlando", "logo": ""},
@@ -2103,11 +2114,13 @@ class TestNbaFailureHandling:
             rv = client.get("/nba/")
 
         assert rv.status_code == 200
-        assert b"BET" in rv.data
+        assert b"CONSIDER" in rv.data
         assert b"Celtics" in rv.data
+        assert b"SKIP" in rv.data
+        assert b"Unavailable" in rv.data
         assert b"Game tied" not in rv.data
 
-    def test_nba_prediction_renders_with_scorpred_schema(self, client):
+    def test_nba_prediction_without_verified_event_shows_unavailable(self, client):
         with client.session_transaction() as sess:
             sess["nba_team_a_id"] = "1"
             sess["nba_team_a_name"] = "Los Angeles Lakers"
@@ -2148,13 +2161,13 @@ class TestNbaFailureHandling:
             rv = client.get("/nba/prediction")
 
         assert rv.status_code == 200
-        assert b"Prediction data could not be generated" not in rv.data
+        assert b"Prediction data could not be generated" in rv.data
         assert b"NBA Match Analysis" in rv.data
-        assert b"Trust Check" in rv.data
+        assert b"Pregame recommendations are unavailable" in rv.data
         assert b"Score Projections" not in rv.data
         assert b"Key Prediction Factors" not in rv.data
 
-    def test_nba_prediction_renders_spread_total_and_parlay_sections(self, client):
+    def test_nba_prediction_without_verified_event_hides_markets_and_does_not_track(self, client):
         with client.session_transaction() as sess:
             sess["nba_team_a_id"] = "1"
             sess["nba_team_a_name"] = "Boston Celtics"
@@ -2213,13 +2226,12 @@ class TestNbaFailureHandling:
             rv = client.get("/nba/prediction")
 
         assert rv.status_code == 200
-        assert b"Related Markets" in rv.data
-        assert b"Celtics -6.5" in rv.data
-        assert b"Over 223.5" in rv.data
+        assert b"Related Markets" not in rv.data
+        assert b"Celtics -6.5" not in rv.data
+        assert b"Over 223.5" not in rv.data
         assert b"Parlay Checklist" not in rv.data
         assert b"Model-derived" not in rv.data
-        assert mock_save_prediction.call_args.kwargs["totals_pick"] == "Over"
-        assert mock_save_prediction.call_args.kwargs["totals_line"] == 223.5
+        mock_save_prediction.assert_not_called()
 
     def test_nba_market_recommendations_flag_weak_legs_honestly(self):
         team_a = {"name": "Boston Celtics", "nickname": "Celtics"}

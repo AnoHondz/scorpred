@@ -1,0 +1,11 @@
+{
+  "version": "2026-10-16T11:19:55.177393+00:00",
+  "sklearn_version": "1.8.0",
+  "files": {
+    "soccer_random_forest_clean.pkl": {
+      "sha256": "be294838aad6273456d754ae59679a8e8a75e313f3de9ab42fc07d217dedd88b",
+      "feature_count": 60,
+      "schema_version": "f4960fa835e3d20b01fda002f6edd0bff87e51a8b7257ce6ea5d85e7e9430378"
+    }
+  }
+}

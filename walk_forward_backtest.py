@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.metrics import accuracy_score, brier_score_loss
 
@@ -559,12 +560,8 @@ def evaluate_fold(
     stack_estimators = _build_base_estimators(random_state)
     stacking = _build_stacking(stack_estimators, random_state)
     stacking.fit(x_train, y_train, sample_weight=sample_weight_train)
-    try:
-        calibrated = CalibratedClassifierCV(stacking, method="sigmoid", cv="prefit")
-        calibrated.fit(x_cal, y_cal)
-    except Exception:
-        calibrated = CalibratedClassifierCV(stacking, method="sigmoid", cv=5)
-        calibrated.fit(x_cal, y_cal)
+    calibrated = CalibratedClassifierCV(FrozenEstimator(stacking), method="sigmoid")
+    calibrated.fit(x_cal, y_cal)
 
     ensemble_preds = calibrated.predict(x_test).tolist()
     ensemble_proba = calibrated.predict_proba(x_test)

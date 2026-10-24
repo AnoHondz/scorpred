@@ -3,12 +3,26 @@
 Replaces the crude threading.Timer loop previously used in app.py.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from services.pipeline_monitor import combine_refresh_outcomes, fixture_refresh_outcome
+
 _log = logging.getLogger("scheduler")
 _scheduler: BackgroundScheduler | None = None
+
+
+def _record_refresh(monitor, pipeline: str, outcomes: list[dict]) -> None:
+    outcome = combine_refresh_outcomes(outcomes)
+    if outcome["status"] == "success":
+        monitor.record_success(pipeline, observed_at=outcome["observed_at"])
+        _log.info("%s refresh succeeded observed_at=%s", pipeline, outcome["observed_at"])
+    else:
+        error = RuntimeError(outcome["error"] or "Refresh did not complete successfully")
+        monitor.record_failure(pipeline, error)
+        _log.warning("%s refresh %s: %s", pipeline, outcome["status"], error)
 
 
 def get_scheduler() -> BackgroundScheduler:
@@ -25,32 +39,40 @@ def get_scheduler() -> BackgroundScheduler:
     return _scheduler
 
 
-def start(app, prediction_service, ac, nba_live_client, monitor) -> BackgroundScheduler:
+def start(app, prediction_service, ac, nba_live_client, monitor, *, match_brain, track_predictions=None,
+          build_best_props=None) -> BackgroundScheduler:
     """Register all refresh jobs and start the scheduler."""
-    from league_config import SUPPORTED_LEAGUE_IDS, CURRENT_SEASON
+    from league_config import SUPPORTED_LEAGUE_IDS
 
     sched = get_scheduler()
+    if sched.running:
+        return sched
 
     @sched.scheduled_job("interval", minutes=25, id="soccer_fixtures")
     def refresh_soccer():
         with app.app_context():
-            try:
-                for league_id in SUPPORTED_LEAGUE_IDS:
-                    ac.get_upcoming_fixtures(league_id, CURRENT_SEASON, next_n=50)
-                _log.info("soccer_fixtures refresh done leagues=%s", SUPPORTED_LEAGUE_IDS)
-                monitor.record_success("soccer_fixtures")
-            except Exception as exc:
-                _log.warning("soccer_fixtures refresh failed: %s", exc)
-                monitor.record_failure("soccer_fixtures", exc)
+            outcomes = []
+            for league_id in SUPPORTED_LEAGUE_IDS:
+                try:
+                    _cards, fixtures, error, source, marker = prediction_service.get_fixture_cards(league_id)
+                    outcome = fixture_refresh_outcome(fixtures, error, source, marker)
+                    if outcome.get("error"):
+                        outcome["error"] = f"League {league_id}: {outcome['error']}"
+                    outcomes.append(outcome)
+                except Exception as exc:
+                    outcomes.append({"status": "failed", "observed_at": None, "error": f"League {league_id}: {exc}"})
+            _record_refresh(monitor, "soccer_fixtures", outcomes)
 
     @sched.scheduled_job("interval", minutes=25, start_date="2000-01-01 00:02:00", id="nba_games")
     def refresh_nba():
         with app.app_context():
             try:
-                if nba_live_client is not None:
-                    nba_live_client.get_upcoming_games(30, 7, "api")
-                    _log.info("nba_games refresh done")
-                    monitor.record_success("nba_games")
+                if nba_live_client is None:
+                    raise RuntimeError("NBA provider is unavailable")
+                nba_live_client.get_upcoming_games(30, 7, "api")
+                # [] can mean a valid off-season schedule. The source outcome decides health.
+                outcome = nba_live_client.get_schedule_refresh_status()
+                _record_refresh(monitor, "nba_games", [outcome])
             except Exception as exc:
                 _log.warning("nba_games refresh failed: %s", exc)
                 monitor.record_failure("nba_games", exc)
@@ -58,22 +80,115 @@ def start(app, prediction_service, ac, nba_live_client, monitor) -> BackgroundSc
     @sched.scheduled_job("interval", minutes=60, id="ml_predictions")
     def refresh_predictions():
         with app.app_context():
-            try:
-                from services.match_brain import _MATCH_BRAIN
-                if _MATCH_BRAIN:
-                    for league_id in SUPPORTED_LEAGUE_IDS:
-                        _MATCH_BRAIN.refresh_cycle(league_id, min_interval_seconds=0)
-                    _log.info("ml_predictions refresh done")
-                monitor.record_success("ml_predictions")
-            except Exception as exc:
-                _log.warning("ml_predictions refresh failed: %s", exc)
-                monitor.record_failure("ml_predictions", exc)
+            outcomes = []
+            for league_id in SUPPORTED_LEAGUE_IDS:
+                try:
+                    if match_brain is None:
+                        raise RuntimeError("Prediction brain is unavailable")
+                    outcome = match_brain.refresh_cycle(league_id, min_interval_seconds=0)
+                    if isinstance(outcome, dict):
+                        outcome = dict(outcome)
+                        if outcome.get("error"):
+                            outcome["error"] = f"League {league_id}: {outcome['error']}"
+                    outcomes.append(outcome)
+                except Exception as exc:
+                    outcomes.append({"status": "failed", "observed_at": None, "error": f"League {league_id}: {exc}"})
+            _record_refresh(monitor, "ml_predictions", outcomes)
 
     @sched.scheduled_job("interval", minutes=10, id="staleness_check")
     def check_staleness():
         with app.app_context():
             monitor.check_staleness()
 
+    # Free league-wide feeds (ESPN NBA/NFL, Fantasy Premier League): three requests per run, no API quota.
+    # Runs at startup, then just inside the feeds' 10-minute freshness window so requests read a warm cache.
+    @sched.scheduled_job("interval", minutes=9, next_run_time=datetime.now(timezone.utc), id="injury_reports")
+    def refresh_injuries():
+        from services import injury_reports
+        try:
+            _record_refresh(monitor, "injury_reports", injury_reports.refresh_all())
+        except Exception as exc:
+            _log.warning("injury_reports refresh failed: %s", exc)
+            monitor.record_failure("injury_reports", exc)
+
+    # Record every published pregame pick (and revise it until kickoff), then grade finished games.
+    @sched.scheduled_job("interval", minutes=30, start_date="2000-01-01 00:04:00", id="prediction_tracking")
+    def run_prediction_tracking():
+        if track_predictions is None:
+            return
+        try:
+            outcome = track_predictions()
+            _log.info("prediction_tracking %s", outcome)
+        except Exception as exc:
+            _log.warning("prediction_tracking failed: %s", exc)
+
+    # Keep today's best-props board warm so the page never waits on a full rebuild. Hourly and on two
+    # threads: the build is CPU-heavy Python and must not starve page requests (Insights timed out at 15 min/6 threads).
+    @sched.scheduled_job("interval", minutes=60, next_run_time=datetime.now(timezone.utc) + timedelta(minutes=2), id="best_props")
+    def warm_best_props():
+        if build_best_props is None:
+            return
+        from services import best_props
+        from services.prediction_lifecycle import calendar_date
+        day = calendar_date(datetime.now(timezone.utc))
+        try:
+            best_props.refresh(day, lambda: build_best_props(day))
+        except Exception as exc:
+            _log.warning("best_props failed: %s", exc)
+
+    # Learn from graded picks once a day; a correction is applied only if it beats held-out picks.
+    @sched.scheduled_job("interval", hours=24, start_date="2000-01-01 02:30:00", id="recalibration")
+    def learn_recalibration():
+        from services import recalibration
+        try:
+            recalibration.learn_all()
+        except Exception as exc:
+            _log.warning("recalibration failed: %s", exc)
+
+    # Closing prices for tracked picks; only games starting within the next 25 minutes are priced.
+    @sched.scheduled_job("interval", minutes=10, start_date="2000-01-01 00:03:00", id="closing_lines")
+    def capture_closing_lines():
+        from services import closing_lines
+        try:
+            outcome = closing_lines.capture(nba_live_client)
+            if outcome["recorded"] or outcome["missing"]:
+                _log.info("closing_lines recorded=%s missing=%s", outcome["recorded"], outcome["missing"])
+        except Exception as exc:
+            _log.warning("closing_lines failed: %s", exc)
+
+    @sched.scheduled_job("interval", hours=6, start_date="2000-01-01 00:05:00", id="cache_prune")
+    def prune_cache():
+        from services import cache_pruner
+        try:
+            cache_pruner.prune()
+        except Exception as exc:
+            _log.warning("cache_prune failed: %s", exc)
+
+    # Explicit local opt-in; no sender credentials means no unattended email.
+    from services import daily_digest
+    try:
+        digest_config = daily_digest.settings()
+        if digest_config["enabled"]:
+            hour, minute = map(int, digest_config["time"].split(":"))
+            def send_daily_digest():
+                try:
+                    result = daily_digest.run(app)
+                    _log.info("daily_sports_digest state=%s", result["state"])
+                except Exception as exc:
+                    _log.warning("daily_sports_digest failed (%s)", type(exc).__name__)
+            sched.add_job(send_daily_digest, "cron", hour=hour, minute=minute,
+                          timezone=digest_config["timezone"], id="daily_sports_digest",
+                          replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=120)
+    except (OSError, ValueError, TypeError):
+        _log.warning("Daily sports digest configuration is invalid; email remains disabled.")
+
     sched.start()
-    _log.info("APScheduler started with jobs: soccer_fixtures, nba_games, ml_predictions, staleness_check")
+    _log.info("APScheduler started with jobs: soccer_fixtures, nba_games, ml_predictions, injury_reports, staleness_check, prediction_tracking, best_props, recalibration, closing_lines, cache_prune")
     return sched
+
+
+def stop():
+    global _scheduler
+    if _scheduler is not None and _scheduler.running:
+        _scheduler.shutdown(wait=False)
+    _scheduler = None

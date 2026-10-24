@@ -24,6 +24,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 from runtime_paths import cache_dir
+from services.data_freshness import SOURCE_KEY, stamp
+from services.prediction_lifecycle import calendar_date, freshness_state, parse_kickoff
 from utils.parsing import safe_float as _sf, safe_int
 
 from league_config import (
@@ -198,12 +200,48 @@ _logger = logging.getLogger("api_client")
 import threading
 _memory_cache: dict = {}
 _cache_lock = threading.Lock()
+_refresh_context = threading.local()
+
+
+def get_last_refresh_status(league_id=None) -> dict:
+    """Per-caller source outcome, including successfully fetched empty schedules."""
+    if league_id is not None:
+        return dict(getattr(_refresh_context, "schedule_outcomes", {}).get(league_id, {"status": "failed", "observed_at": None, "warning": "No schedule refresh was reported"}))
+    return dict(getattr(_refresh_context, "outcome", {"status": "failed", "observed_at": None, "warning": "No provider refresh was reported"}))
+
+
+def _remember_schedule(league_id):
+    outcomes = getattr(_refresh_context, "schedule_outcomes", {})
+    outcomes[league_id] = get_last_refresh_status()
+    _refresh_context.schedule_outcomes = outcomes
+
+
+def _source_payload(payload, source, observed_ts, fresh_seconds, max_seconds, *, degraded=False):
+    if not isinstance(payload, dict) or not payload:
+        _refresh_context.outcome = {"status": "failed", "observed_at": None, "warning": "Provider returned no usable payload"}
+        return {}
+    observed = datetime.fromtimestamp(observed_ts, timezone.utc)
+    existing = payload.get(SOURCE_KEY)
+    degraded = degraded or (isinstance(existing, dict) and existing.get("state") != "fresh")
+    result = stamp(payload, source, observed, fresh_seconds, max_seconds, degraded=degraded)
+    info = result[SOURCE_KEY]
+    state = freshness_state(info)
+    _refresh_context.outcome = {"status": "success" if state == "fresh" else "degraded" if state == "degraded" else "failed",
+                                "observed_at": info.get("observed_at"), "warning": info.get("warning")}
+    if state == "unavailable":
+        return {}
+    for key in ("response", "events", "matches"):
+        for row in result.get(key) or []:
+            if isinstance(row, dict):
+                row[SOURCE_KEY] = dict(info)
+                row["data_freshness"] = dict(info)
+    return result
 
 # In-process team fixture cache — keyed by (team_id, league_id, season, last)
 # Avoids re-running the ESPN scoreboard scan on every scoreline request.
 _team_fixtures_cache: dict = {}   # key → {"data": list, "ts": float}
 _team_fixtures_lock = threading.Lock()
-_TEAM_FIXTURES_TTL = 7200  # 2 hours
+_TEAM_FIXTURES_TTL = 3600  # One hour; an outer cache cannot extend source freshness.
 
 # ── TTL constants (seconds) — single source of truth ─────────────────────────
 _ENDPOINT_TTLS: dict[str, int] = {
@@ -315,8 +353,13 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     force_refresh = force_refresh or FORCE_REFRESH
     api_key = API_KEY or _APISPORTS_KEY
     cache_key = _make_cache_key(endpoint, params)
-    cache_ttl = _get_cache_ttl(endpoint)
+    cache_ttl = 3600 if endpoint == "fixtures" and params.get("team") else _get_cache_ttl(endpoint)
+    max_stale = 21600 if cache_ttl >= 3600 else min(900, cache_ttl * 3)
     now = time.time()
+    _refresh_context.outcome = {"status": "failed", "observed_at": None, "warning": "Provider request did not succeed"}
+
+    def serve(data, observed_ts, *, degraded=False):
+        return _source_payload(data, "api_football", observed_ts, cache_ttl, max_stale, degraded=degraded)
     # 1. In-memory cache check
     with _cache_lock:
         cache_entry = _memory_cache.get(cache_key)
@@ -324,14 +367,25 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             age = now - cache_entry["ts"]
             if age < cache_ttl and not force_refresh:
                 _logger.debug("In-memory cache hit for %s (age=%.1fs)", endpoint, age)
-                return cache_entry["data"] or {}
-            elif age < cache_ttl * 3:
+                return serve(cache_entry["data"], cache_entry["ts"])
+            elif age < max_stale:
                 _logger.debug("Stale in-memory cache available for %s (age=%.1fs)", endpoint, age)
                 stale_entry = cache_entry
             else:
                 stale_entry = None
         else:
             stale_entry = None
+
+    if not force_refresh and path.exists() and 0 <= now - path.stat().st_mtime < cache_ttl:
+        try:
+            observed_ts = path.stat().st_mtime
+            cached = serve(_load(path), observed_ts)
+            if cached:
+                with _cache_lock:
+                    _memory_cache[cache_key] = {"data": cached, "ts": observed_ts}
+                return cached
+        except (OSError, ValueError):
+            pass
 
     if not api_key:
         _logger.error("Missing API_FOOTBALL_KEY / RAPIDAPI_KEY / APISPORTS_KEY environment variable.")
@@ -341,7 +395,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     if _API_FOOTBALL_SUSPENDED:
         _logger.debug("Skipping API-Football call for %s (account suspended)", endpoint)
         if stale_entry:
-            return stale_entry["data"] or {}
+            return serve(stale_entry["data"], stale_entry["ts"], degraded=True)
         return {}
 
     # 403 session suppression: if this endpoint was forbidden this process, skip the call
@@ -349,7 +403,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     if endpoint_base in _FORBIDDEN_ENDPOINTS:
         _logger.debug("Skipping forbidden endpoint %s (403 suppressed)", endpoint)
         if stale_entry:
-            return stale_entry["data"] or {}
+            return serve(stale_entry["data"], stale_entry["ts"], degraded=True)
         return {}
     cooldown_until = _RATE_LIMITED_ENDPOINTS.get(endpoint_base)
     if cooldown_until:
@@ -357,7 +411,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
         if remaining > 0:
             _logger.debug("Skipping rate-limited endpoint %s (cooldown %.1fs)", endpoint, remaining)
             if stale_entry:
-                return stale_entry["data"] or {}
+                return serve(stale_entry["data"], stale_entry["ts"], degraded=True)
             return {"status": "fail", "rate_limited": True}
         _RATE_LIMITED_ENDPOINTS.pop(endpoint_base, None)
 
@@ -366,7 +420,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
     if call_count > _MAX_CALLS_PER_REQUEST:
         _logger.warning("Request call budget exceeded (%d) for endpoint %s", call_count, endpoint)
         if stale_entry:
-            return stale_entry["data"] or {}
+            return serve(stale_entry["data"], stale_entry["ts"], degraded=True)
         return {}
 
     # Translate endpoint path and params when using the free football API provider
@@ -434,7 +488,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
                 _logger.warning("Rate limit (429) for %s", endpoint)
                 if stale_entry:
                     _logger.info("Serving stale cache for %s after 429", endpoint)
-                    result = stale_entry["data"] or {}
+                    result = serve(stale_entry["data"], stale_entry["ts"], degraded=True)
                 else:
                     result = {"status": "fail", "rate_limited": True}
                 break
@@ -443,7 +497,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
                 RAPIDAPI_OK = False
                 _logger.warning("403 Forbidden for endpoint '%s' — suppressing for this session", endpoint)
                 if stale_entry:
-                    result = stale_entry["data"] or {}
+                    result = serve(stale_entry["data"], stale_entry["ts"], degraded=True)
                 break
             if resp.status_code in RETRY_STATUS_CODES and attempt < EXTERNAL_API_RETRY_ATTEMPTS - 1:
                 retry_after = resp.headers.get("Retry-After")
@@ -503,6 +557,7 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
             if _USING_FREE_API and "response" not in data:
                 payload = data.get("data") or data.get("result") or data.get("matches") or data.get("teams") or data.get("standings") or data
                 data = {"response": payload if isinstance(payload, list) else ([payload] if isinstance(payload, dict) else [])}
+            data = serve(data, time.time())
             _save(path, data)
             with _cache_lock:
                 _memory_cache[cache_key] = {"data": data, "ts": now}
@@ -516,17 +571,19 @@ def api_get(endpoint: str, params: dict | None = None, *, cache_hours: int = CAC
                 continue
             if stale_entry:
                 _logger.info("Serving stale cache for %s after exception", endpoint)
-                result = stale_entry["data"] or {}
+                result = serve(stale_entry["data"], stale_entry["ts"], degraded=True)
             break
 
     # Fallback: try disk cache if no result
     if not result:
         if path.exists():
             try:
-                cached = _load(path)
+                observed_ts = path.stat().st_mtime
+                cached = serve(_load(path), observed_ts, degraded=True)
                 _logger.info("Serving disk cache for %s after API failure", endpoint)
                 with _cache_lock:
-                    _memory_cache[cache_key] = {"data": cached, "ts": now}
+                    if cached:
+                        _memory_cache[cache_key] = {"data": cached, "ts": observed_ts}
                 result = cached or {}
             except Exception as e:
                 _logger.error("Disk cache load failed for %s: %s", endpoint, e)
@@ -578,8 +635,14 @@ def _espn_cache_key(prefix: str, parts: tuple[Any, ...]) -> Path:
 
 def _espn_get_json(url: str, cache_key: str, ttl_hours: float = 1.0) -> dict:
     path = _espn_cache_key("espn", (cache_key,))
-    if not FORCE_REFRESH and _cache_valid(path, ttl_hours):
-        return _load(path)
+    fresh_seconds = 120 if "scoreboard" in cache_key and ttl_hours < 1 else min(3600, int(ttl_hours * 3600))
+    max_seconds = 900 if fresh_seconds < 3600 else 21600
+    _refresh_context.outcome = {"status": "failed", "observed_at": None, "warning": "ESPN refresh failed"}
+    if not FORCE_REFRESH and _cache_valid(path, fresh_seconds / 3600):
+        try:
+            return _source_payload(_load(path), "espn", path.stat().st_mtime, fresh_seconds, max_seconds)
+        except (OSError, ValueError):
+            pass
 
     last_exc: Exception | None = None
     for attempt in range(EXTERNAL_API_RETRY_ATTEMPTS):
@@ -597,7 +660,7 @@ def _espn_get_json(url: str, cache_key: str, ttl_hours: float = 1.0) -> dict:
                 continue
 
             response.raise_for_status()
-            payload = response.json()
+            payload = _source_payload(response.json(), "espn", time.time(), fresh_seconds, max_seconds)
             _save(path, payload)
             return payload
         except (requests.RequestException, ValueError) as exc:
@@ -607,7 +670,12 @@ def _espn_get_json(url: str, cache_key: str, ttl_hours: float = 1.0) -> dict:
                 continue
 
     if path.exists():
-        return _load(path)
+        try:
+            payload = _source_payload(_load(path), "espn", path.stat().st_mtime, fresh_seconds, max_seconds, degraded=True)
+            if payload:
+                return payload
+        except (OSError, ValueError):
+            pass
     raise RuntimeError(f"ESPN request failed for cache key {cache_key}") from last_exc
 
 
@@ -705,13 +773,19 @@ def _espn_score(score_val) -> int | None:
         return None
 
 
-def _espn_fixture_status(state: str) -> dict[str, str]:
+def _espn_fixture_status(state: str, name: str = "") -> dict[str, str]:
     state = (state or "").lower()
+    label = str(name or "").upper()
+    for token, short in (("POSTPON", "PST"), ("CANCEL", "CANC"), ("SUSPEND", "SUSP"), ("ABANDON", "ABD"), ("DELAY", "TBD")):
+        if token in label:
+            return {"short": short, "long": label.replace("STATUS_", "").replace("_", " ").title()}
     if state == "post":
         return {"short": "FT", "long": "Finished"}
     if state == "in":
         return {"short": "LIVE", "long": "In Progress"}
-    return {"short": "NS", "long": "Scheduled"}
+    if state == "pre":
+        return {"short": "NS", "long": "Scheduled"}
+    return {"short": "UNK", "long": "Status unavailable"}
 
 
 def _normalize_espn_fixture(event: dict, league_id: int) -> dict | None:
@@ -729,7 +803,7 @@ def _normalize_espn_fixture(event: dict, league_id: int) -> dict | None:
     home_team = home.get("team") or {}
     away_team = away.get("team") or {}
     status_type = ((competition.get("status") or {}).get("type") or {})
-    status = _espn_fixture_status(status_type.get("state"))
+    status = _espn_fixture_status(status_type.get("state"), status_type.get("name") or status_type.get("description"))
     venue = competition.get("venue") or event.get("venue") or {}
 
     return {
@@ -766,6 +840,7 @@ def _normalize_espn_fixture(event: dict, league_id: int) -> dict | None:
         "events": [],
         "stats": [],
         "source": "espn",
+        "data_freshness": deepcopy(event.get("data_freshness") or event.get(SOURCE_KEY) or {}),
     }
 
 
@@ -1377,7 +1452,8 @@ def get_team_fixtures(
     with _team_fixtures_lock:
         _entry = _team_fixtures_cache.get(_cache_key_tf)
         if _entry and (time.time() - _entry["ts"]) < _TEAM_FIXTURES_TTL:
-            return _entry["data"]
+            if all(not fixture.get("data_freshness") or freshness_state(fixture["data_freshness"]) == "fresh" for fixture in _entry["data"]):
+                return deepcopy(_entry["data"])
 
     def _unique_fixtures(fixtures: list[dict]) -> list[dict]:
         seen = {}
@@ -1393,8 +1469,10 @@ def get_team_fixtures(
         return list(seen.values())
 
     def _cache_and_return(result: list) -> list:
+        observed = [parse_kickoff(fixture.get("data_freshness", {}).get("observed_at")) for fixture in result]
+        observed = [value.timestamp() for value in observed if value is not None]
         with _team_fixtures_lock:
-            _team_fixtures_cache[_cache_key_tf] = {"data": result, "ts": time.time()}
+            _team_fixtures_cache[_cache_key_tf] = {"data": deepcopy(result), "ts": min(observed) if observed else time.time()}
         return result
 
     logger = logging.getLogger("api_client")
@@ -1536,7 +1614,10 @@ def get_upcoming_fixtures(
     if _FD_AVAILABLE:
         try:
             result = _fd.get_upcoming_fixtures(league_id, season, next_n)
-            if result:
+            outcome = _fd.get_last_refresh_status()
+            if result or outcome.get("status") == "success":
+                _refresh_context.outcome = outcome
+                _remember_schedule(league_id)
                 logger.debug("[API_CLIENT] fd get_upcoming_fixtures returned %d fixtures", len(result))
                 return result
         except Exception as exc:
@@ -1545,13 +1626,15 @@ def get_upcoming_fixtures(
     # 2. api-sports.io (legacy)
     try:
         logger.debug(f"[API_CLIENT] Fetching upcoming fixtures: league_id={league_id}, season={season}, next_n={next_n}")
-        response = api_get(
+        payload = api_get(
             "fixtures",
             {"league": league_id, "season": season, "next": next_n},
             cache_hours=2,
-        ).get("response", [])
+        )
+        response = payload.get("response", [])
         logger.debug(f"[API_CLIENT] get_upcoming_fixtures fetched {len(response)} fixtures")
-        if response:
+        if response or "response" in payload and get_last_refresh_status().get("status") == "success":
+            _remember_schedule(league_id)
             return response
     except Exception as exc:
         logger.warning(f"[API_CLIENT] get_upcoming_fixtures failed: {exc}")
@@ -1602,6 +1685,20 @@ def get_upcoming_fixtures(
             if status_short not in _FINISHED and status_short not in _LIVE:
                 all_fixtures.append(fixture)
 
+    infos = [payload.get(SOURCE_KEY) for payload in payloads_by_offset.values() if isinstance(payload, dict) and payload.get(SOURCE_KEY)]
+    observed = [parse_kickoff(info.get("observed_at")) for info in infos]
+    observed = [value for value in observed if value is not None]
+    failed_days = sum(1 for payload in payloads_by_offset.values() if "events" not in payload)
+    delayed = failed_days or any(freshness_state(info) != "fresh" for info in infos)
+    _refresh_context.outcome = {
+        "status": "degraded" if delayed and infos else "failed" if not infos else "success",
+        "observed_at": min(observed).isoformat() if observed else None,
+        "warning": "Some soccer schedule dates could not be refreshed" if delayed else None,
+    }
+    if delayed:
+        for fixture in all_fixtures:
+            fixture["data_freshness"] = dict(fixture.get("data_freshness") or {}, state="degraded", warning=_refresh_context.outcome["warning"])
+    _remember_schedule(league_id)
     all_fixtures.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""))
     return all_fixtures[:next_n]
 
@@ -1611,22 +1708,27 @@ def get_fixtures_for_date(
     season: int,
     date: str,
 ) -> list:
-    """Fetch fixtures for a specific YYYY-MM-DD date.
-
-    Tries football-data.org (filter from upcoming batch), then api-sports.io
-    with the ?date= param, then ESPN date scoreboard as a final fallback.
-    """
+    """Fetch a New York calendar day, which spans parts of two UTC dates."""
     logger = logging.getLogger("api_client")
+    try:
+        requested = datetime.strptime(date, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        return []
+    utc_dates = [requested.strftime("%Y-%m-%d"), (requested + timedelta(days=1)).strftime("%Y-%m-%d")]
+
+    def selected(fixtures):
+        return sorted(
+            {str((row.get("fixture") or {}).get("id")): row for row in fixtures
+             if calendar_date((row.get("fixture") or {}).get("date")) == date}.values(),
+            key=lambda row: str((row.get("fixture") or {}).get("date") or ""),
+        )
 
     # 1. football-data.org: pull ahead batch and filter by date
     if _FD_AVAILABLE:
         try:
             result = _fd.get_upcoming_fixtures(league_id, season, 30)
             if result:
-                filtered = [
-                    f for f in result
-                    if str((f.get("fixture") or {}).get("date", ""))[:10] == date
-                ]
+                filtered = selected(result)
                 if filtered:
                     return filtered
         except Exception as exc:
@@ -1634,16 +1736,18 @@ def get_fixtures_for_date(
 
     # 2. api-sports.io supports ?date=YYYY-MM-DD
     try:
-        response = api_get(
-            "fixtures",
-            {"league": league_id, "season": season, "date": date},
-            cache_hours=3,
-        ).get("response", [])
+        payloads = [api_get("fixtures", {"league": league_id, "season": season, "date": utc_day}) for utc_day in utc_dates]
+        response = selected([row for payload in payloads for row in payload.get("response") or []])
         if response:
             logger.debug(
                 "[API_CLIENT] get_fixtures_for_date api-sports returned %d for %s", len(response), date
             )
+            if any("response" not in payload for payload in payloads):
+                for row in response:
+                    row["data_freshness"] = dict(row.get("data_freshness") or {}, state="degraded", warning="Some schedule dates could not be refreshed")
             return response
+        if all("response" in payload for payload in payloads):
+            return []
     except Exception as exc:
         logger.warning("[API_CLIENT] get_fixtures_for_date api-sports failed: %s", exc)
 
@@ -1651,17 +1755,25 @@ def get_fixtures_for_date(
     slug = _espn_slug(league_id)
     if slug:
         try:
-            espn_date = date.replace("-", "")
-            payload = _espn_get_json(
-                f"{ESPN_BASE}/{slug}/scoreboard?dates={espn_date}",
-                f"scoreboard:{league_id}:{espn_date}",
-                ttl_hours=3,
-            )
             fixtures = []
-            for event in payload.get("events") or []:
-                fixture = _normalize_espn_fixture(event, league_id)
-                if fixture:
-                    fixtures.append(fixture)
+            failed_days = 0
+            for utc_day in utc_dates:
+                espn_date = utc_day.replace("-", "")
+                try:
+                    payload = _espn_get_json(
+                        f"{ESPN_BASE}/{slug}/scoreboard?dates={espn_date}",
+                        f"scoreboard:{league_id}:{espn_date}", ttl_hours=120 / 3600,
+                    )
+                    for event in payload.get("events") or []:
+                        fixture = _normalize_espn_fixture(event, league_id)
+                        if fixture:
+                            fixtures.append(fixture)
+                except (OSError, RuntimeError, ValueError):
+                    failed_days += 1
+            fixtures = selected(fixtures)
+            if failed_days:
+                for fixture in fixtures:
+                    fixture["data_freshness"] = dict(fixture.get("data_freshness") or {}, state="degraded", warning="Some schedule dates could not be refreshed")
             if fixtures:
                 logger.debug(
                     "[API_CLIENT] get_fixtures_for_date ESPN returned %d for %s", len(fixtures), date

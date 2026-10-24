@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import app as flask_app_module
@@ -9,12 +10,14 @@ from services.calibration_engine import CalibrationEngine
 from services.decision_engine import DecisionEngine
 from services.feature_attribution_engine import FeatureAttributionEngine
 from services.match_brain import MatchBrain
+from tests.source_contracts import fresh_source
 
 
 def _fixture(fid: int = 101, *, with_odds: bool = True):
     odds = {"home": 2.10, "draw": 3.2, "away": 3.6} if with_odds else {}
     return {
-        "fixture": {"id": fid, "date": "2026-04-24T15:00:00+00:00", "status": {"short": "NS"}},
+        "data_freshness": fresh_source(),
+        "fixture": {"id": fid, "date": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(), "status": {"short": "NS"}},
         "teams": {
             "home": {"id": 1, "name": "Arsenal", "logo": ""},
             "away": {"id": 2, "name": "Chelsea", "logo": ""},
@@ -167,7 +170,7 @@ def test_tracking_deduplicates_and_updates_completion(tmp_path, monkeypatch):
     assert completed[0]["status"] == "completed"
 
 
-def test_match_brain_returns_same_cached_object():
+def test_match_brain_returns_consistent_cached_analysis():
     fixture = _fixture()
     brain = MatchBrain(
         load_fixtures=lambda _league: ([fixture], None, "configured", ""),
@@ -176,7 +179,7 @@ def test_match_brain_returns_same_cached_object():
     )
     first = brain.get_match_analysis("101")
     second = brain.get_match_analysis("101")
-    assert first is second
+    assert first == second
 
 
 def test_top_opportunities_sort_handles_none_ev():
@@ -260,6 +263,7 @@ def test_soccer_card_and_match_analysis_share_quant_fields():
     fixture = _fixture()
     with patch.object(flask_app_module, "_MATCH_BRAIN") as brain:
         canonical = {
+            "data_freshness": fresh_source(),
             "match_id": "101",
             "matchup": "Arsenal vs Chelsea",
             "league": "Premier League",
@@ -322,10 +326,11 @@ def test_api_timeout_uses_last_known_good_data():
     first = brain.safe_fetch_fixtures(39)
     second = brain.safe_fetch_fixtures(39)
     assert first
-    assert second == first
+    assert second[0]["fixture"] == first[0]["fixture"]
+    assert second[0]["data_freshness"]["state"] == "degraded"
 
 
-def test_missing_probabilities_fallback_to_neutral_distribution():
+def test_missing_probabilities_are_unavailable_without_invented_distribution():
     broken = _fixture()
     broken["prediction"]["win_probabilities"] = {}
     brain = MatchBrain(
@@ -334,8 +339,9 @@ def test_missing_probabilities_fallback_to_neutral_distribution():
         decision_engine=DecisionEngine(),
     )
     analysis = brain.get_match_analysis("101")
-    probs = analysis["probabilities"]
-    assert round(probs["home"] + probs["draw"] + probs["away"], 4) == 1.0
+    assert analysis["probabilities"] == {}
+    assert analysis["confidence"] == 0
+    assert analysis["action"] == "SKIP"
 
 
 def test_duplicate_tracking_blocked(tmp_path, monkeypatch):

@@ -1,0 +1,108 @@
+{
+  "generated_at": "2026-10-16T11:19:55.177393+00:00",
+  "method": "chronological_60_20_20_random_forest_sigmoid",
+  "dataset_sha256": "b713fa97bc8e3c189dfb6c0196f334386256fbb81fa31d366b0c00384121e07b",
+  "sklearn_version": "1.8.0",
+  "feature_count": 60,
+  "schema_version": "f4960fa835e3d20b01fda002f6edd0bff87e51a8b7257ce6ea5d85e7e9430378",
+  "total_rows": 7586,
+  "random_state": 42,
+  "windows": {
+    "train": {
+      "count": 4540,
+      "start": "2021-11-06",
+      "end": "2024-09-14"
+    },
+    "calibration": {
+      "count": 1528,
+      "start": "2024-09-15",
+      "end": "2025-05-20"
+    },
+    "test": {
+      "count": 1518,
+      "start": "2025-05-23",
+      "end": "2026-04-19"
+    }
+  },
+  "metrics": {
+    "accuracy": 0.520422,
+    "brier_score": 0.199535,
+    "log_loss": 1.002599,
+    "ece": 0.021563,
+    "confidence_buckets": [
+      {
+        "count": 175,
+        "confidence": 0.3801851212484716,
+        "accuracy": 0.42857142857142855
+      },
+      {
+        "count": 543,
+        "confidence": 0.4505446360587644,
+        "accuracy": 0.43278084714548803
+      },
+      {
+        "count": 477,
+        "confidence": 0.5481143414994699,
+        "accuracy": 0.5408805031446541
+      },
+      {
+        "count": 290,
+        "confidence": 0.6456776558413295,
+        "accuracy": 0.6827586206896552
+      },
+      {
+        "count": 33,
+        "confidence": 0.7146792099832189,
+        "accuracy": 0.7272727272727273
+      }
+    ],
+    "predicted_class_counts": {
+      "0": 917,
+      "1": 0,
+      "2": 601
+    }
+  },
+  "majority_baseline_accuracy": 0.436759,
+  "unadjusted_forest_metrics": {
+    "accuracy": 0.496706,
+    "brier_score": 0.202992,
+    "log_loss": 1.017837,
+    "ece": 0.032243,
+    "confidence_buckets": [
+      {
+        "count": 353,
+        "confidence": 0.37480269794468607,
+        "accuracy": 0.34277620396600567
+      },
+      {
+        "count": 616,
+        "confidence": 0.4450269751565262,
+        "accuracy": 0.4659090909090909
+      },
+      {
+        "count": 359,
+        "confidence": 0.5419541852816702,
+        "accuracy": 0.5793871866295265
+      },
+      {
+        "count": 145,
+        "confidence": 0.6460079374808264,
+        "accuracy": 0.7241379310344828
+      },
+      {
+        "count": 45,
+        "confidence": 0.7335351322575616,
+        "accuracy": 0.7333333333333333
+      }
+    ],
+    "predicted_class_counts": {
+      "0": 655,
+      "1": 263,
+      "2": 600
+    }
+  },
+  "profitability": {
+    "evaluated": false,
+    "reason": "Historical bookmaker prices and transaction costs have not been evaluated."
+  }
+}

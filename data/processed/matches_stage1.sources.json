@@ -1,0 +1,52 @@
+{
+  "issue_id": "SOC-001",
+  "accepted": [
+    {
+      "file": "data\\raw\\E0_2019.csv",
+      "sha256": "100037618b94f94057400bb02bf6bac4ef74ddaa58cde4b38370839c39caee61",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2020.csv",
+      "sha256": "5afe63f69401457b8354eaacee24f9a3e520b3c3af6329564a9783e20d789c62",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2021.csv",
+      "sha256": "335afcbabeb2939fa10ab39ba3e8215072d0b577cb8d0705c1e44c56e934e703",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2022.csv",
+      "sha256": "8442792d3b614c94ea3cf381bd2736805889cc1713169035368fff19c3d02380",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2023.csv",
+      "sha256": "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2024.csv",
+      "sha256": "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4",
+      "rows": 380
+    },
+    {
+      "file": "data\\raw\\E0_2025.csv",
+      "sha256": "4cb7f75e1780ba7cb55664b750de3ef19d8d9733fea38b96722eb88f7487ac05",
+      "rows": 319
+    }
+  ],
+  "quarantined": [
+    {
+      "file": "data\\raw\\E0_2018.csv",
+      "sha256": "4cb7f75e1780ba7cb55664b750de3ef19d8d9733fea38b96722eb88f7487ac05",
+      "rows": 319,
+      "reason": "Date outside filename season; quarantined by manifest, original retained"
+    }
+  ],
+  "rows": 2599,
+  "duplicate_excess": 0,
+  "original_data_modified": false,
+  "output_sha256": "7c03dfef6e777714bc4b6cc677428ba2bf6385f601cbd6e1f5cc89f1ce8cb3bf"
+}

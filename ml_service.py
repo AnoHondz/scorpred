@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +38,38 @@ def _row_to_features(row: dict[str, Any]) -> list[float]:
     return [safe_float(row.get(feature), 0.0) for feature in FEATURE_COLUMNS]
 
 
-def _features_dict_to_vector(features_dict: dict[str, Any]) -> list[float]:
-    return [safe_float(features_dict.get(feature), 0.0) for feature in FEATURE_COLUMNS]
+def _features_dict_to_vector(
+    features_dict: dict[str, Any],
+    feature_names: list[str] | None = None,
+    fill_values: dict[str, float] | None = None,
+    zero_is_missing: list[str] | None = None,
+) -> list[float]:
+    """Use the artifact's feature order, including older supported schemas."""
+    fills = fill_values or {}
+    vector = []
+    for feature in FEATURE_COLUMNS if feature_names is None else feature_names:
+        value = safe_float(features_dict.get(feature), fills.get(feature, 0.0))
+        if feature in (zero_is_missing or []) and value == 0:
+            value = fills.get(feature, 0.0)
+        vector.append(value if math.isfinite(value) else fills.get(feature, 0.0))
+    return vector
+
+
+def validate_model_bundle(bundle: Any) -> list[str]:
+    if not isinstance(bundle, dict) or bundle.get("model") is None:
+        raise ValueError("Model bundle must contain a fitted model.")
+    names = bundle.get("feature_names")
+    if not isinstance(names, (list, tuple)) or not names or any(
+        not isinstance(name, str) or not name for name in names
+    ) or len(set(names)) != len(names):
+        raise ValueError("Model bundle must declare unique feature_names in training order.")
+    count = getattr(bundle["model"], "n_features_in_", len(names))
+    if count != len(names):
+        raise ValueError(f"Model schema declares {len(names)} features; estimator expects {count}.")
+    unknown = set(names) - set(FEATURE_COLUMNS)
+    if unknown:
+        raise ValueError(f"Unsupported model features: {', '.join(sorted(unknown))}")
+    return list(names)
 
 
 def _feature_value(features: list[float], name: str, default: float = 0.0) -> float:
@@ -151,27 +182,9 @@ def load_model(
     force_reload: bool = False,
     league_id: int | None = None,
 ) -> dict[str, Any] | None:
-    path = Path(model_path) if model_path else None
-    # Auto-resolve: when league_id is given, try the per-league model first
-    if path is None and league_id is not None:
-        _league_path = league_model_path(league_id)
-        if _league_path.exists():
-            path = _league_path
-            _log.debug("ml_service: using per-league model league_id=%s at %s", league_id, path)
-        else:
-            _log.debug(
-                "ml_service: league model not found for league_id=%s, falling back to combined",
-                league_id,
-            )
-    # Auto-resolve: prefer ensemble, fall back to RF, then legacy
-    if path is None:
-        for candidate in [ensemble_soccer_model_path(), clean_soccer_model_path()]:
-            if candidate.exists():
-                path = candidate
-                _log.debug("ml_service: using combined model at %s", path)
-                break
-    if path is None:
-        path = clean_soccer_model_path()
+    # The release manifest publishes one production artifact. Experimental
+    # league/ensemble models must be selected explicitly by their caller.
+    path = Path(model_path) if model_path else clean_soccer_model_path()
     if not path.exists():
         return None
 
@@ -189,6 +202,7 @@ def load_model(
     try:
         bundle = joblib.load(path)
     except Exception:
+        _log.exception("Unable to load model artifact %s", path.name)
         return None
 
     if not isinstance(bundle, dict) or "model" not in bundle:
@@ -252,10 +266,17 @@ def predict_match(
             "error": "Trained model bundle is invalid.",
         }
 
-    vector = _features_dict_to_vector(features_dict)
     try:
+        feature_names = validate_model_bundle(bundle)
+        vector = _features_dict_to_vector(features_dict, feature_names, bundle.get("feature_fill_values"), bundle.get("zero_is_missing"))
         probabilities_raw = model.predict_proba([vector])[0]
         prediction = int(model.predict([vector])[0])
+        classes = list(getattr(model, "classes_", [0, 1, 2]))
+        if set(classes) != {0, 1, 2}:
+            raise ValueError("Soccer model must declare HomeWin, Draw, and AwayWin classes.")
+        probabilities_raw = [probabilities_raw[classes.index(label)] for label in range(3)]
+        if any(not math.isfinite(float(p)) or not 0 <= float(p) <= 1 for p in probabilities_raw):
+            raise ValueError("Model returned invalid probabilities.")
     except Exception as exc:
         return {
             "available": False,
@@ -279,9 +300,11 @@ def predict_match(
         "confidence": round(float(confidence), 6),
         "class_labels": CLASS_LABELS,
         "model_type": model_type,
-        "model_role": "production" if model_type == "stacking_ensemble" else "fallback",
+        "model_role": bundle.get("model_role", "fallback"),
         "base_models": bundle.get("base_models"),
         "base_agreement": base_agreement,
+        "feature_count": len(feature_names),
+        "schema_version": bundle.get("schema_version", "legacy-named-features"),
     }
 
 

@@ -44,11 +44,12 @@ def configure_security(app, secret_key: str | None = None) -> None:
             or request.form.get("csrf_token")
         )
         if request.is_json and not token:
-            token = (request.get_json(silent=True) or {}).get("csrf_token")
+            payload = request.get_json(silent=True)
+            token = payload.get("csrf_token") if isinstance(payload, dict) else None
         if validate_csrf_token(token):
             return None
         # Exempt API endpoints for external/client access
-        if request.path.startswith(("/api/scoreline", "/api/dashboard")):
+        if request.path in {"/api/scoreline/soccer", "/api/scoreline/nba"}:
             return None
         if request.path.startswith("/chat") or request.is_json:
             return jsonify({"error": "Invalid or missing CSRF token"}), 400
@@ -72,10 +73,8 @@ def validate_csrf_token(token: str | None) -> bool:
 
 
 def _chat_rate_key() -> str:
-    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
-    remote_addr = forwarded or request.remote_addr or "local"
-    session_key = session.get(CSRF_SESSION_KEY, "anon")
-    return f"{remote_addr}:{session_key}"
+    remote_addr = request.remote_addr or "local"
+    return remote_addr
 
 
 def check_chat_rate_limit(limit: int, window_seconds: int) -> int:

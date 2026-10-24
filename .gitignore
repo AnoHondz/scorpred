@@ -49,3 +49,10 @@ persistent/
 tmp/
 tmp_work/
 .vite/
+
+# Third-party odds files; scripts/evaluate_against_market.py downloads them on demand.
+data/raw/football_data_odds/
+
+# Fantasy Premier League gameweek history (github.com/vaastav/Fantasy-Premier-League, MIT); used by
+# scripts/player_availability_backtest.py and downloaded on demand.
+data/raw/fpl_history/

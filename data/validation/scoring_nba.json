@@ -1,0 +1,267 @@
+{
+  "generated_at": "2026-10-17T02:04:41.768758+00:00",
+  "sport": "nba",
+  "role": "experimental_scoring_only",
+  "decision_engine_changed": false,
+  "method": "nba_ridge_pregame_v2",
+  "feature_names": [
+    "home_scored",
+    "home_conceded",
+    "home_win_rate",
+    "home_scored_sd",
+    "home_samples",
+    "away_scored",
+    "away_conceded",
+    "away_win_rate",
+    "away_scored_sd",
+    "away_samples",
+    "home_venue"
+  ],
+  "schema": "41385452f47a1aad43198e6dec2c08413aa9e8c58f94c21c2177d0564a176449",
+  "sources": [
+    {
+      "source": "202201.json",
+      "sha256": "65d94995bf44be60733997fb6cd706f39c21a02edcc4eec0feaca50ee4c58039"
+    },
+    {
+      "source": "202202.json",
+      "sha256": "43db5bc3f08f3f0a162fbfee4b3bf7ca2a9002c1fb1bc68ec42ba2f212a98126"
+    },
+    {
+      "source": "202203.json",
+      "sha256": "d08f0727ad02d72f18824dec432bb7ec517ecc6837348a677bc48406daa1efc3"
+    },
+    {
+      "source": "202204.json",
+      "sha256": "d9d2c71c7d46317914ecd2924693e1fac4fa843b7e0192fbd45b70ab0c654e52"
+    },
+    {
+      "source": "202205.json",
+      "sha256": "3c717e7587c637f43af38fbc1e8fd4d48186422dd72eccc4146ae2d851fdbd11"
+    },
+    {
+      "source": "202206.json",
+      "sha256": "0331eaa556f40c66b4b0afb5cbedaf430c6b037ebada799898900865bf2c1034"
+    },
+    {
+      "source": "202207.json",
+      "sha256": "c18f567fc6c8bb4fcb3591f1bb5a9c1a06376b1943a210654594d8656210b37f"
+    },
+    {
+      "source": "202210.json",
+      "sha256": "67efbcea343413233ffc6929bcf1bcaefb58ba9c0866122899a9b9ef5c12239c"
+    },
+    {
+      "source": "202211.json",
+      "sha256": "ca51f44ef856b66fa733171c773a5287cbd1dfab7ad1f2c01254b315fd1441b8"
+    },
+    {
+      "source": "202212.json",
+      "sha256": "a512d01bc7e7fb70b961cdedf28b25c9b17541e592b52617fcb6fb734e56e042"
+    },
+    {
+      "source": "202301.json",
+      "sha256": "bfc4d93079351f1805406abc068d09d2a6e8fc4ed35c3347f29ff78e0872db17"
+    },
+    {
+      "source": "202302.json",
+      "sha256": "bb00d6c73129d5accb1a712c27f962804ab82b9c6d69f31c52ec6d3a9549ac4f"
+    },
+    {
+      "source": "202303.json",
+      "sha256": "1f378ba87f6e0e54b595aa869ae708b6980d1571d69c6dcef059ca682d7e3a88"
+    },
+    {
+      "source": "202304.json",
+      "sha256": "cf01693a69990a516b49e4fc87d01b3ac1caf7e64ce68492b12566a7f0a2e3b2"
+    },
+    {
+      "source": "202305.json",
+      "sha256": "a294d704d71eeecd5f3d2be4f5c8c686c3d5e10adb1f637ac69bd9ed07f45a35"
+    },
+    {
+      "source": "202306.json",
+      "sha256": "c245c0dc71698cd68e9f9efd5ca1c7b3079ff0690546777cd0a7a92e66e4ec43"
+    },
+    {
+      "source": "202307.json",
+      "sha256": "b81711bed2e6d68e13dbd00d4b7ce57e93ca70e5ed7c789abdaef823ad2c5ba2"
+    },
+    {
+      "source": "202310.json",
+      "sha256": "76d48460fce3338855cd5570c870a0cc83819b68f31a7bef94b18bc522a5289a"
+    },
+    {
+      "source": "202311.json",
+      "sha256": "7354698b29cfc164bc9a627e34d8c24dee4c2d51da2569190dfdae1e9cbf5b7d"
+    },
+    {
+      "source": "202312.json",
+      "sha256": "f656ac1935b8f51a5a884c4e6c6c2b553befc402c31b8391765db3e3b35cca3d"
+    },
+    {
+      "source": "202401.json",
+      "sha256": "3554d226ed1b6f99bc0fdd3cb51fa025beef01cebf9706e0ca548faf30b8e2cb"
+    },
+    {
+      "source": "202402.json",
+      "sha256": "c9000e7b08aa953c052348bf8748b43e7b49b953c4abdd18966b653cb791a7a1"
+    },
+    {
+      "source": "202403.json",
+      "sha256": "26b0d490c7501543ec09f325afef057aaeb33f980250a9985f43915e0755695b"
+    },
+    {
+      "source": "202404.json",
+      "sha256": "66f8c830fc8cc4b6b781c333180d9d46f0266d6400e74c685cb88c635337e9d0"
+    },
+    {
+      "source": "202405.json",
+      "sha256": "6a28828bc7ee907f14b231613bfd00579f894bbffcd4c01009ebe6513bf20820"
+    },
+    {
+      "source": "202406.json",
+      "sha256": "b44fdeffdde9da4b3dd9838da7c29cee9ca515994946fd5c530ecd93dbfe9337"
+    },
+    {
+      "source": "202407.json",
+      "sha256": "2be172f1174adfaad08a9746fcc729dfbdd9af25cc2e7f7d8966710e9019170c"
+    },
+    {
+      "source": "202410.json",
+      "sha256": "05a83a78904e78610d701eeae45551fed2396f8354e6ec66c4196c0cea3f6fa0"
+    },
+    {
+      "source": "202411.json",
+      "sha256": "38a77d412d0837b5b56b923d97b69ab5140fd471cc1e61db011304f4b7a8af51"
+    },
+    {
+      "source": "202412.json",
+      "sha256": "f38ba711938284afcbceb0ff2e7ee09f198cd66b56e4bca953cd4f9b736697be"
+    },
+    {
+      "source": "202501.json",
+      "sha256": "78abf69c345d7ddb8ea950d494ed8e7220eb34c9c02ffd585ba0fef98b644fd7"
+    },
+    {
+      "source": "202502.json",
+      "sha256": "64f8319d663c33f6b7bd664d463d9628a395a7e7d83688c0dd1fd670f4867d4f"
+    },
+    {
+      "source": "202503.json",
+      "sha256": "e46844bc69ea7bf016ab84e0d658c1816a14269ac481b21b23530d96731e436a"
+    },
+    {
+      "source": "202504.json",
+      "sha256": "955db3d65f65dd12548c59cfa71773238388008397825a7685753d7df91e06e8"
+    },
+    {
+      "source": "202505.json",
+      "sha256": "8884ebde7db4a6bbb3dec3129732f26e635b3a4a86d1327300f8d86912e5fc27"
+    },
+    {
+      "source": "202506.json",
+      "sha256": "0e801adcd51b382e5b4df63de6ff7cbbe0945ca19c111975177907207f6024ec"
+    },
+    {
+      "source": "202507.json",
+      "sha256": "955fbcdbe8b0b6abe698b1dc7f571b97ccc26401046ebb3e0d34c8e63f9dfad3"
+    },
+    {
+      "source": "202510.json",
+      "sha256": "081b8658721638bd74feed8cdf0253099312e3d9a1acbd24bf0ec0ef03e9c263"
+    },
+    {
+      "source": "202511.json",
+      "sha256": "8c922c845172f106759b52b6640bac3692379af8c78819a75440f15a2166609b"
+    },
+    {
+      "source": "202512.json",
+      "sha256": "8a320a2bef7195cb2c0dee480fb773dab14a4aee8aede37a54fcf1f6393ef137"
+    },
+    {
+      "source": "202601.json",
+      "sha256": "f9c9c301fae58d9b5704de2fe0f0732e9c812f0637902dacd8a075e99f0df608"
+    },
+    {
+      "source": "202602.json",
+      "sha256": "50cbf05630044b6d57e0ba25b4413fb62e591354382dd4d31f3a497b359d5f14"
+    },
+    {
+      "source": "202603.json",
+      "sha256": "dd2b5ca97c65b61d4b04f7b470a0c314a9086583c4b17d30d339ed235da8c9c1"
+    },
+    {
+      "source": "202604.json",
+      "sha256": "1a95805ca32dd2a10148fc1d209397c8d692c0f2d3c1241c9f40017d85f4a88f"
+    },
+    {
+      "source": "202605.json",
+      "sha256": "15ee28746b38ec31a8a5700b0cfc197c643ca2a3bc36174e46b4803b65331a90"
+    },
+    {
+      "source": "202606.json",
+      "sha256": "8b5a79e70bfba9dfea61bdc541964557ba6709fed77d42576b9edabde2d089f1"
+    },
+    {
+      "source": "202607.json",
+      "sha256": "412291b008f7d5cf8c326143bab9e0f624108dc11f1b5939e87fdcc8f6fc80f5"
+    },
+    {
+      "source": "202610.json",
+      "sha256": "23052f0b93cf211cb60db2fdfb5169ce7837b770cbaf0b5ab115dde791139354"
+    }
+  ],
+  "excluded_sources": [],
+  "dataset_sha256": "9e198aee4b0e8c5c64d10a95639095abb62279a5c3def647294e7772a7dcc34f",
+  "windows": {
+    "train": {
+      "count": 3480,
+      "start": "2022-01-07",
+      "end": "2024-11-26"
+    },
+    "calibration": {
+      "count": 1154,
+      "start": "2024-11-27",
+      "end": "2025-11-10"
+    },
+    "test": {
+      "count": 1169,
+      "start": "2025-11-11",
+      "end": "2026-06-14"
+    }
+  },
+  "metrics": {
+    "points_mae": 9.849864493926425,
+    "baseline_mae": 10.487297818156776,
+    "total_mae": 15.490663777480322,
+    "interval_coverage": {
+      "home": 0.8032506415739948,
+      "away": 0.7750213857998289
+    },
+    "nominal_interval_coverage": 0.8
+  },
+  "references": [
+    {
+      "title": "Sill: regularization and future-game testing",
+      "url": "https://www.sloansportsconference.com/research-papers/improved-nba-adjusted-using-regularization-and-out-of-sample-testing"
+    },
+    {
+      "title": "Hoerl & Kennard: ridge regression",
+      "url": "https://doi.org/10.1080/00401706.1970.10488634"
+    },
+    {
+      "title": "Angelopoulos & Bates: conformal prediction",
+      "url": "https://arxiv.org/abs/2107.07511"
+    }
+  ],
+  "limitations": [
+    "Retrospective data may contain later corrections; no prospective accuracy claim.",
+    "Time dependence and season shifts can invalidate exchangeability; interval coverage is empirical, not guaranteed.",
+    "No injury, starting-lineup, weather or market-price features.",
+    "Hyperparameters fixed in advance; test window is not used for tuning or refitting.",
+    "NBA model uses scores, not possession-level efficiency or player RAPM.",
+    "Soccer is an adaptation using rolling features, not a reproduction of the full Dixon-Coles team-strength MLE."
+  ],
+  "artifact_sha256": "fd988f29bcf4b8806d2909577cc2d0a3f939fa849df589c718d59260f3cb5b35"
+}
