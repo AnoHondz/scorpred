@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16T11:19:55.177393+00:00",
+  "generated_at": "2026-10-25T08:15:08.755425+00:00",
   "method": "chronological_60_20_20_random_forest_sigmoid",
   "dataset_sha256": "b713fa97bc8e3c189dfb6c0196f334386256fbb81fa31d366b0c00384121e07b",
   "sklearn_version": "1.8.0",
@@ -32,12 +32,12 @@
     "confidence_buckets": [
       {
         "count": 175,
-        "confidence": 0.3801851212484716,
+        "confidence": 0.38018512124847154,
         "accuracy": 0.42857142857142855
       },
       {
         "count": 543,
-        "confidence": 0.4505446360587644,
+        "confidence": 0.4505446360587643,
         "accuracy": 0.43278084714548803
       },
       {
@@ -47,12 +47,12 @@
       },
       {
         "count": 290,
-        "confidence": 0.6456776558413295,
+        "confidence": 0.6456776558413294,
         "accuracy": 0.6827586206896552
       },
       {
         "count": 33,
-        "confidence": 0.7146792099832189,
+        "confidence": 0.7146792099832188,
         "accuracy": 0.7272727272727273
       }
     ],
