@@ -295,7 +295,9 @@ def test_expired_api_sources_must_be_renewed_by_real_api_reads():
 
 @pytest.mark.parametrize("renewal", ["fresh", "failed", "withdrawn"])
 def test_slow_other_sport_schedule_requires_new_original_source_read(renewal):
-    now = datetime.now(UTC)
+    # Keep the fixture and requested partition on the same Eastern calendar day.
+    # A wall-clock evening run moves the +5-hour fixture into tomorrow.
+    now = datetime(2026, 10, 24, 12, tzinfo=UTC)
     current, nba_reads = [now], []
     base_api, props, roster, _ = readers(now)
 

@@ -7,6 +7,7 @@ import { decisionAt } from '../decisionLifecycle';
 import { slatePlan } from '../slate';
 import { CardSkeleton, DateTabs, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
 import DataStatus from '../components/DataStatus';
+import RecentResults from '../components/RecentResults';
 
 interface NBAData {
   slate: Decision[];
@@ -43,7 +44,7 @@ export default function NBAPage({ onSelectMatch }: { onSelectMatch: (d: Decision
   const view = params.get('view') || 'upcoming';
   const upcoming = view === 'upcoming';
   const requestedDate = params.get('date') || '';
-  const url = upcoming ? `/api/dashboard/nba?date=${requestedDate}` : `/api/nba/games?view=${view}&date=${requestedDate}`;
+  const url = upcoming ? `/api/dashboard/nba?date=${requestedDate}` : view === 'results' ? null : `/api/nba/games?view=${view}&date=${requestedDate}`;
   const { data, loading, error, retry } = useFetch<NBAData>(url);
   const deadlines = (data?.slate ?? []).filter(game => Date.parse(game.matchDate || '') > now)
     .map(game => Date.parse(game.dataFreshness?.expires_at || '')).filter(Number.isFinite);
@@ -77,11 +78,10 @@ export default function NBAPage({ onSelectMatch }: { onSelectMatch: (d: Decision
       {error && <RequestError message={error} onRetry={retry} />}
       {data?.error && <RequestError message={data.error} onRetry={retry} />}
       <div className="dashboard-controls"><div className="sport-filter" aria-label="NBA schedule view">
-        {(['upcoming', 'results', 'archive'] as const).map(item => <button key={item} aria-pressed={view === item} onClick={() => {
-          const yesterday = new Date(`${todayISO()}T12:00:00Z`); yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-          navigate(item === 'upcoming' ? '/nba' : `/nba?view=${item}${item === 'results' ? `&date=${yesterday.toISOString().slice(0, 10)}` : ''}`);
-        }}>{item === 'upcoming' ? 'Upcoming' : item === 'results' ? 'Recent results' : 'Local history'}</button>)}
-      </div>{!upcoming && <label className="quiet-label">Observation date <input type="date" aria-label="NBA observation date" value={selectedDate} onChange={event => { if (event.target.value) setSelectedDate(event.target.value); }} /></label>}</div>
+        {(['upcoming', 'results', 'archive'] as const).map(item => <button key={item} aria-pressed={view === item}
+          onClick={() => navigate(item === 'upcoming' ? '/nba' : `/nba?view=${item}`)}>{item === 'upcoming' ? 'Upcoming' : item === 'results' ? 'Recent results' : 'Local history'}</button>)}
+      </div>{view === 'archive' && <label className="quiet-label">Observation date <input type="date" aria-label="NBA observation date" value={selectedDate} onChange={event => { if (event.target.value) setSelectedDate(event.target.value); }} /></label>}</div>
+      {view === 'results' ? <RecentResults sport="nba" /> : <>
       <DateTabs
         dates={[...new Set([...(availableDates.length ? availableDates : [todayISO()]), selectedDate])].sort()}
         selected={selectedDate}
@@ -124,6 +124,7 @@ export default function NBAPage({ onSelectMatch }: { onSelectMatch: (d: Decision
           <EmptyState title="No games found" body="No NBA games scheduled for this date." />
         ) : null}
       </section>}
+      </>}
     </div>
   );
 }

@@ -26,6 +26,9 @@ export interface SportsbookStatus {
 }
 
 export interface PropPick {
+  rationale?: string;
+  line_source?: string;
+  games?: number;
   name: string;
   team: string;
   position: string;
@@ -33,10 +36,16 @@ export interface PropPick {
   side: 'over' | 'under' | 'yes';
   line: number | null;
   chance: number;
-  record: number;
+  record: number | null;
   probability: number;
   ladder?: Ladder | null;
   sportsbook_quotes?: SportsbookQuote[];
+}
+
+export interface RosterVerification {
+  status?: string;
+  observed_at?: string;
+  expires_at: string;
 }
 
 const pct = (value: number) => `${Math.round(value * 100)}%`;
@@ -52,6 +61,7 @@ function PickRow({ pick, rank }: { pick: PropPick; rank: number }) {
   const now = useNow();
   const quotes = (pick.sportsbook_quotes || []).filter(quote => freshQuote(quote, pick.side, now));
   const quote = quotes[0];
+  if (pick.line_source === 'sportsbook' && !quote) return null;
   const chance = quote ? quote.model_chance : pick.chance;
   const line = quote ? quote.line : pick.line;
   return <li className="pick-row">
@@ -65,12 +75,16 @@ function PickRow({ pick, rank }: { pick: PropPick; rank: number }) {
         <details className="prop-about pick-comparison"><summary>Compare sportsbooks</summary>
           {quotes.map(item => <p key={item.bookmaker_key}>{item.bookmaker}: {SIDE[item.side]} {item.line} · {item.decimal_odds.toFixed(2)} decimal
             {validChance(item.model_chance) ? ` · Model ${pct(item.model_chance)}` : ' · Model comparison unavailable'} · {quoteTime(item.updated_at)}</p>)}
-          <p>Historical reference: {SIDE[pick.side]} {pick.line} {pick.label}. Model {pct(pick.chance)}; observed record {pct(pick.record)}.</p>
+          {pick.line_source !== 'sportsbook' && <p>Historical reference: {SIDE[pick.side]} {pick.line} {pick.label}. Model {pct(pick.chance)}; observed record {pick.record == null ? 'unavailable' : pct(pick.record)}.</p>}
           <p>Market fair removes the margin from the same book’s over/under pair. These comparisons are experimental and do not establish a betting edge.</p>
         </details>
+      </> : pick.line_source === 'model_target' ? <>
+        <p className="quiet-label">Model target · verify the offered line before betting</p>
+        <p className="quiet-label">{pick.rationale}</p>
       </> : <>
         <p className="quiet-label">Historical target · no sportsbook quote</p>
-        <p className="quiet-label">Season record at this line: {pct(pick.record)}</p>
+        <p className="quiet-label">Historical hit rate at this target: {pick.record == null ? 'Unavailable' : pct(pick.record)}{pick.games != null ? ` · ${pick.games} games` : ''}</p>
+        {pick.games != null && pick.games < 8 && <p className="quiet-label">Limited player sample</p>}
       </>}
     </div>
     <div className="pick-side">
@@ -80,15 +94,17 @@ function PickRow({ pick, rank }: { pick: PropPick; rank: number }) {
   </li>;
 }
 
-export default function PropPicks({ title, picks, sportsbook, received, onRetry, loading, unavailable, error, about }: {
+export default function PropPicks({ title, picks, sportsbook, roster, received, onRetry, loading, unavailable, error, about }: {
   title: string; picks?: PropPick[]; received: boolean; onRetry: () => void; loading: boolean;
   sportsbook?: SportsbookStatus;
+  roster?: RosterVerification;
   unavailable: string | null | false | undefined; error: ReactNode; about: ReactNode;
 }) {
   const now = useNow();
+  const rosterExpired = Boolean(roster && (!Number.isFinite(Date.parse(roster.expires_at)) || Date.parse(roster.expires_at) <= now));
   const renewed = useRef('');
-  const expired = (picks || []).flatMap(pick => pick.sportsbook_quotes || []).map(quote => quote.expires_at)
-    .filter(value => Date.parse(value) <= now).sort().join('|');
+  const expired = [...(picks || []).flatMap(pick => pick.sportsbook_quotes || []).map(quote => quote.expires_at)
+    .filter(value => Date.parse(value) <= now), ...(rosterExpired ? [roster!.expires_at] : [])].sort().join('|');
   useEffect(() => {
     if (!unavailable && !loading && expired && renewed.current !== expired) {
       renewed.current = expired;
@@ -107,8 +123,9 @@ export default function PropPicks({ title, picks, sportsbook, received, onRetry,
     {!unavailable && loading && <div className="card"><p className="quiet-label" role="status">Finding the best picks…</p></div>}
     {!unavailable && error}
     {!unavailable && incomplete && <RequestError message="Player props returned no picks. Restart the app (Start-ScorPred.ps1 -Restart) if this persists." onRetry={onRetry} />}
-    {!unavailable && picks && picks.length > 0 && <p className="quiet-label prop-market-status" role="status">{marketStatus}</p>}
-    {!unavailable && picks && (picks.length
+    {!unavailable && rosterExpired && <p className="coverage-note" role="status">Refreshing current player availability…</p>}
+    {!unavailable && !rosterExpired && picks && sportsbook && <p className="quiet-label prop-market-status" role="status">{marketStatus}</p>}
+    {!unavailable && !rosterExpired && picks && (picks.length
       ? <ol className="card pick-list">{picks.map((pick, index) => <PickRow key={`${pick.name}-${pick.label}`} pick={pick} rank={index + 1} />)}</ol>
       : <p className="coverage-note">No strong picks for this game.</p>)}
     {!unavailable && picks && <details className="prop-about"><summary>How picks are chosen</summary>{about}</details>}

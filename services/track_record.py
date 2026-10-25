@@ -238,6 +238,65 @@ def _market_benchmark() -> dict[str, Any] | None:
     }
 
 
+RESULTS_LIMIT = 100
+
+
+def _record(hits: list[bool]) -> dict[str, Any]:
+    correct = sum(hits)
+    return {"graded": len(hits), "correct": correct, "wrong": len(hits) - correct,
+            "accuracy": round(correct / len(hits), 4) if hits else None,
+            "accuracy_95ci": wilson_interval(correct, len(hits))}
+
+
+def _totals_hit(row: dict) -> bool | None:
+    pick, result = str(row.get("totals_pick") or "").lower(), str(row.get("totals_result") or "").lower()
+    if pick not in ("over", "under") or result not in ("over", "under"):
+        return None  # no total picked, or a push
+    return pick == result
+
+
+def results(sport: str, limit: int = RESULTS_LIMIT) -> dict[str, Any]:
+    """Graded pregame picks for one sport, newest first, with winner and totals records.
+
+    Same counting rules as the track record: only picks recorded before kickoff, and NBA
+    preseason games are left out of the record.
+    """
+    records = mt._load_predictions()
+    rows = [r for r in records if str(r.get("sport", "")).lower() == sport and mt.verified_pregame(r)]
+    if sport == "nba":
+        rows = [r for r in rows if r.get("season_type") in (None, NBA_REGULAR_SEASON)]
+    graded = [r for r in rows if r.get("status") == "completed" and r.get("is_correct") is not None]
+    graded.sort(key=lambda r: r.get("kickoff_at") or "", reverse=True)
+    newest = mt._aware_datetime(graded[0].get("kickoff_at")) if graded else None
+    games = []
+    for r in graded:
+        side = _pick_side(r)
+        probabilities = _probabilities(r) or {}
+        final = r.get("final_score") if isinstance(r.get("final_score"), dict) else None
+        total_hit = _totals_hit(r)
+        games.append({
+            "id": r.get("id"), "kickoff": r.get("kickoff_at"), "league": r.get("league_name"),
+            "home": r.get("team_a"), "away": r.get("team_b"),
+            "pick": r.get("predicted_pick_label") or r.get("predicted_winner"),
+            "pick_probability": None if side is None else round(probabilities.get(side, 0.0), 3),
+            "final_score": final and {"a": final.get("a"), "b": final.get("b")},
+            "correct": bool(r.get("is_correct")),
+            "totals": None if total_hit is None else {"pick": r.get("totals_pick"), "line": r.get("totals_line"),
+                                                      "scored": r.get("total_scored"), "correct": total_hit},
+        })
+    last_week = [r for r in graded if newest and (kickoff := mt._aware_datetime(r.get("kickoff_at")))
+                 and (newest - kickoff).days < 7]
+    return {
+        "sport": sport,
+        "minimum_sample": MINIMUM_SAMPLE,
+        "winner": _record([bool(r.get("is_correct")) for r in graded]),
+        "winner_last_7_days": _record([bool(r.get("is_correct")) for r in last_week]),
+        "totals": _record([hit for r in graded if (hit := _totals_hit(r)) is not None]),
+        "pending": sum(1 for r in rows if r.get("status") != "completed"),
+        "games": games[:limit],
+    }
+
+
 def summary() -> dict[str, Any]:
     records = mt._load_predictions()
     return {

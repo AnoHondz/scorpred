@@ -2804,6 +2804,8 @@ def start_background_services():
             track_predictions=_run_prediction_tracking, build_best_props=build_best_props,
         )
         _warm_slate_cache()
+        from services import nba_props_ml
+        threading.Thread(target=nba_props_ml.warm, daemon=True).start()
 
 
 def stop_background_services():
@@ -6452,6 +6454,20 @@ def api_track_record():
         return jsonify({"error": "The track record is temporarily unavailable."}), 503
 
 
+@app.route("/api/performance/results", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_recent_results():
+    from services import track_record
+    sport = (request.args.get("sport") or "").lower()
+    if sport not in {"soccer", "nba"}:
+        return jsonify({"error": "Results are tracked for soccer and NBA."}), 400
+    try:
+        return jsonify(track_record.results(sport))
+    except Exception:
+        _logger.warning("Recent results unavailable", exc_info=True)
+        return jsonify({"error": "Recent results are temporarily unavailable."}), 503
+
+
 @app.route("/api/matches/<match_id>")
 @limiter.limit("60 per minute")
 def api_match_decision(match_id):
@@ -6544,7 +6560,7 @@ def api_soccer_injuries(match_id):
 
 
 @app.get("/api/soccer/matches/<match_id>/props")
-@limiter.limit("20 per minute")
+@limiter.limit("60 per minute")
 def api_soccer_props(match_id):
     """Five best player prop picks for a fixture, from ESPN box scores (any league ESPN covers).
 
@@ -6559,13 +6575,23 @@ def api_soccer_props(match_id):
         decision = next((item for item in (response.get_json() or {}).get("slate", []) if item.get("matchId") == match_id), None)
     if decision is None:
         return jsonify({"error": "This match is no longer available. Choose a match from the current slate."}), 404
-    payload, status = soccer_props_payload(decision)
+    if app.config.get("TESTING"):
+        payload, status = soccer_props_payload(decision)
+    else:
+        from services import soccer_props_loader
+        def calculate():
+            with app.app_context():
+                return soccer_props_payload(decision)
+        key = (match_id, decision.get("leagueId"), decision.get("matchDate"))
+        payload, status = soccer_props_loader.load(key, calculate)
     return jsonify(payload), status
 
 
 def soccer_props_payload(decision: dict) -> tuple[dict, int]:
     """Five best player prop picks for one slate decision: ({"result": ...} or {"error": ...}, HTTP status)."""
     from services import fpl_props, injury_impact, injury_reports, soccer_props
+    from utils.parsing import normalize_team_name
+    import requests
     from services.injury_reports import normalize_name
     decision = sanitize_decision(decision)
     kickoff = parse_kickoff(decision.get("matchDate"))
@@ -6575,29 +6601,65 @@ def soccer_props_payload(decision: dict) -> tuple[dict, int]:
     if not home_id or not away_id:
         return {"error": "This fixture is missing team identities."}, 422
     premier_league = str(decision.get("leagueId")) == "39"
-    excluded, extra = frozenset(), []
+    excluded, extra, fpl_candidates = frozenset(), [], []
     if premier_league:
         try:
             payload, _freshness = injury_reports.fpl()
             excluded = frozenset(normalize_name(f"{p.get('first_name', '')} {p.get('second_name', '')}")
                                  for p in payload["elements"] if p.get("status") != "a")
-            extra = fpl_props.project(payload, decision["teamA"], decision["teamB"])["picks"]
+            if freshness_state(_freshness) == "fresh":
+                fpl_result = fpl_props.project(payload, decision["teamA"], decision["teamB"], kickoff)
+                extra, fpl_candidates = fpl_result["picks"], fpl_result.get("candidates", [])
         except (injury_reports.InjuryFeedUnavailable, injury_impact.ImpactUnavailable):
             pass
     try:
+        soccer_props.slug_for(decision.get("leagueId") or 39)
+        home_id, away_id = soccer_props.resolve_team_ids(decision.get("leagueId") or 39,
+                                                       decision["teamA"], decision["teamB"])
         result = soccer_props.project(decision.get("leagueId") or 39, home_id, away_id, kickoff, excluded)
     except ValueError as exc:
         return {"error": str(exc)}, 422
+    except (RuntimeError, requests.RequestException, injury_reports.InjuryFeedUnavailable):
+        return {"error": "Current rosters or verified player props are temporarily unavailable. Refresh and try again."}, 503
     if not sanitize_decision(decision).get("pregameAvailable"):
         return {"error": "Player props are available before kickoff only."}, 422
     names = {home_id: decision["teamA"], away_id: decision["teamB"]}
     picks = [{**pick, "team": names.get(pick["team"], pick["team"])} for pick in result["picks"]]
-    # FPL names players by surname ("Gibbs-White"); keep one pick per player across both sources.
-    surnames = {normalize_name(pick["name"]).split()[-1] for pick in picks if pick["name"]}
-    picks += [pick for pick in extra if normalize_name(pick["name"]).split()[-1:] and normalize_name(pick["name"]).split()[-1] not in surnames]
+    verified_extra = []
+    for pick in extra:
+        team_id = home_id if normalize_team_name(pick.get("team")) == normalize_team_name(decision["teamA"]) else (
+            away_id if normalize_team_name(pick.get("team")) == normalize_team_name(decision["teamB"]) else None)
+        matches = [player for player in result.get("roster_players", {}).get(team_id, [])
+                   if sorted(normalize_name(player["full_name"]).split()) == sorted(normalize_name(pick.get("full_name")).split())]
+        if len(matches) == 1:
+            verified_extra.append({**pick, "fpl_player_id": pick.get("player_id"),
+                                   "player_id": matches[0]["id"], "team": names[team_id]})
+    existing_ids = {str(pick["player_id"]) for pick in picks if pick.get("player_id")}
+    picks += [pick for pick in verified_extra if str(pick["player_id"]) not in existing_ids]
+    roster_verification = result.get("roster_verification")
+    if verified_extra and roster_verification:
+        roster_verification = {**roster_verification, **worst([roster_verification, _freshness]),
+                               "status": "verified", "sources": [roster_verification, _freshness]}
     picks.sort(key=lambda pick: -pick["edge"])
     from services import prop_markets
-    result = prop_markets.compare({"picks": picks[:5]}, "soccer", decision["teamA"], decision["teamB"],
+    comparison_input = {"picks": picks[:5], "roster_verification": roster_verification}
+    if "players" in result:
+        for candidate in fpl_candidates:
+            team_id = home_id if candidate.get("match_side") == "home" else away_id if candidate.get("match_side") == "away" else None
+            identities = [p for p in result.get("roster_players", {}).get(team_id, [])
+                          if sorted(normalize_name(p["full_name"]).split()) == sorted(normalize_name(candidate.get("full_name")).split())]
+            trained = [m for m in candidate["markets"] if m["market"] == "tackles" and m.get("model") == "soccer-player-counts-v2"]
+            if len(identities) != 1 or not trained: continue
+            existing = next((p for p in result["players"] if str(p["id"]) == identities[0]["id"]), None)
+            if existing:
+                existing["markets"].extend(trained)
+            else:
+                result["players"].append({"id": identities[0]["id"], "name": identities[0]["name"],
+                    "team": team_id, "position": candidate["position"], "markets": trained})
+            comparison_input["roster_verification"] = {**roster_verification, **worst([roster_verification, _freshness]), "status": "verified"}
+        comparison_input.update(selection_policy="verified_market_only", players=[
+            {**player, "team": names.get(player["team"], player["team"])} for player in result["players"]])
+    result = prop_markets.compare(comparison_input, "soccer", decision["teamA"], decision["teamB"],
                                   kickoff, decision.get("leagueId"))
     if not sanitize_decision(decision).get("pregameAvailable"):
         return {"error": "Player props are available before kickoff only."}, 422
@@ -6664,6 +6726,39 @@ def _best_props_for(sport: str, decision: dict, slate_date: str | None) -> tuple
 def build_best_props(day: str) -> dict:
     from services import best_props
     return best_props.build(_best_props_slates(day), _best_props_for)
+
+
+@app.route("/api/props/email", methods=["GET", "POST"])
+@limiter.limit("10 per minute")
+@user_auth.api_login_required
+def api_props_email():
+    from services import daily_digest, props_email
+    owner = g.current_user
+    if request.method == "GET":
+        job_id = request.args.get("id")
+        if not job_id and request.args.get("date") and request.args.get("sports"):
+            job_id = props_email.identity(owner["email"].lower(), request.args["date"], request.args["sports"].split(","))
+        job = props_email.read(job_id, owner["email"].lower()) if job_id else None
+        if request.args.get("id") and job is None:
+            return jsonify(error="Email request not found."), 404
+        return jsonify(ready=props_email.ready(), recipient=owner["email"], job=job)
+    payload = request.get_json(silent=True) or {}
+    day = payload.get("date") or calendar_date(datetime.now(timezone.utc))
+    sports = payload.get("sports", list(props_email.SPORTS))
+    try:
+        parsed = date.fromisoformat(day)
+        today = date.fromisoformat(calendar_date(datetime.now(timezone.utc)))
+        if parsed.isoformat() != day or not 0 <= (parsed - today).days <= 7:
+            raise ValueError
+        if not isinstance(sports, list) or not sports or any(s not in props_email.SPORTS for s in sports):
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify(error="Choose a date within the next seven days and valid sports."), 400
+    # Recipient always comes from the signed-in account, never the request.
+    api_get, props_for = daily_digest.flask_readers(app)
+    job = props_email.start(owner["email"].lower(), owner["email"], day, sports,
+                            lambda: props_email.collect(day, sports, api_get, props_for))
+    return jsonify(job=job), (503 if job["state"] in {"blocked", "busy"} else 202 if job["state"] == "collecting" else 200)
 
 
 @app.get("/api/props/best")

@@ -1,0 +1,478 @@
+{
+  "version": "nba-props-ml-v1",
+  "created_at": "2026-10-25T03:49:44.312893+00:00",
+  "features": [
+    "minutes_ewm3",
+    "minutes_ewm10",
+    "points_ewm3",
+    "points_ewm10",
+    "rebounds_ewm3",
+    "rebounds_ewm10",
+    "assists_ewm3",
+    "assists_ewm10",
+    "threes_ewm3",
+    "threes_ewm10",
+    "fga_ewm3",
+    "fga_ewm10",
+    "fg3a_ewm3",
+    "fg3a_ewm10",
+    "fta_ewm3",
+    "fta_ewm10",
+    "oreb_ewm3",
+    "oreb_ewm10",
+    "dreb_ewm3",
+    "dreb_ewm10",
+    "turnovers_ewm3",
+    "turnovers_ewm10",
+    "points_pm10",
+    "rebounds_pm10",
+    "assists_pm10",
+    "threes_pm10",
+    "fga_pm10",
+    "fg3a_pm10",
+    "fta_pm10",
+    "oreb_pm10",
+    "points_pm_prev",
+    "rebounds_pm_prev",
+    "assists_pm_prev",
+    "threes_pm_prev",
+    "fga_pm_prev",
+    "fg3a_pm_prev",
+    "fta_pm_prev",
+    "oreb_pm_prev",
+    "minutes_season",
+    "points_season",
+    "rebounds_season",
+    "assists_season",
+    "threes_season",
+    "minutes_sd10",
+    "minutes_last",
+    "starter5",
+    "games_season",
+    "games_prev",
+    "days_rest",
+    "back_to_back",
+    "games_last7",
+    "team_pace",
+    "team_points",
+    "team_allowed",
+    "opp_pace",
+    "opp_points",
+    "opp_allowed",
+    "out_minutes",
+    "out_points",
+    "out_assists",
+    "out_rebounds",
+    "out_fga",
+    "out_count",
+    "opp_out_minutes",
+    "home",
+    "spread",
+    "total",
+    "team_total",
+    "abs_spread",
+    "playoffs",
+    "pos_G",
+    "pos_F",
+    "pos_C",
+    "opp_allows_points",
+    "opp_allows_rebounds",
+    "opp_allows_assists",
+    "opp_allows_threes"
+  ],
+  "data_sha256": "8fe4db5099838d85140fb70e96a7582654d97ab057c4fee76873e33dc2443e31",
+  "games": 6182,
+  "rows": 128328,
+  "training_end": "2026-10-24T22:00Z",
+  "pick_shrink": 0.947,
+  "promoted": [
+    "points",
+    "rebounds",
+    "assists",
+    "threes",
+    "pra"
+  ],
+  "folds": {
+    "2025": {
+      "markets": {
+        "points": {
+          "rounds": 506,
+          "alpha": 0.3377831924111222,
+          "n": 15922,
+          "rule": {
+            "log_loss": 0.6842403584591624,
+            "brier": 0.24460290365092327
+          },
+          "learned": {
+            "log_loss": 0.6681511137425828,
+            "brier": 0.23775129331747588
+          },
+          "player_record": {
+            "log_loss": 0.6846785577010802,
+            "brier": 0.24575342691810076
+          },
+          "mean_abs_error": {
+            "rule": 5.3549956035673905,
+            "learned": 5.192839977489743
+          },
+          "calibration_learned": {
+            "mean_over": 0.38630101437118847,
+            "actual_over": 0.4363773395302098
+          },
+          "test_alpha": 0.18805055491809008
+        },
+        "rebounds": {
+          "rounds": 360,
+          "alpha": 0.12009975129671596,
+          "n": 15922,
+          "rule": {
+            "log_loss": 0.6513638651690455,
+            "brier": 0.22967293642381612
+          },
+          "learned": {
+            "log_loss": 0.6464183517171866,
+            "brier": 0.22746313031472257
+          },
+          "player_record": {
+            "log_loss": 0.6674367081245635,
+            "brier": 0.2372220005740485
+          },
+          "mean_abs_error": {
+            "rule": 2.072405476698907,
+            "learned": 2.0290420867997967
+          },
+          "calibration_learned": {
+            "mean_over": 0.3675478932956982,
+            "actual_over": 0.3907172465770632
+          },
+          "test_alpha": 0.06711706960706108
+        },
+        "assists": {
+          "rounds": 604,
+          "alpha": 0.1024704751748493,
+          "n": 15922,
+          "rule": {
+            "log_loss": 0.6438177459234593,
+            "brier": 0.22626030853912826
+          },
+          "learned": {
+            "log_loss": 0.6330444832240925,
+            "brier": 0.22146632402561653
+          },
+          "player_record": {
+            "log_loss": 0.656723049214149,
+            "brier": 0.2318997059427208
+          },
+          "mean_abs_error": {
+            "rule": 1.577806808189926,
+            "learned": 1.5388302211743572
+          },
+          "calibration_learned": {
+            "mean_over": 0.36753059307919855,
+            "actual_over": 0.3766486622283633
+          },
+          "test_alpha": 0.05834966264405274
+        },
+        "threes": {
+          "rounds": 499,
+          "alpha": 0.11882474653846391,
+          "n": 15922,
+          "rule": {
+            "log_loss": 0.5923469812300798,
+            "brier": 0.20354280483481973
+          },
+          "learned": {
+            "log_loss": 0.5732847992216468,
+            "brier": 0.19737543035556412
+          },
+          "player_record": {
+            "log_loss": 0.5971069295527768,
+            "brier": 0.20698515875894988
+          },
+          "mean_abs_error": {
+            "rule": 1.0715437759075492,
+            "learned": 1.0415534649638638
+          },
+          "calibration_learned": {
+            "mean_over": 0.31212270717581986,
+            "actual_over": 0.319557844491898
+          },
+          "test_alpha": 0.08486201203902992
+        },
+        "pra": {
+          "rounds": 721,
+          "alpha": 0.23448318392848455,
+          "n": 15922,
+          "rule": {
+            "log_loss": 0.6844733564500578,
+            "brier": 0.2444976979217435
+          },
+          "learned": {
+            "log_loss": 0.665507604486377,
+            "brier": 0.23669983777054568
+          },
+          "player_record": {
+            "log_loss": 0.6856066709536314,
+            "brier": 0.24622214577628437
+          },
+          "mean_abs_error": {
+            "rule": 6.799613113930411,
+            "learned": 6.560218624519994
+          },
+          "calibration_learned": {
+            "mean_over": 0.3891380598668351,
+            "actual_over": 0.43675417661097854
+          },
+          "test_alpha": 0.11525789620355995
+        }
+      },
+      "picks": {
+        "rule_over": {
+          "n": 6153,
+          "stated": 0.7320253534861043,
+          "hit": 0.6608158621810499,
+          "by_market": {
+            "assists": {
+              "n": 741,
+              "hit": 0.680161943319838
+            },
+            "points": {
+              "n": 1534,
+              "hit": 0.6466753585397653
+            },
+            "pra": {
+              "n": 2305,
+              "hit": 0.6446854663774404
+            },
+            "rebounds": {
+              "n": 1038,
+              "hit": 0.6666666666666666
+            },
+            "threes": {
+              "n": 535,
+              "hit": 0.7327102803738318
+            }
+          }
+        },
+        "ml_over": {
+          "n": 6153,
+          "stated": 0.7335049582851034,
+          "hit": 0.7087599544937428,
+          "by_market": {
+            "assists": {
+              "n": 1129,
+              "hit": 0.7032772364924712
+            },
+            "points": {
+              "n": 1184,
+              "hit": 0.706081081081081
+            },
+            "pra": {
+              "n": 1266,
+              "hit": 0.7022116903633492
+            },
+            "rebounds": {
+              "n": 1376,
+              "hit": 0.7063953488372093
+            },
+            "threes": {
+              "n": 1198,
+              "hit": 0.7262103505843072
+            }
+          }
+        }
+      }
+    },
+    "2026": {
+      "markets": {
+        "points": {
+          "rounds": 709,
+          "alpha": 0.3317921991365797,
+          "n": 16217,
+          "rule": {
+            "log_loss": 0.6808978912088017,
+            "brier": 0.24297587733736203
+          },
+          "learned": {
+            "log_loss": 0.6658697833042074,
+            "brier": 0.23662429652135913
+          },
+          "player_record": {
+            "log_loss": 0.68364426961532,
+            "brier": 0.24526442861195044
+          },
+          "mean_abs_error": {
+            "rule": 5.264343590059814,
+            "learned": 5.139905065693729
+          },
+          "calibration_learned": {
+            "mean_over": 0.39616159291768066,
+            "actual_over": 0.4305358574335574
+          },
+          "test_alpha": 0.18794118892541356
+        },
+        "rebounds": {
+          "rounds": 828,
+          "alpha": 0.13067863521302303,
+          "n": 16217,
+          "rule": {
+            "log_loss": 0.6498914594347412,
+            "brier": 0.22902454310106682
+          },
+          "learned": {
+            "log_loss": 0.6441319128053988,
+            "brier": 0.22651045614416337
+          },
+          "player_record": {
+            "log_loss": 0.6672347359083517,
+            "brier": 0.23714584356847754
+          },
+          "mean_abs_error": {
+            "rule": 2.0293654806684343,
+            "learned": 1.9979864800416018
+          },
+          "calibration_learned": {
+            "mean_over": 0.3822723856339257,
+            "actual_over": 0.38780292285872847
+          },
+          "test_alpha": 0.06498023646808491
+        },
+        "assists": {
+          "rounds": 796,
+          "alpha": 0.09601842472934068,
+          "n": 16217,
+          "rule": {
+            "log_loss": 0.643780002677766,
+            "brier": 0.2260305840112228
+          },
+          "learned": {
+            "log_loss": 0.6354901372046102,
+            "brier": 0.22238759234168393
+          },
+          "player_record": {
+            "log_loss": 0.6584317991926455,
+            "brier": 0.23280531710057348
+          },
+          "mean_abs_error": {
+            "rule": 1.568873404452118,
+            "learned": 1.5437643540142048
+          },
+          "calibration_learned": {
+            "mean_over": 0.3739926822404836,
+            "actual_over": 0.3770734414503299
+          },
+          "test_alpha": 0.07024748338964387
+        },
+        "threes": {
+          "rounds": 620,
+          "alpha": 0.12215095981216766,
+          "n": 16217,
+          "rule": {
+            "log_loss": 0.5904309242883444,
+            "brier": 0.20236611916075722
+          },
+          "learned": {
+            "log_loss": 0.5725774667517296,
+            "brier": 0.19698848541231442
+          },
+          "player_record": {
+            "log_loss": 0.5953071053481178,
+            "brier": 0.2060125254708023
+          },
+          "mean_abs_error": {
+            "rule": 1.0518079792810016,
+            "learned": 1.024489883099339
+          },
+          "calibration_learned": {
+            "mean_over": 0.31702534333281285,
+            "actual_over": 0.3146081272738484
+          },
+          "test_alpha": 0.1004704046834025
+        },
+        "pra": {
+          "rounds": 768,
+          "alpha": 0.23027962107967515,
+          "n": 16217,
+          "rule": {
+            "log_loss": 0.6813411013903649,
+            "brier": 0.2428958904328791
+          },
+          "learned": {
+            "log_loss": 0.6634006705090661,
+            "brier": 0.23548148688356726
+          },
+          "player_record": {
+            "log_loss": 0.6840150611704409,
+            "brier": 0.24544414552629956
+          },
+          "mean_abs_error": {
+            "rule": 6.683302707035827,
+            "learned": 6.499878601007116
+          },
+          "calibration_learned": {
+            "mean_over": 0.4026916048080429,
+            "actual_over": 0.4293025837084541
+          },
+          "test_alpha": 0.1158487535372515
+        }
+      },
+      "picks": {
+        "rule_over": {
+          "n": 6150,
+          "stated": 0.7378498536585367,
+          "hit": 0.6689430894308943,
+          "by_market": {
+            "assists": {
+              "n": 872,
+              "hit": 0.6811926605504587
+            },
+            "points": {
+              "n": 1487,
+              "hit": 0.6556825823806322
+            },
+            "pra": {
+              "n": 2293,
+              "hit": 0.6506759703445268
+            },
+            "rebounds": {
+              "n": 1008,
+              "hit": 0.6775793650793651
+            },
+            "threes": {
+              "n": 490,
+              "hit": 0.7551020408163265
+            }
+          }
+        },
+        "ml_over": {
+          "n": 6149,
+          "stated": 0.7218519270046895,
+          "hit": 0.710034151894617,
+          "by_market": {
+            "assists": {
+              "n": 1393,
+              "hit": 0.6941852117731515
+            },
+            "points": {
+              "n": 1118,
+              "hit": 0.6967799642218246
+            },
+            "pra": {
+              "n": 1091,
+              "hit": 0.7231897341888176
+            },
+            "rebounds": {
+              "n": 1253,
+              "hit": 0.7086991221069433
+            },
+            "threes": {
+              "n": 1294,
+              "hit": 0.7287480680061824
+            }
+          }
+        }
+      }
+    }
+  },
+  "policy": "Walk-forward by season; each test season predicted by a model trained on earlier seasons only. Both models scored at the rule model's line (player's recent median). Promotion requires lower log loss and Brier in every test season. Not compared with sportsbook lines."
+}

@@ -24,6 +24,7 @@ from services.prediction_lifecycle import (
 
 
 def load_slate(selected: date | None = None, now: datetime | None = None):
+    live_clock = now is None
     now = now or datetime.now(UTC)
     anchor = selected or now.astimezone(nfl_client.EASTERN).date()
     end = anchor + timedelta(days=14)
@@ -44,6 +45,10 @@ def load_slate(selected: date | None = None, now: datetime | None = None):
             batches = list(pool.map(nfl_client.calendar_events, sorted(years)))
         events = {event["id"]: event for batch in batches for event in batch}
         records = list(events.values())
+    # A real download's receipt is later than the request-start clock. Evaluate
+    # live data after I/O; preserve explicit as-of clocks for offline callers.
+    if live_clock:
+        now = datetime.now(UTC)
     records = [{**record, "date": calendar_date(record["kickoff"])} for record in records]
     records.sort(key=lambda event: event["kickoff"])
     games = [game for game in records if anchor <= date.fromisoformat(game["date"]) <= end

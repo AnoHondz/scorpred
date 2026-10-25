@@ -3,6 +3,7 @@
 Replaces the crude threading.Timer loop previously used in app.py.
 """
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -181,6 +182,18 @@ def start(app, prediction_service, ac, nba_live_client, monitor, *, match_brain,
                           replace_existing=True, max_instances=1, coalesce=True, misfire_grace_time=120)
     except (OSError, ValueError, TypeError):
         _log.warning("Daily sports digest configuration is invalid; email remains disabled.")
+
+    if os.getenv("SCORPRED_NFL_SYNC_ENABLED", "0") == "1":
+        @sched.scheduled_job("interval", hours=6, id="nfl_serving_data",
+                             next_run_time=datetime.now(timezone.utc) + timedelta(seconds=2))
+        def refresh_nfl_serving_data():
+            from services.cloud_refresh import refresh_nfl
+            try:
+                outcomes = refresh_nfl()
+                failed = [row for row in outcomes if row.get("status") in {"failed", "unavailable"}]
+                _log.info("nfl_serving_data refresh datasets=%s failed=%s", len(outcomes), len(failed))
+            except Exception as exc:
+                _log.warning("nfl_serving_data refresh failed (%s)", type(exc).__name__)
 
     sched.start()
     _log.info("APScheduler started with jobs: soccer_fixtures, nba_games, ml_predictions, injury_reports, staleness_check, prediction_tracking, best_props, recalibration, closing_lines, cache_prune")

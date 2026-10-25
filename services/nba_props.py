@@ -4,15 +4,17 @@ Markets: points, rebounds, assists, threes and points + rebounds + assists. Hist
 this season and last (ESPN season ids are ending years). Current roster IDs are
 required before ranking; historical appearances alone cannot establish membership.
 """
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
-from services import injury_reports, prop_model
+from services import injury_reports, nba_props_ml, prop_model
 from services import espn_box_scores as box
 from services.data_freshness import metadata, worst
 from services.prediction_lifecycle import freshness_state
 
 ROSTER_FRESH_SECONDS = 600
+_log = logging.getLogger(__name__)
 
 
 class RosterUnavailable(RuntimeError):
@@ -54,6 +56,7 @@ def current_roster(team_id):
     return eligible, source
 
 CONFIG = {
+    "sport": "nba",
     "markets": {"points": (("points",), 0.10), "rebounds": (("rebounds",), 0.10), "assists": (("assists",), 0.15),
                 "threes": (("threes",), 0.30), "pra": (("points", "rebounds", "assists"), 0.08)},
     "labels": {"points": "Points", "rebounds": "Rebounds", "assists": "Assists", "threes": "3-pointers made",
@@ -69,7 +72,7 @@ CONFIG = {
 }
 
 
-def project(home_id, away_id, season, tipoff, excluded=frozenset()):
+def project(home_id, away_id, season, tipoff, excluded=frozenset(), event_id=None):
     games = {}
     for team_id in (home_id, away_id):
         for game in box.team_games("nba", team_id, (season - 1, season), before=tipoff):
@@ -85,7 +88,15 @@ def project(home_id, away_id, season, tipoff, excluded=frozenset()):
     result = prop_model.game_props(CONFIG, home_id, away_id, list(games.values()), excluded, eligible_players=allowed)
     for player in result["players"]:
         player["name"] = rosters[player["team"]][player["id"]]["displayName"]
+    try:
+        nba_props_ml.apply(result, home_id, away_id, season, tipoff, event_id)
+    except Exception:  # the rule model's markets stand when the learned model cannot run
+        _log.warning("Learned NBA prop model unavailable; using rule model", exc_info=True)
     result["picks"] = prop_model.best_picks(result["players"], CONFIG["pick_markets"], CONFIG["shrink"])
+    learned_shrink = nba_props_ml.pick_shrink()
+    for pick in result["picks"]:
+        if pick.get("model") == nba_props_ml.VERSION and learned_shrink:
+            pick["chance"] = round(0.5 + learned_shrink * (pick["probability"] - 0.5), 4)
     verified = worst([row[1] for row in snapshots])
     if freshness_state(verified) != "fresh":
         raise RosterUnavailable("NBA roster verification expired. Please refresh shortly.")

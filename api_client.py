@@ -1118,7 +1118,7 @@ def get_teams(league_id: int = DEFAULT_LEAGUE_ID, season: int = CURRENT_SEASON) 
 
 
 def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
-    # 1. football-data.org: resolve names then scan by competition
+    # 1. football-data.org: identify its team IDs and reuse completed history.
     if _FD_AVAILABLE:
         try:
             name_a = name_b = ""
@@ -1132,10 +1132,19 @@ def get_h2h(id_a: int, id_b: int, last: int = 10) -> list:
                     if str(team.get("id")) == str(id_b):
                         name_b = team.get("name", "")
             if name_a and name_b:
-                for lid in [DEFAULT_LEAGUE_ID, *SUPPORTED_LEAGUE_IDS]:
-                    result = _fd.get_h2h(name_a, name_b, lid, last)
-                    if result:
-                        return result
+                # The team IDs belong to football-data, not ESPN. Reuse the
+                # completed team history instead of scanning every competition
+                # and then passing these IDs to an unrelated provider.
+                history = _fd.get_team_recent_matches(id_a, last=max(last, 100))
+                if history:
+                    pair = {str(id_a), str(id_b)}
+                    result = [fixture for fixture in history
+                              if _fixture_finished(fixture)
+                              and {str((fixture.get("teams") or {}).get(side, {}).get("id"))
+                                   for side in ("home", "away")} == pair]
+                    result.sort(key=lambda f: str((f.get("fixture") or {}).get("date") or ""), reverse=True)
+                    return result[:last]
+                return []
         except Exception:
             pass
 

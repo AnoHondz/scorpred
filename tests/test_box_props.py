@@ -39,6 +39,14 @@ def test_nba_rows_skip_players_who_did_not_play():
                                 {"athlete": {"id": "2", "displayName": "Sat"}, "didNotPlay": True, "stats": []}]}]}]}}
     rows = box._nba_rows(summary)["25"]["players"]
     assert [(r["name"], r["minutes"], r["points"], r["threes"], r["assists"]) for r in rows] == [("Played", 34.0, 28.0, 4.0, 7.0)]
+    assert rows[0]["blocks"] is None  # An omitted provider field is not a recorded zero.
+
+
+def test_missing_soccer_statistics_cannot_become_high_confidence_unders():
+    teams = box._soccer_rows(soccer_summary())
+    assert teams["1"]["players"][0]["fouls"] is None
+    rows = [{"minutes": 90, "shots": None} for _ in range(15)]
+    assert prop_model.project_market(rows, ("shots",), .25, .02, 270, 1.0, 4) is None
 
 
 NAMES = {"a1": "Ann Able", "a2": "Bea Bench", "b1": "Cal Cole"}
@@ -102,7 +110,7 @@ def test_nba_props_route_maps_team_names(monkeypatch):
     monkeypatch.setattr(injury_reports, "espn", lambda sport: ([{"name": "Hurt Guard", "team": "OKC"}, {"name": "Other", "team": "LAL"}], {}))
     seen = {}
 
-    def project(home, away, season, tipoff, excluded):
+    def project(home, away, season, tipoff, excluded, event_id=None):
         seen.update(home=home, away=away, excluded=excluded)
         return {"players": [], "picks": [{"name": "Star", "team": "25", "market": "points", "edge": .1}]}
     monkeypatch.setattr(nba_props, "project", project)
@@ -126,7 +134,26 @@ def test_soccer_props_route_needs_an_espn_league(monkeypatch):
     response = app.test_client().get("/api/soccer/matches/m1/props")
     assert response.status_code == 422 and "ESPN" in response.json["error"]
     decision["leagueId"] = 140
+    monkeypatch.setattr(soccer_props, "resolve_team_ids", lambda *args: ("1", "2"))
     monkeypatch.setattr(soccer_props, "project", lambda *args, **kwargs: {"players": [], "picks": [
         {"name": "Striker", "team": "1", "market": "shots", "edge": .2}]})
     response = app.test_client().get("/api/soccer/matches/m1/props")
-    assert response.status_code == 200 and response.json["result"]["picks"][0]["team"] == "Home"
+    assert response.status_code == 200 and response.json["result"]["picks"] == []
+    assert "No verified sportsbook opportunity" in response.json["result"]["sportsbook"]["reason"]
+    from services import injury_reports
+    def unavailable(*args, **kwargs):
+        raise injury_reports.InjuryFeedUnavailable("offline")
+    monkeypatch.setattr(soccer_props, "project", unavailable)
+    response = app.test_client().get("/api/soccer/matches/m1/props")
+    assert response.status_code == 503 and "temporarily unavailable" in response.json["error"]
+
+
+def test_soccer_props_resolves_provider_ids_by_exact_normalized_names(monkeypatch):
+    import api_client
+    monkeypatch.setattr(api_client, "_espn_league_teams", lambda league: [
+        {"team": {"id": "364", "displayName": "Liverpool"}},
+        {"team": {"id": "331", "displayName": "Brighton & Hove Albion"}},
+    ])
+    assert soccer_props.resolve_team_ids(39, "Liverpool FC", "Brighton & Hove Albion FC") == ("364", "331")
+    with pytest.raises(ValueError, match="identity"):
+        soccer_props.resolve_team_ids(39, "Liverpool FC", "Unknown")

@@ -40,6 +40,19 @@ def test_only_verified_regular_season_picks_are_counted(records):
     assert soccer["excluded"]["no_kickoff_time"] == 1
 
 
+def test_results_list_graded_picks_newest_first_with_totals(records):
+    records[0].update(totals_pick="Over", totals_result="Over", totals_line=220.5, total_scored=231)
+    records[1].update(totals_pick="Under", totals_result="Push")
+    nba = track_record.results("nba")
+    assert [g["kickoff"] for g in nba["games"]] == ["2026-10-21T23:00:00Z", "2026-10-20T23:00:00Z"]
+    assert (nba["winner"]["correct"], nba["winner"]["wrong"], nba["pending"]) == (1, 1, 1)
+    assert (nba["totals"]["graded"], nba["totals"]["correct"]) == (1, 1)
+    assert nba["games"][1]["totals"] == {"pick": "Over", "line": 220.5, "scored": 231, "correct": True}
+    assert nba["games"][0]["totals"] is None
+    response = module.app.test_client().get("/api/performance/results?sport=nfl")
+    assert response.status_code == 400
+
+
 def test_wilson_interval_is_wide_for_small_samples():
     low, high = track_record.wilson_interval(12, 14)
     assert 0.55 < low < 0.65 and 0.93 < high < 0.97

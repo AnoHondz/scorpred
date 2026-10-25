@@ -654,7 +654,9 @@ def _build_nba_opp_strengths(nba_standings: dict | list | None) -> dict:
     for index, entry in enumerate(flat):
         team_info = entry.get("team") or entry
         name = team_info.get("name") or team_info.get("nickname", "")
-        rank = entry.get("rank") or entry.get("conference", {}).get("rank") or (index + 1)
+        conference = entry.get("conference")
+        conference_rank = conference.get("rank") if isinstance(conference, dict) else None
+        rank = entry.get("rank") or entry.get("seed") or conference_rank or (index + 1)
         if name:
             ranked.append({"team": {"name": name}, "rank": rank})
 
@@ -2684,7 +2686,7 @@ def nba_props_payload(game_id: str, date_hint: str | None) -> tuple[dict, int]:
             excluded = frozenset(normalize_name(r["name"]) for r in reports if not teams or r["team"] in teams)
         except injury_reports.InjuryFeedUnavailable:
             excluded = frozenset()
-        result = nba_props.project(home_id, away_id, pregame.season_of(tipoff), tipoff, excluded)
+        result = nba_props.project(home_id, away_id, pregame.season_of(tipoff), tipoff, excluded, event_id=game_id)
         from services import prop_markets
         picks = [{**pick, "team": names.get(pick["team"], pick["team"])} for pick in result["picks"]]
         result = prop_markets.compare({"picks": picks, "roster_verification": result.get("roster_verification")},

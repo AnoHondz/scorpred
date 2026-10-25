@@ -224,6 +224,12 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
                 _logger.error("football-data.org auth error %s — check FOOTBALL_DATA_KEY", resp.status_code)
                 return {}
 
+            if 400 <= resp.status_code < 500:
+                # A missing team or restricted resource is about this request, not the host:
+                # retrying cannot help, and it must not open the breaker for every other request.
+                _logger.warning("football-data.org %s for %s", resp.status_code, endpoint)
+                return fallback()
+
             if resp.status_code >= 500 and attempt < FD_RETRY_ATTEMPTS - 1:
                 time.sleep(FD_RETRY_BACKOFF * (2 ** attempt))
                 continue
