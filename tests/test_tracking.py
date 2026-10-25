@@ -384,3 +384,102 @@ def test_evaluation_dashboard_builds_series_breakdowns_and_failures(tracking_fil
     assert failures
     assert failures[0]["matchup"] == "Liverpool vs Everton"
     assert failures[0]["recommendation"] == "Everton ML"
+
+
+def _save(kickoff, winner="A", game_date="2030-01-01"):
+    return mt.save_prediction(sport="soccer", team_a="Home", team_b="Away", predicted_winner=winner,
+                              win_probs={"a": 50, "draw": 25, "b": 25}, confidence="Medium",
+                              game_date=game_date, kickoff=kickoff)
+
+
+def test_pick_is_not_created_after_kickoff(tracking_file):
+    assert _save("2020-01-01T15:00:00Z", game_date="2020-01-01") == ""
+    assert _load_predictions(tracking_file) == []
+
+
+def test_pick_is_frozen_once_kickoff_passes(tracking_file):
+    pred_id = _save("2030-01-01T15:00:00Z", winner="A")
+    assert _load_predictions(tracking_file)[0]["kickoff_at"] == "2030-01-01T15:00:00Z"
+    _set_prediction_fields(tracking_file, pred_id, {"kickoff_at": "2020-01-01T15:00:00Z"})
+    assert _save("2030-01-01T15:00:00Z", winner="B") == pred_id
+    assert _load_predictions(tracking_file)[0]["predicted_winner"] == "A"
+
+
+def test_pick_can_be_revised_before_kickoff(tracking_file):
+    pred_id = _save("2030-01-01T15:00:00Z", winner="A")
+    assert _save("2030-01-01T15:00:00Z", winner="B") == pred_id
+    assert _load_predictions(tracking_file)[0]["predicted_winner"] == "B"
+
+
+def test_verified_pregame_requires_precise_kickoff_after_creation():
+    assert mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "kickoff_at": "2026-10-20T23:00:00Z"})
+    assert not mt.verified_pregame({"created_at": "2026-10-21T00:10:00Z", "kickoff_at": "2026-10-20T23:00:00Z"})
+    assert not mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "date": "2026-10-20"})
+    assert not mt.verified_pregame({"created_at": "2026-10-20T11:00:00Z", "kickoff_at": "2026-10-20"})
+
+
+def test_pick_stores_engine_and_margin_free_market_price(tracking_file):
+    pred_id = mt.save_prediction(sport="soccer", team_a="Home", team_b="Away", predicted_winner="A",
+                                 win_probs={"a": 50, "draw": 25, "b": 25}, confidence="Medium",
+                                 game_date="2030-01-01", kickoff="2030-01-01T15:00:00Z",
+                                 market_odds={"a": 2.0, "b": 4.0, "draw": 4.0, "bookmaker": "Book"})
+    row = _load_predictions(tracking_file)[0]
+    assert row["engine"]["code_sha"]
+    market = row["market_at_pick"]
+    assert market["bookmaker"] == "Book"
+    assert market["fair"] == {"a": 0.5, "b": 0.25, "draw": 0.25}
+    assert mt.record_closing_market(pred_id, {"a": 1.8, "b": 4.5, "draw": 4.2})
+    assert _load_predictions(tracking_file)[0]["closing_market"]["odds"]["a"] == 1.8
+
+
+def test_incomplete_or_invalid_prices_are_not_stored():
+    assert mt.market_snapshot({"a": 2.0}) is None
+    assert mt.market_snapshot({"a": 2.0, "b": 1.0}) is None
+    assert mt.market_snapshot({"a": "x", "b": 2.0}) is None
+    assert mt.market_snapshot({"a": 1.9, "b": 1.9})["fair"] == {"a": 0.5, "b": 0.5}
+
+
+def test_closing_price_is_refused_after_kickoff(tracking_file):
+    pred_id = _save("2030-01-01T15:00:00Z")
+    _set_prediction_fields(tracking_file, pred_id, {"kickoff_at": "2020-01-01T15:00:00Z"})
+    assert not mt.record_closing_market(pred_id, {"a": 2.0, "b": 2.0})
+    assert "closing_market" not in _load_predictions(tracking_file)[0]
+
+
+def test_predicted_score_is_stored_and_graded(tracking_file):
+    pred_id = mt.save_prediction(sport="soccer", team_a="Home", team_b="Away", predicted_winner="A",
+                                 win_probs={"a": 50, "draw": 25, "b": 25}, confidence="Medium",
+                                 game_date="2030-01-01", kickoff="2030-01-01T15:00:00Z",
+                                 predicted_score={"a": 1.84, "b": 0.92, "likely": {"a": 1, "b": 0}},
+                                 raw_probs={"a": 52, "draw": 24, "b": 24})
+    assert mt.update_prediction_result(pred_id, "A", {"a": 2, "b": 0})
+    row = _load_predictions(tracking_file)[0]
+    assert row["raw_probs"] == {"a": 52.0, "draw": 24.0, "b": 24.0}
+    assert row["score_grade"] == {"error_a": 0.16, "error_b": 0.92, "error_total": 0.76, "exact_hit": False}
+
+
+def test_invalid_predicted_scores_are_dropped():
+    assert mt._score_forecast({"a": "x", "b": 1}) is None
+    assert mt._score_forecast({"a": -1, "b": 1}) is None
+    assert mt._score_forecast({"a": 110.4, "b": 104.2}) == {"a": 110.4, "b": 104.2}
+
+
+def test_totals_lines_never_default_to_zero():
+    assert mt.parse_totals_line(None, "Goals Over/Under 2.5") == 2.5
+    assert mt.parse_totals_line(0, "total points o/u 220") == 220.0
+    assert mt.parse_totals_line("231.5", "Total Points") == 231.5
+    assert mt.parse_totals_line(None, "Both Teams to Score") is None
+
+
+def test_reading_history_repairs_zero_lines_and_grades_the_winner_pick_once(tracking_file):
+    row = {"id": "x1", "sport": "nba", "team_a": "Spurs", "team_b": "Suns", "date": "2026-10-20",
+           "predicted_winner": "A", "actual_result": "A", "status": "completed", "final_score": {"a": 123, "b": 103},
+           "totals_pick": "Under", "totals_line": 0.0, "totals_market": "total points o/u 220", "prediction_market": "winner"}
+    tracking_file.write_text(json.dumps({"predictions": [row]}), encoding="utf-8")
+    first = mt._load_predictions()[0]
+    assert first["totals_line"] == 220.0 and first["totals_line_repaired"]
+    assert first["is_correct"] is True          # the winner pick hit
+    assert first["overall_result"] != "Win"     # 226 points went over: the totals leg missed
+    stamp = tracking_file.stat().st_mtime_ns
+    mt._load_predictions()
+    assert tracking_file.stat().st_mtime_ns == stamp  # a second read writes nothing

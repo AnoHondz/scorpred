@@ -62,6 +62,7 @@ import json
 import joblib
 import numpy as np
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.frozen import FrozenEstimator
 from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, brier_score_loss, confusion_matrix
@@ -89,6 +90,7 @@ from runtime_paths import (
     league_model_path,
 )
 from utils.parsing import safe_float
+from services.soccer_feature_policy import opponent_average_ppg
 
 
 # ── Feature schema ────────────────────────────────────────────────────────────
@@ -210,7 +212,7 @@ def _rolling_stats(history: list[dict[str, Any]], window: int = SHORT_WINDOW) ->
     if not recent:
         return {
             "avg_gf": 0.0, "avg_ga": 0.0, "avg_gd": 0.0, "ppg": 0.0,
-            "clean_sheet_rate": 0.0, "scored_rate": 0.0, "opp_avg_ppg": 1.0,
+            "clean_sheet_rate": 0.0, "scored_rate": 0.0, "opp_avg_ppg": None,
         }
     n = float(len(recent))
     avg_gf = sum(r["gf"] for r in recent) / n
@@ -218,7 +220,7 @@ def _rolling_stats(history: list[dict[str, Any]], window: int = SHORT_WINDOW) ->
     ppg    = sum(r["pts"] for r in recent) / n
     clean_sheet_rate = sum(1.0 for r in recent if r["ga"] == 0.0) / n
     scored_rate      = sum(1.0 for r in recent if r["gf"] >= 1.0) / n
-    opp_avg_ppg      = sum(r.get("opp_ppg", 1.0) for r in recent) / n
+    opp_avg_ppg      = opponent_average_ppg(reversed(recent), window)
     return {
         "avg_gf":           round(avg_gf, 4),
         "avg_ga":           round(avg_ga, 4),
@@ -226,7 +228,7 @@ def _rolling_stats(history: list[dict[str, Any]], window: int = SHORT_WINDOW) ->
         "ppg":              round(ppg, 4),
         "clean_sheet_rate": round(clean_sheet_rate, 4),
         "scored_rate":      round(scored_rate, 4),
-        "opp_avg_ppg":      round(opp_avg_ppg, 4),
+        "opp_avg_ppg":      opp_avg_ppg,
     }
 
 
@@ -646,13 +648,14 @@ def train_model(
     # ── Feature matrix and targets ────────────────────────────────────────────
     x = np.array([_row_to_features(r) for r in rows])
     y = np.array([int(r["target"]) for r in rows])
+    n_train = len(rows) - max(1, int(len(rows) * 0.20)) * 2
 
     # Median-fill odds features: 0.0 sentinel means data was absent
     for _col_name in ("home_implied_prob", "away_implied_prob", "draw_implied_prob",
                       "odds_home_away_ratio", "market_confidence"):
         _col_idx = FEATURE_COLUMNS.index(_col_name)
         _col_vals = x[:, _col_idx]
-        _present = _col_vals[_col_vals > 0.0]
+        _present = _col_vals[:n_train][_col_vals[:n_train] > 0.0]
         if len(_present) > 0:
             _median = float(np.median(_present))
             x[_col_vals == 0.0, _col_idx] = _median
@@ -662,7 +665,7 @@ def train_model(
                       "home_xg_conceded_last5", "away_xg_conceded_last5"):
         _col_idx = FEATURE_COLUMNS.index(_col_name)
         _col_vals = x[:, _col_idx]
-        _present = _col_vals[_col_vals > 0.0]
+        _present = _col_vals[:n_train][_col_vals[:n_train] > 0.0]
         if len(_present) > 0:
             _median = float(np.median(_present))
             x[_col_vals == 0.0, _col_idx] = _median
@@ -676,7 +679,7 @@ def train_model(
     for _col_name in ("referee_avg_cards", "referee_avg_goals", "referee_penalty_rate"):
         _col_idx = FEATURE_COLUMNS.index(_col_name)
         _col_vals = x[:, _col_idx]
-        _present = _col_vals[_col_vals > 0.0]
+        _present = _col_vals[:n_train][_col_vals[:n_train] > 0.0]
         if len(_present) > 0:
             _median = float(np.median(_present))
             x[_col_vals == 0.0, _col_idx] = _median
@@ -814,20 +817,9 @@ def train_model(
     )
 
     # ── Isotonic calibration on the held-out calibration split ────────────────
-    # sklearn ≥ 1.2 removed cv="prefit". Fallback clones the stacker and
-    # retrains it with 5-fold CV *on the calibration split only* — never
-    # touching x_test so evaluation remains uncontaminated.
-    try:
-        # Preferred: prefit mode (sklearn < 1.2)
-        calibrator = CalibratedClassifierCV(stacking_model, method="isotonic", cv="prefit")
-        calibrator.fit(x_cal, y_cal)
-        model = calibrator
-    except (ValueError, TypeError):
-        # Fallback: sklearn ≥ 1.2 — retrain stacker via 5-fold CV on cal split
-        from sklearn.calibration import CalibratedClassifierCV as CCVCV
-        calibrator = CCVCV(stacking_model, method="isotonic", cv=5)
-        calibrator.fit(x_cal, y_cal)  # x_cal only — x_test is evaluation-only
-        model = calibrator
+    calibrator = CalibratedClassifierCV(FrozenEstimator(stacking_model), method="isotonic")
+    calibrator.fit(x_cal, y_cal)
+    model = calibrator
 
     # ── Evaluate ──────────────────────────────────────────────────────────────
     predictions = model.predict(x_test)

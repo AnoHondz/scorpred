@@ -911,9 +911,12 @@ def extract_recent_form(games: list, team_id: int, n: int = 5) -> list[dict]:
     """
     completed = filter_completed_nba_games(games)
     form = []
-    for g in completed[:n]:
+    for g in completed:
         home_id = g.get("teams", {}).get("home", {}).get("id")
-        is_home = (home_id == team_id)
+        away_id = g.get("teams", {}).get("visitors", {}).get("id")
+        if str(team_id) not in {str(home_id), str(away_id)}:
+            continue
+        is_home = (str(home_id) == str(team_id))
         our_key = "home" if is_home else "visitors"
         their_key = "visitors" if is_home else "home"
         
@@ -938,6 +941,8 @@ def extract_recent_form(games: list, team_id: int, n: int = 5) -> list[dict]:
             "score": f"{our_pts}–{their_pts}",
             "venue": "Home" if is_home else "Away",
         })
+        if len(form) >= n:
+            break
     
     return form
 

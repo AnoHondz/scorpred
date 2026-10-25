@@ -25,6 +25,7 @@ import api_client as ac
 import predictor as pred
 from runtime_paths import elo_state_path, ml_report_path, walk_forward_report_path
 import scorpred_engine as se
+from services.soccer_feature_policy import enrich_opponent_snapshots, opponent_average_ppg
 
 _ML_REPORT_PATH = ml_report_path()
 _WALK_FORWARD_REPORT_PATH = walk_forward_report_path()
@@ -278,17 +279,18 @@ def _nba_ml_features(context: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def _ml_features(context: dict[str, Any]) -> dict[str, float]:
+def _ml_features(context: dict[str, Any]) -> dict[str, float | None]:
     """Build pre-match feature dict matching FEATURE_COLUMNS in train_model.py.
 
-    Computes all 47 features from the live form context where data is available.
-    Features requiring data absent from the live context (H2H records, opponent
-    PPG history) use neutral defaults that are safe for inference.
+    Computes features from the live form context where data is available.
+    Missing historical opponent snapshots remain missing for the artifact's
+    training-time imputation; current-opponent or own-form proxies are invalid.
     """
-    form_a    = context.get("form_a") or []      # home team's recent match dicts
-    form_b    = context.get("form_b") or []      # away team's recent match dicts
+    form_a    = context.get("ml_form_a") or context.get("form_a") or []
+    form_b    = context.get("ml_form_b") or context.get("form_b") or []
     h2h_form_a = context.get("h2h_form_a") or [] # H2H results from home team's perspective
     sport     = str(context.get("sport") or "soccer").lower()
+    target_date = context.get("target_date") or context.get("kickoff") or context.get("match_date")
 
     def _avg(rows: list[dict], key: str, window: int = 5, default: float = 0.0) -> float:
         vals = [_safe_float(row.get(key), default) for row in rows[:window]
@@ -336,8 +338,8 @@ def _ml_features(context: dict[str, Any]) -> dict[str, float]:
                     filtered.append(r)
         return filtered[:window] if filtered else rows[:window]
 
-    def _days_since_last(rows: list[dict]) -> float:
-        """Estimate days since last match from the most recent form entry's date."""
+    def _days_since_last(rows: list[dict], target: Any) -> float:
+        """Measure rest to the target fixture date, matching the training feature."""
         if not rows:
             return 7.0
         try:
@@ -345,10 +347,10 @@ def _ml_features(context: dict[str, Any]) -> dict[str, float]:
             date_str = rows[0].get("date") or rows[0].get("match_date")
             if date_str:
                 last  = _date.fromisoformat(str(date_str).strip())
-                today = _date.today()
-                return min(float(max(0, (today - last).days)), 60.0)
-        except Exception:
-            pass
+                target_day = _date.fromisoformat(str(target).strip()[:10]) if target else _date.today()
+                return min(float(max(0, (target_day - last).days)), 60.0)
+        except (TypeError, ValueError):
+            return 7.0
         return 7.0
 
     # ── Overall last-5 ────────────────────────────────────────────────────────
@@ -377,8 +379,8 @@ def _ml_features(context: dict[str, Any]) -> dict[str, float]:
     a_scored_rate5 = round(_scored_rate(form_b, 5), 4)
     h_clean_sheet_rate5 = round(_clean_sheet_rate(form_a, 5), 4)
     a_clean_sheet_rate5 = round(_clean_sheet_rate(form_b, 5), 4)
-    days_home = _days_since_last(form_a)
-    days_away = _days_since_last(form_b)
+    days_home = _days_since_last(form_a, target_date)
+    days_away = _days_since_last(form_b, target_date)
 
     attack_vs_defense_home = round(h_gf5 - a_ga5, 4)
     attack_vs_defense_away = round(a_gf5 - h_ga5, 4)
@@ -400,29 +402,13 @@ def _ml_features(context: dict[str, Any]) -> dict[str, float]:
             h2h_gd_avg  = round(sum(gd_list)  / len(gd_list),  4)
 
     # ── Opponent-strength proxy ────────────────────────────────────────────────
-    # Training computes opp_avg_ppg as the mean of each past opponent's PPG
-    # stored in the 'opp_ppg' field of each match record.  At inference time
-    # form entries carry that field when available (enriched sources); when
-    # absent, we approximate using the current opponent's recent PPG (W=3,
-    # D=1, L=0 pts/game) as a proxy for schedule difficulty.
-    # home_opp_avg_ppg_5 = away team's PPG (today's opponent for home team)
-    # away_opp_avg_ppg_5 = home team's PPG (today's opponent for away team)
-    _PTS_MAP = {"W": 3.0, "D": 1.0, "L": 0.0}
-
-    def _opp_avg_ppg(form_rows: list[dict], window: int = 5) -> float:
-        recent = form_rows[:window]
-        if not recent:
-            return 1.0
-        vals = [_safe_float(r.get("opp_ppg"), None) for r in recent]
-        known = [v for v in vals if v is not None]
-        if known:
-            return round(sum(known) / len(known), 4)
-        # Fallback: derive PPG from result column (W=3, D=1, L=0)
-        pts = [_PTS_MAP.get(str(r.get("result", "")).upper(), 1.0) for r in recent]
-        return round(sum(pts) / len(pts), 4)
-
-    home_opp_avg_ppg_5 = _opp_avg_ppg(form_b) if form_b else 1.0
-    away_opp_avg_ppg_5 = _opp_avg_ppg(form_a) if form_a else 1.0
+    # Each side's feature uses that side's five historical meetings. Optional
+    # full-history enrichment computes opponents' PPG before those meetings.
+    history = context.get("historical_matches") or []
+    opponent_form_a = enrich_opponent_snapshots(form_a[:5], history, team=context.get("team_a_id") or context.get("team_a_name"))
+    opponent_form_b = enrich_opponent_snapshots(form_b[:5], history, team=context.get("team_b_id") or context.get("team_b_name"))
+    home_opp_avg_ppg_5 = opponent_average_ppg(opponent_form_a)
+    away_opp_avg_ppg_5 = opponent_average_ppg(opponent_form_b)
 
     return {
         # Overall last-5
@@ -458,7 +444,7 @@ def _ml_features(context: dict[str, Any]) -> dict[str, float]:
         "away_clean_sheet_rate_5": a_clean_sheet_rate5,
         "home_scored_rate_5":      h_scored_rate5,
         "away_scored_rate_5":      a_scored_rate5,
-        # Opponent-strength proxy (away team's PPG as proxy for home team's opponent quality)
+        # Past opponents' pre-match PPG, with identical training/live semantics.
         "home_opp_avg_ppg_5":    home_opp_avg_ppg_5,
         "away_opp_avg_ppg_5":    away_opp_avg_ppg_5,
         # Rest / fatigue
@@ -794,7 +780,8 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
         import odds_fetcher as _of
         _home_team_name = str(context.get("team_a_name") or context.get("team_a") or "")
         _away_team_name = str(context.get("team_b_name") or context.get("team_b") or "")
-        _live_odds = _of.fetch_match_odds("soccer", _home_team_name, _away_team_name)
+        _live_odds = _of.fetch_match_odds("soccer", _home_team_name, _away_team_name,
+                                         league_id=int(context.get("league_id") or 0) or None)
         if _live_odds.get("available"):
             _h = float(_live_odds.get("home_odds") or 0)
             _a = float(_live_odds.get("away_odds") or 0)
@@ -818,6 +805,8 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
 
     _league_id = int(context.get("league_id") or 0) or None
     inference = ml_service.predict_match(_features_for_inference, league_id=_league_id)
+    missing_opponent_features = [name for name in ("home_opp_avg_ppg_5", "away_opp_avg_ppg_5")
+                                 if _features_for_inference.get(name) is None]
     if inference.get("available"):
         probs = inference.get("probabilities") or [0.3333, 0.3333, 0.3334]
         model_type = inference.get("model_type", "random_forest")
@@ -833,36 +822,18 @@ def _ml_signal(context: dict[str, Any]) -> dict[str, Any]:
             "model_role": inference.get("model_role"),
             "base_models": inference.get("base_models"),
             "base_agreement": inference.get("base_agreement"),
+            "missing_opponent_features": missing_opponent_features,
             "top_features": ml_outputs.get("top_features") or [],
         }
 
-    ranking = report.get("ranking") or []
-    best = ranking[0] if ranking else {}
-    top_features = best.get("top_features") or []
-    if not top_features:
-        return {
-            "available": False,
-            "prob_a": 0.5,
-            "source": "missing_ml_data",
-            "top_features": [],
-        }
-
-    form_a = context.get("form_a") or []
-    form_b = context.get("form_b") or []
-    sport = str(context.get("sport") or "soccer").lower()
-
-    form_delta = _results_to_points(form_a, sport) - _results_to_points(form_b, sport)
-    feature_weight = min(1.0, sum(_safe_float(item.get("importance", item.get("weight", 0.0))) for item in top_features[:3]))
-    prob = _clamp(0.5 + form_delta * 0.2 * max(0.3, feature_weight), 0.05, 0.95)
-
     return {
-        "available": True,
-        "prob_a": prob,
+        "available": False,
+        "prob_a": None,
         "prob_draw": None,
-        "prob_b": 1.0 - prob,
-        "confidence": max(prob, 1.0 - prob),
-        "source": "model_comparison_report",
-        "top_features": top_features[:5],
+        "prob_b": None,
+        "source": "missing_ml_data",
+        "error": inference.get("error", "Model inference unavailable"),
+        "top_features": [],
     }
 
 
@@ -1146,6 +1117,7 @@ def predict_match(context: dict[str, Any]) -> dict[str, Any]:
             "source": ml.get("source", "missing_ml_data"),
             "prob_a": round(_safe_float(ml.get("prob_a"), 0.5), 4),
             "prob_draw": round(_safe_float(ml.get("prob_draw"), 0.0), 4) if ml.get("prob_draw") is not None else None,
+            "missing_opponent_features": ml.get("missing_opponent_features") or [],
         },
         "rule_signal": {
             "winner": (rule_prediction.get("best_pick") or {}).get("prediction", ""),

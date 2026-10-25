@@ -1,13 +1,24 @@
-import { useEffect, useState } from 'react';
+import { navigate, useLocation, localToday } from '../navigation';
+import RequestError from '../components/RequestError';
 import { useFetch } from '../hooks/useFetch';
+import { useNow } from '../hooks/useNow';
+import { useNBARefresh } from '../hooks/useNBARefresh';
+import { decisionAt } from '../decisionLifecycle';
+import { slatePlan } from '../slate';
 import { CardSkeleton, DateTabs, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
+import DataStatus from '../components/DataStatus';
+import RecentResults from '../components/RecentResults';
 
 interface NBAData {
   slate: Decision[];
   topOpportunities: Decision[];
   plan: { bet: number; consider: number; skip: number };
   availableDates?: string[];
+  selectedDate?: string;
   error?: string | null;
+  warnings?: string[];
+  last_updated?: string | null;
+  notice?: string;
 }
 
 function BasketballWatermark() {
@@ -22,30 +33,36 @@ function BasketballWatermark() {
   );
 }
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = localToday;
+const tipoff = (d: Decision) => (d.matchDate ? new Date(d.matchDate).getTime() : Number.MAX_SAFE_INTEGER) || Number.MAX_SAFE_INTEGER;
+const ACTION_RANK = { BET: 0, CONSIDER: 1, SKIP: 2 } as const;
 
 export default function NBAPage({ onSelectMatch }: { onSelectMatch: (d: Decision) => void }) {
-  const [selectedDate, setSelectedDate] = useState<string>(todayISO());
-
-  const url = `/api/dashboard/nba?date=${selectedDate}`;
-  const { data, loading, error } = useFetch<NBAData>(url, [selectedDate]);
-
+  const now = useNow();
+  const location = useLocation();
+  const params = new URLSearchParams(location.split('?')[1]);
+  const view = params.get('view') || 'upcoming';
+  const upcoming = view === 'upcoming';
+  const requestedDate = params.get('date') || '';
+  const url = upcoming ? `/api/dashboard/nba?date=${requestedDate}` : view === 'results' ? null : `/api/nba/games?view=${view}&date=${requestedDate}`;
+  const { data, loading, error, retry } = useFetch<NBAData>(url);
+  const deadlines = (data?.slate ?? []).filter(game => Date.parse(game.matchDate || '') > now)
+    .map(game => Date.parse(game.dataFreshness?.expires_at || '')).filter(Number.isFinite);
+  useNBARefresh(upcoming && deadlines.length ? Math.min(...deadlines) : null, retry);
   const availableDates = data?.availableDates ?? [];
-  useEffect(() => {
-    if (!availableDates.length) return;
-    if (!availableDates.includes(selectedDate)) {
-      setSelectedDate(availableDates[0]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableDates.join(',')]);
+  const selectedDate = requestedDate || data?.selectedDate || availableDates[0] || todayISO();
+  const setSelectedDate = (date: string) => navigate(`/nba?view=${view}&date=${date}`);
 
   const isTBD = (d: Decision) =>
     !d.teamA || !d.teamB || d.teamA === 'TBD' || d.teamB === 'TBD' ||
     (d.matchup || '').includes('TBD');
 
-  const slate = (data?.slate ?? []).filter(d => !isTBD(d));
-  const top   = (data?.topOpportunities ?? []).filter(d => !isTBD(d));
-  const plan  = data?.plan ?? { bet: 0, consider: 0, skip: 0 };
+  const slate = (data?.slate ?? []).map(card => decisionAt(card, now)).filter(d => !isTBD(d));
+  const plays = slate.filter(d => d.action !== 'SKIP')
+    .sort((a, b) => ACTION_RANK[a.action] - ACTION_RANK[b.action] || b.confidence - a.confidence);
+  const rest = slate.filter(d => d.action === 'SKIP').sort((a, b) => tipoff(a) - tipoff(b));
+  const plan = slatePlan(slate);
+  const failed = Boolean(error || data?.error);
 
   return (
     <div className="page-stack">
@@ -54,72 +71,60 @@ export default function NBAPage({ onSelectMatch }: { onSelectMatch: (d: Decision
         <p className="page-eyebrow">NBA · Predictions</p>
         <h1 className="page-title">NBA Game Plan</h1>
         <p className="mt-3 max-w-xl text-slate-400 text-sm leading-relaxed">
-          Side, confidence, reason, and trust signal — every game on the slate.
+          Win chances for every game, compared with the sportsbook line.
         </p>
       </section>
 
-      {/* 3-day date tabs */}
+      {error && <RequestError message={error} onRetry={retry} />}
+      {data?.error && <RequestError message={data.error} onRetry={retry} />}
+      <div className="dashboard-controls"><div className="sport-filter" aria-label="NBA schedule view">
+        {(['upcoming', 'results', 'archive'] as const).map(item => <button key={item} aria-pressed={view === item}
+          onClick={() => navigate(item === 'upcoming' ? '/nba' : `/nba?view=${item}`)}>{item === 'upcoming' ? 'Upcoming' : item === 'results' ? 'Recent results' : 'Local history'}</button>)}
+      </div>{view === 'archive' && <label className="quiet-label">Observation date <input type="date" aria-label="NBA observation date" value={selectedDate} onChange={event => { if (event.target.value) setSelectedDate(event.target.value); }} /></label>}</div>
+      {view === 'results' ? <RecentResults sport="nba" /> : <>
       <DateTabs
-        dates={availableDates.length ? availableDates.slice(0, 3) : [todayISO()]}
+        dates={[...new Set([...(availableDates.length ? availableDates : [todayISO()]), selectedDate])].sort()}
         selected={selectedDate}
         onSelect={setSelectedDate}
       />
 
-      <PlanStrip bet={plan.bet} consider={plan.consider} skip={plan.skip} />
+      {upcoming && <PlanStrip bet={plan.bet} consider={plan.consider} skip={plan.skip} loading={loading} />}
+      <DataStatus cards={slate} updated={data?.last_updated} loading={loading} warnings={data?.warnings} />
 
-      <section className="section">
-        <div className="section-header">
-          <p className="section-label">Top Opportunities</p>
-          <div className="section-divider" />
-        </div>
-        {loading ? (
-          <div className="grid-2">
-            {[0, 1].map((i) => <CardSkeleton key={i} />)}
+      {plays.length > 0 && (
+        <section className="section" aria-label="NBA plays">
+          <div className="section-header">
+            <p className="section-label">Plays</p>
+            <div className="section-divider" />
           </div>
-        ) : error || data?.error ? (
-          <EmptyState
-            title="Data unavailable"
-            body={data?.error ?? 'Could not load NBA games. Check back shortly.'}
-          />
-        ) : top.length > 0 ? (
           <div className="grid-2">
-            {top.map((decision) => (
-              <DecisionCard
-                key={`${decision.action}-${decision.side}-${decision.matchup}`}
-                decision={decision}
-                featured={decision.action === 'BET'}
-                onAnalyze={onSelectMatch}
-              />
+            {plays.map((decision) => (
+              <DecisionCard key={decision.matchId || decision.matchup} decision={decision} featured={decision.action === 'BET'} onAnalyze={onSelectMatch} />
             ))}
           </div>
-        ) : (
-          <EmptyState title="No top picks for this day" body="Try another date or check back when games are scheduled." />
-        )}
-      </section>
+        </section>
+      )}
 
-      <section className="section">
+      {(loading || rest.length > 0 || !plays.length) && <section className="section" aria-label="NBA slate">
         <div className="section-header">
-          <p className="section-label">Full Slate</p>
+          <p className="section-label">{upcoming ? (plays.length ? 'Rest of the slate' : 'Slate') : 'Results'}</p>
           <div className="section-divider" />
         </div>
         {loading ? (
           <div className="grid-2">
             {[0, 1, 2, 3].map((i) => <CardSkeleton key={i} />)}
           </div>
-        ) : slate.length > 0 ? (
+        ) : rest.length > 0 ? (
           <div className="grid-2">
-            {slate.map((decision) => (
-              <DecisionCard
-                key={`${decision.action}-${decision.side}-${decision.matchup}`}
-                decision={decision}
-                onAnalyze={onSelectMatch}
-              />
+            {rest.map((decision) => (
+              <DecisionCard key={decision.matchId || decision.matchup} decision={decision} onAnalyze={onSelectMatch} />
             ))}
           </div>
-        ) : !loading ? (
+        ) : !failed && !plays.length ? (
           <EmptyState title="No games found" body="No NBA games scheduled for this date." />
         ) : null}
-      </section>
+      </section>}
+      </>}
     </div>
   );
 }

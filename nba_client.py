@@ -12,7 +12,7 @@ import hashlib
 import time
 import requests
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from dotenv import load_dotenv
 from runtime_paths import cache_dir
 from utils.parsing import safe_float as _safe_float, safe_int as _safe_int
@@ -35,7 +35,13 @@ RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
 # Endpoints that returned 429/403 this session — skip live calls, use stale cache only
 _SUPPRESSED_ENDPOINTS: set[str] = set()
 
-NBA_SEASON = 2024             # current season year
+def current_season(today: date | None = None) -> int:
+    """ESPN labels NBA seasons by their ending year (October 2026 -> 2027)."""
+    today = today or datetime.now().date()
+    return today.year + 1 if today.month >= 8 else today.year
+
+
+NBA_SEASON = current_season()
 
 
 # ── Cache helpers ──────────────────────────────────────────────────────────────

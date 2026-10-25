@@ -2,10 +2,12 @@
 
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services import evidence
+from tests.source_contracts import fresh_source
 
 
 class _DummyApi:
@@ -26,7 +28,8 @@ class _DummyApi:
         self.raise_primary = False
         self.upcoming_payload = [
             {
-                "fixture": {"id": 1, "date": "2026-04-15T19:00:00+00:00", "status": {"short": "NS"}, "venue": {"name": "A"}},
+                "data_freshness": fresh_source(),
+                "fixture": {"id": 1, "date": (datetime.now(UTC) + timedelta(days=1)).isoformat(), "status": {"short": "NS"}, "venue": {"name": "A"}},
                 "teams": {
                     "home": {"id": 10, "name": "Team A", "logo": ""},
                     "away": {"id": 20, "name": "Team B", "logo": ""},

@@ -1,7 +1,26 @@
+import { ArrowUpRight } from 'lucide-react';
+import { calendarFormat, dateTabLabel } from '../navigation';
+import { useNow } from '../hooks/useNow';
+import { decisionAt } from '../decisionLifecycle';
+
 export type DecisionAction = 'BET' | 'CONSIDER' | 'SKIP';
 export type DataConfidence = 'Strong Data' | 'Partial Data' | 'Limited Data';
+export interface SourceFreshness {
+  state?: 'fresh' | 'degraded' | 'unavailable' | 'unknown';
+  source?: string;
+  observed_at?: string;
+  expires_at?: string;
+  max_stale_at?: string;
+  warning?: string;
+}
 
 export interface Decision {
+  matchId?: string;
+  winProbability?: number | null;
+  drawProbability?: number | null;
+  scenarioShare?: number | null;
+  tiedScenarioShare?: number | null;
+  modelSource?: string;
   action: DecisionAction;
   side: string;
   opponent?: string;
@@ -9,6 +28,10 @@ export interface Decision {
   teamB?: string;
   matchup?: string;
   matchDate?: string;
+  slateDate?: string;
+  eventStatus?: string | { state?: string; short?: string; name?: string; long?: string; completed?: boolean } | null;
+  dataFreshness?: SourceFreshness | null;
+  confidenceMeasure?: string;
   confidence: number;
   reason: string;
   data: DataConfidence;
@@ -16,7 +39,10 @@ export interface Decision {
   cta?: string;
   logo?: string;
   leagueLogo?: string;
-  sport?: 'soccer' | 'nba';
+  teamALogo?: string;
+  teamBLogo?: string;
+  market?: { bookmaker: string; updated_at: string; home_decimal?: number; away_decimal?: number; home_spread?: number; total?: number; data_freshness?: SourceFreshness } | null;
+  sport?: 'soccer' | 'nba' | 'nfl';
   homeId?: number | string;
   awayId?: number | string;
   leagueId?: number | string;
@@ -55,83 +81,29 @@ const ACTION_ACCENT: Record<DecisionAction, string> = {
   SKIP:    'card-accent-skip',
 };
 
-const BAR_COLOR: Record<DecisionAction, string> = {
-  BET:     'bg-emerald-400',
-  CONSIDER:'bg-amber-400',
-  SKIP:    'bg-slate-600',
-};
-
 /* ── Confidence arc ────────────────────────────────────── */
 
-const ARC_COLOR: Record<DecisionAction, string> = {
-  BET:     '#34d399',
-  CONSIDER:'#fbbf24',
-  SKIP:    '#475569',
-};
-
-const ARC_GLOW: Record<DecisionAction, string> = {
-  BET:     'drop-shadow(0 0 5px rgba(52,211,153,0.45))',
-  CONSIDER:'drop-shadow(0 0 5px rgba(251,191,36,0.35))',
-  SKIP:    'none',
-};
-
-function ConfidenceArc({ value, action }: { value: number; action: DecisionAction }) {
-  const r = 22;
-  const circ = 2 * Math.PI * r;
-  const filled = (value / 100) * circ;
-  const col = ARC_COLOR[action];
-  return (
-    <svg width="60" height="60" viewBox="0 0 60 60" className="shrink-0" aria-label={`${value}% confidence`}>
-      <circle cx="30" cy="30" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="5" />
-      <circle
-        cx="30" cy="30" r={r}
-        fill="none"
-        stroke={col}
-        strokeWidth="5"
-        strokeLinecap="round"
-        strokeDasharray={`${filled} ${circ}`}
-        strokeDashoffset={circ / 4}
-        style={{ filter: ARC_GLOW[action] }}
-      />
-      <text x="30" y="34" textAnchor="middle" fill="#fff" fontSize="11" fontWeight="700"
-        fontFamily="Oswald,sans-serif">
-        {value}%
-      </text>
-    </svg>
-  );
+function ConfidenceArc({ value, label = 'rule confidence' }: { value: number; action: DecisionAction; label?: string }) {
+  const valid = Number.isFinite(value) && value >= 0 && value <= 100;
+  return <div className="metric-value" role="img" aria-label={valid ? `${value}% ${label}` : `${label} unavailable`}>
+    <strong>{valid ? `${value}%` : '—'}</strong>
+  </div>;
 }
 
 /* ── Match date chip ───────────────────────────────────── */
 
 function MatchDateChip({ date }: { date: string }) {
   if (!date) return null;
-  try {
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return null;
-    const diffH = (d.getTime() - Date.now()) / 3_600_000;
-    let label: string;
-    if (diffH < 0)   label = 'Completed';
-    else if (diffH < 1)  label = `${Math.round(diffH * 60)}m`;
-    else if (diffH < 24) label = `${Math.floor(diffH)}h`;
-    else label = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    const isLive = diffH >= -2 && diffH <= 0;
-    return (
-      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold border
-        ${isLive
-          ? 'text-rose-300 border-rose-400/30 bg-rose-400/10'
-          : 'text-slate-500 border-white/[0.07] bg-white/[0.03]'
-        }`}>
-        {isLive && <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" />}
-        {label}
-      </span>
-    );
-  } catch { return null; }
+  const parsed = new Date(date);
+  if (isNaN(parsed.getTime())) return null;
+  const label = `${calendarFormat(parsed, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} ET`;
+  return <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold border text-slate-400 border-white/10">{label}</span>;
 }
 
 /* ── Decision card ─────────────────────────────────────── */
 
 export function DecisionCard({
-  decision,
+  decision: rawDecision,
   featured = false,
   onAnalyze,
 }: {
@@ -139,122 +111,62 @@ export function DecisionCard({
   featured?: boolean;
   onAnalyze?: (d: Decision) => void;
 }) {
-  const initials = decision.side
-    .split(/\s+/).filter(Boolean).slice(0, 2)
-    .map((p) => p[0]?.toUpperCase()).join('') || 'TM';
-
-  const opponent = decision.opponent || decision.teamB || '';
-
-  return (
-    <article className={`card decision-card ${ACTION_ACCENT[decision.action]} ${featured ? 'decision-card-featured' : ''}`}>
-
-      {/* Row 1 — matchup + date + action */}
-      <div className="flex items-start justify-between gap-2 mb-4">
-        <div className="flex items-center gap-2 min-w-0">
-          {decision.leagueLogo && (
-            <img
-              src={decision.leagueLogo}
-              alt=""
-              className="h-4 w-4 rounded border border-white/[0.08] bg-white/90 object-contain p-px shrink-0"
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-            />
-          )}
-          <p className="text-[10px] uppercase tracking-[0.16em] text-slate-500 leading-tight truncate font-semibold">
-            {decision.matchup || 'Matchup'}
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {decision.matchDate && <MatchDateChip date={decision.matchDate} />}
-          <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-black tracking-widest ${ACTION_CLASS[decision.action]}`}>
-            {decision.action}
-          </span>
-        </div>
+  const now = useNow();
+  const decision = decisionAt(rawDecision, now);
+  const selectedSide = decision.side.replace(/ Win!?$/i, '');
+  const home = decision.teamA || decision.side;
+  const away = decision.teamB || decision.opponent || 'Away team';
+  const competition = (decision.support || '').split(' | ')[0] || decision.sport?.toUpperCase() || 'Match analysis';
+  const nba = decision.sport === 'nba';
+  const unavailable = decision.side === 'Unavailable';
+  const metricLabel = decision.sport === 'nfl' ? 'Scenario share'
+    : nba || decision.confidenceMeasure === 'model_probability' ? 'Win probability' : 'Rule confidence';
+  const metricValue = nba && decision.winProbability != null ? Math.round(decision.winProbability) : decision.confidence;
+  const market = decision.market;
+  const spread = nba && market?.home_spread != null ? `${decision.teamA} ${market.home_spread > 0 ? '+' : ''}${market.home_spread}` : null;
+  return <article className={`card decision-card depth-card ${ACTION_ACCENT[decision.action]} ${featured && decision.action === 'BET' ? 'decision-card-featured' : ''}`}>
+    <div className="match-card-top"><span className="competition-label"><span className="sport-dot" />{competition}</span>
+      <span className={`action-badge ${ACTION_CLASS[decision.action]}`}>{decision.action}</span>
+    </div>
+    <div className="match-card-body">
+      <div className="match-teams">
+        <TeamIdentity name={home} logo={decision.teamALogo || (selectedSide === home ? decision.logo : '')} side="Home" />
+        <TeamIdentity name={away} logo={decision.teamBLogo || (selectedSide === away ? decision.logo : '')} side="Away" />
       </div>
-
-      {/* Row 2 — logo + name + arc */}
-      <div className="flex items-center gap-3 mb-4">
-        {decision.logo ? (
-          <img
-            src={decision.logo}
-            alt={`${decision.side} logo`}
-            className="h-12 w-12 rounded-xl border border-white/10 bg-white object-contain p-1.5 shadow-md shrink-0"
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
-          />
-        ) : (
-          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl border border-white/[0.08]
-            bg-white/[0.04] font-oswald text-sm text-slate-300">
-            {initials}
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
-          <h2 className="font-oswald text-[1.15rem] uppercase tracking-[0.05em] text-white leading-tight truncate">
-            {decision.side.replace(/ Win!?$/i, '')}
-          </h2>
-          {opponent && (
-            <p className="text-[11px] text-slate-500 mt-0.5 truncate">vs {opponent}</p>
-          )}
-          <div className="mt-1.5">
-            <DataBadge label={decision.data} />
-          </div>
-        </div>
-        <div className="shrink-0">
-          <ConfidenceArc value={decision.confidence} action={decision.action} />
-        </div>
+      <div className="match-metric">
+        {unavailable ? <span className="quiet-label">Unavailable</span> : <ConfidenceArc value={metricValue} action={decision.action} label={metricLabel.toLowerCase()} />}
+        <span>{metricLabel}</span>
       </div>
+    </div>
+    {decision.dataFreshness?.warning && <p className="freshness-note" role="status">{decision.dataFreshness.warning}</p>}
+    {nba && unavailable ? null : <div className="match-lean"><span>{decision.sport === 'nfl' ? 'Scenario lean' : nba ? 'Pick' : 'Model lean'}</span><h2>{selectedSide}</h2><DataBadge label={decision.data} /></div>}
+    {unavailable && <p className="match-reason">{decision.reason}</p>}
+    {!nba && decision.sport !== 'nfl' && !unavailable && decision.winProbability != null && <p className="match-market">Win chance {decision.winProbability.toFixed(0)}%</p>}
+    {market && <p className="match-market">{spread && <>{spread} · </>}Moneyline {market.home_decimal?.toFixed(2) ?? '—'} / {market.away_decimal?.toFixed(2) ?? '—'} <span>· {market.bookmaker}</span></p>}
+    <div className="match-card-footer">
+      {decision.matchDate ? <MatchDateChip date={decision.matchDate} /> : <span className="kickoff-pending">Kickoff to be confirmed</span>}
+      {onAnalyze && <button type="button" onClick={() => onAnalyze(decision)} className="btn-analyze">Analyze Matchup <ArrowUpRight size={15} /></button>}
+    </div>
+  </article>;
+}
 
-      {/* Row 3 — confidence bar */}
-      <div className="mb-4">
-        <div className="h-[3px] overflow-hidden rounded-full bg-white/[0.05]">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ${BAR_COLOR[decision.action]}`}
-            style={{ width: `${decision.confidence}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Row 4 — reason */}
-      <p className="text-[13px] leading-relaxed text-slate-400 line-clamp-3">{decision.reason}</p>
-
-      {/* Row 5 — support */}
-      {decision.support && (
-        <p className="mt-2.5 text-[11px] text-slate-600 leading-snug border-t border-white/[0.05] pt-2.5">
-          {decision.support}
-        </p>
-      )}
-
-      {/* Analyze button */}
-      {onAnalyze && (
-        <button
-          type="button"
-          onClick={() => onAnalyze(decision)}
-          className="btn-analyze mt-4"
-        >
-          Analyze Match →
-        </button>
-      )}
-    </article>
-  );
+export function TeamIdentity({ name, logo, side }: { name: string; logo?: string; side: string }) {
+  const initials = name.split(/\s+/).slice(0, 2).map(word => word[0]).join('');
+  return <div className="team-identity"><span className="team-avatar" aria-hidden="true">{initials}
+    {logo && <img src={logo} alt="" onError={event => { event.currentTarget.style.display = 'none'; }} />}
+  </span><span className="team-name" title={name}>{name}</span><span className="team-side">{side}</span></div>;
 }
 
 /* ── Plan strip ─────────────────────────────────────────── */
 
-export function PlanStrip({ bet, consider, skip }: { bet: number; consider: number; skip: number }) {
-  return (
-    <section className="plan-strip">
-      <div className="plan-stat">
-        <span className="plan-stat-num" style={{ color: '#34d399' }}>{bet}</span>
-        <span className="plan-stat-label">BET</span>
-      </div>
-      <div className="plan-stat">
-        <span className="plan-stat-num" style={{ color: '#fbbf24' }}>{consider}</span>
-        <span className="plan-stat-label">CONSIDER</span>
-      </div>
-      <div className="plan-stat">
-        <span className="plan-stat-num" style={{ color: '#475569' }}>{skip}</span>
-        <span className="plan-stat-label">SKIP</span>
-      </div>
-    </section>
-  );
+export function PlanStrip({ bet, consider, skip, loading = false }: { bet: number; consider: number; skip: number; loading?: boolean }) {
+  const value = (n: number) => <span className="plan-stat-num">{loading ? '—' : n}</span>;
+  return <p className="plan-line" aria-label="Slate overview">
+    <span>{value(bet + consider + skip)} games</span>
+    <span className="plan-bet">{value(bet)} bet</span>
+    <span className="plan-consider">{value(consider)} consider</span>
+    <span>{value(skip)} skip</span>
+  </p>;
 }
 
 /* ── Date tabs ──────────────────────────────────────────── */
@@ -268,17 +180,8 @@ export function DateTabs({
   selected: string;
   onSelect: (d: string) => void;
 }) {
+  const now = useNow();
   if (!dates.length) return null;
-  const fmt = (iso: string) => {
-    try {
-      const d = new Date(iso + 'T00:00:00');
-      const today = new Date();
-      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
-      if (iso === today.toISOString().slice(0, 10)) return 'Today';
-      if (iso === tomorrow.toISOString().slice(0, 10)) return 'Tomorrow';
-      return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-    } catch { return iso; }
-  };
   return (
     <div className="league-scroll">
       {dates.map((d) => (
@@ -286,9 +189,10 @@ export function DateTabs({
           key={d}
           type="button"
           onClick={() => onSelect(d)}
+          aria-pressed={selected === d}
           className={`league-pill ${selected === d ? 'league-pill-active' : ''}`}
         >
-          {fmt(d)}
+          {dateTabLabel(d, now)}
         </button>
       ))}
     </div>
@@ -311,7 +215,7 @@ export function EmptyState({ title, body }: { title: string; body: string }) {
 
 export function CardSkeleton() {
   return (
-    <div className="card space-y-4">
+    <div className="card space-y-4" role="status" aria-label="Loading matchup">
       <div className="flex items-center justify-between">
         <div className="skeleton-line h-2.5 w-1/3" />
         <div className="skeleton-line h-5 w-14 rounded-full" />

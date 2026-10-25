@@ -13,11 +13,23 @@ predict_nba_scoreline(...)    -> dict
 
 from __future__ import annotations
 
-import math
 import logging
+import math
 from typing import Any
 
+from services.scoring_research import clean_form, finite
+
 _log = logging.getLogger(__name__)
+
+
+class InsufficientScoreData(ValueError):
+    """A real scoring forecast cannot be constructed from the available data."""
+
+
+def _research_completeness(projection):
+    score = projection.get("feature_coverage", 1.0)
+    return {"score": score, "tier": "high" if score >= .9 else "medium" if score >= .7 else "low",
+            "factors": {"pregame_features": score == 1.0, "historical_evaluation": True}}
 
 # ─── Poisson helpers ──────────────────────────────────────────────────────────
 
@@ -252,11 +264,11 @@ def _calibrate_lambdas(
     # Strong opponent (8-10) → reduces your lambda by up to 12%
     # Weak opponent (0-2) → increases your lambda by up to 12%
     if opp_strength_a is not None:
-        factor_b = 1.0 + (5.0 - opp_strength_a) * 0.024  # 5.0 = neutral
-        lam_b *= max(0.88, min(1.12, factor_b))
-    if opp_strength_b is not None:
-        factor_a = 1.0 + (5.0 - opp_strength_b) * 0.024
+        factor_a = 1.0 + (5.0 - opp_strength_a) * 0.024
         lam_a *= max(0.88, min(1.12, factor_a))
+    if opp_strength_b is not None:
+        factor_b = 1.0 + (5.0 - opp_strength_b) * 0.024
+        lam_b *= max(0.88, min(1.12, factor_b))
 
     # Injury penalty (~2.5 pp per absent player, capped at 15%)
     if injuries_a:
@@ -312,6 +324,7 @@ def predict_soccer_scoreline(
     ou_lines: list[float] | None = None,
     opp_strength_a: float | None = None,
     opp_strength_b: float | None = None,
+    research_projection: dict | None = None,
 ) -> dict[str, Any]:
     """
     Full soccer scoreline prediction: Poisson + ML ensemble.
@@ -319,6 +332,9 @@ def predict_soccer_scoreline(
     Returns dict with: top_scorelines, over_under lines, btts, win_probs,
     projected_score, score_ranges, primary_ou_line.
     """
+    form_a, form_b = clean_form(form_a, "soccer"), clean_form(form_b, "soccer")
+    if min(len(form_a), len(form_b)) < 3:
+        raise InsufficientScoreData("Soccer scoring needs at least three completed games with scores per team.")
     if ou_lines is None:
         ou_lines = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]
 
@@ -336,10 +352,17 @@ def predict_soccer_scoreline(
     if ml_prob_a is not None and ml_prob_b is not None:
         try:
             lam_a, lam_b = _ml_blend_lambdas(lam_a, lam_b, ml_prob_a, ml_prob_b)
-        except Exception:
+        except (ValueError, TypeError, ArithmeticError):
             _log.warning("ML blend failed; using Poisson-only lambdas", exc_info=True)
 
-    matrix = _soccer_score_matrix(lam_a, lam_b)
+    researched = bool(research_projection and research_projection.get("available"))
+    rho = -.13
+    if researched:
+        lam_a = research_projection["projected_score"]["home"]
+        lam_b = research_projection["projected_score"]["away"]
+        rho = research_projection["rho"]
+        completeness = _research_completeness(research_projection)
+    matrix = _soccer_score_matrix(lam_a, lam_b, max_goals=max(12, math.ceil(max(lam_a, lam_b) + 8 * math.sqrt(max(lam_a, lam_b)))), rho=rho)
     ou = _ou_from_matrix(matrix, ou_lines)
     btts = _btts(matrix)
     top = _top_scorelines(matrix, n=12)
@@ -353,8 +376,8 @@ def predict_soccer_scoreline(
     high = sum(v for (i, j), v in matrix.items() if (i + j) >= 4) * 100
 
     primary_ou = next(
-        (o for o in ou if o["line"] == 2.5),
-        ou[2] if len(ou) > 2 else ou[0],
+        (o for o in ou if o["line"] == (odds_total or 2.5)),
+        min(ou, key=lambda o: abs(o["line"] - (odds_total or 2.5))),
     )
 
     # Build full matrix as list for frontend heat-map (0-6 x 0-6)
@@ -371,16 +394,7 @@ def predict_soccer_scoreline(
 
     # Compute market comparison if odds available
     market_comparison = None
-    if odds_total and odds_total > 0:
-        # Market-implied O/U 2.5 probability
-        # This is a simplified conversion; ideally would use market O/U odds
-        # For now, use primary_ou model probability vs odds_total as proxy
-        model_ou_prob = primary_ou.get("over_prob", 50.0)
-        # Estimate market implied from odds_total: higher total → higher over prob
-        # Rough heuristic: market over prob ≈ 50 + (odds_total - 2.5) × 10
-        market_ou_prob = 50.0 + (odds_total - 2.5) * 10.0
-        market_ou_prob = max(10.0, min(90.0, market_ou_prob))
-        market_comparison = _compute_market_comparison(model_ou_prob, market_ou_prob)
+    # A totals line alone is not a bookmaker probability. Do not fabricate an edge.
 
     return {
         "sport": "soccer",
@@ -405,15 +419,17 @@ def predict_soccer_scoreline(
             "high_4_plus_goals": round(high, 1),
         },
         "primary_ou_line": primary_ou,
-        "model": "poisson_dc_ml_blend",
+        "model": research_projection["model"] if researched else "poisson_dc_descriptive",
+        "research": research_projection,
+        "notice": research_projection["notice"] if researched else "Descriptive score distribution; no validated scoring artifact is available for this request.",
         "data_inputs": {
             "form_a_games": len(form_a),
             "form_b_games": len(form_b),
             "h2h_games": len(h2h) if h2h else 0,
             "injuries_a": len(injuries_a) if injuries_a else 0,
             "injuries_b": len(injuries_b) if injuries_b else 0,
-            "odds_anchored": odds_total is not None,
-            "ml_blended": ml_prob_a is not None,
+            "odds_anchored": odds_total is not None and not researched,
+            "ml_blended": ml_prob_a is not None and not researched,
         },
         "data_completeness": completeness,
         "market_comparison": market_comparison,
@@ -437,10 +453,16 @@ def _calibrate_nba_projections(
     stats_a = stats_a or {}
     stats_b = stats_b or {}
 
-    ppg_a = float(stats_a.get("ppg") or 112.0)
-    opp_ppg_a = float(stats_a.get("opp_ppg") or 112.0)
-    ppg_b = float(stats_b.get("ppg") or 112.0)
-    opp_ppg_b = float(stats_b.get("opp_ppg") or 112.0)
+    def scoring_stats(stats, form):
+        ppg, conceded = finite(stats.get("ppg")), finite(stats.get("opp_ppg"))
+        if ppg is not None and conceded is not None and min(ppg, conceded) > 0:
+            return ppg, conceded
+        if len(form or []) < 3:
+            raise InsufficientScoreData("NBA scoring needs scoring averages or at least three completed games with scores per team.")
+        rows = form[:6]
+        return sum(row["our_pts"] for row in rows) / len(rows), sum(row["their_pts"] for row in rows) / len(rows)
+    ppg_a, opp_ppg_a = scoring_stats(stats_a, form_a)
+    ppg_b, opp_ppg_b = scoring_stats(stats_b, form_b)
 
     proj_a = ppg_a * 0.55 + opp_ppg_b * 0.45
     proj_b = ppg_b * 0.55 + opp_ppg_a * 0.45
@@ -465,11 +487,11 @@ def _calibrate_nba_projections(
 
     # Opponent strength scaling (stronger opponent → reduces your projection)
     if opp_strength_a is not None:
-        factor_b = 1.0 + (5.0 - opp_strength_a) * 0.01  # ±5 pts max
-        proj_b *= max(0.955, min(1.045, factor_b))
-    if opp_strength_b is not None:
-        factor_a = 1.0 + (5.0 - opp_strength_b) * 0.01
+        factor_a = 1.0 + (5.0 - opp_strength_a) * 0.01
         proj_a *= max(0.955, min(1.045, factor_a))
+    if opp_strength_b is not None:
+        factor_b = 1.0 + (5.0 - opp_strength_b) * 0.01
+        proj_b *= max(0.955, min(1.045, factor_b))
 
     # Injury penalty (~2 pts per key player, capped at 8)
     if injuries_a:
@@ -487,13 +509,15 @@ def _nba_ou_probs(
 ) -> list[dict[str, Any]]:
     results = []
     for line in lines:
-        under_prob = _normal_cdf(line, proj_total, sigma)
-        over_prob = 1.0 - under_prob
+        integer_line = float(line).is_integer()
+        under_prob = _normal_cdf(line - .5 if integer_line else math.floor(line) + .5, proj_total, sigma)
+        upper = _normal_cdf(line + .5, proj_total, sigma) if integer_line else under_prob
+        over_prob = 1.0 - upper
         results.append({
             "line": line,
             "over_prob": round(over_prob * 100, 1),
             "under_prob": round(under_prob * 100, 1),
-            "push_prob": 0.0,
+            "push_prob": round((upper - under_prob) * 100, 1),
             "lean": "OVER" if over_prob > under_prob else "UNDER",
         })
     return results
@@ -508,12 +532,14 @@ def _nba_score_distribution(
 ) -> list[dict[str, Any]]:
     """Sample most-probable score pairs from independent normals."""
     scores: list[dict[str, Any]] = []
-    r_a = range(max(80, int(proj_a - 20)), min(160, int(proj_a + 20)) + 1, 2)
-    r_b = range(max(80, int(proj_b - 20)), min(160, int(proj_b + 20)) + 1, 2)
+    r_a = range(max(0, math.floor(proj_a - 6 * sigma_a)), math.ceil(proj_a + 6 * sigma_a) + 1)
+    r_b = range(max(0, math.floor(proj_b - 6 * sigma_b)), math.ceil(proj_b + 6 * sigma_b) + 1)
     for a in r_a:
         for b in r_b:
-            p_a = _normal_cdf(a + 1, proj_a, sigma_a) - _normal_cdf(a - 1, proj_a, sigma_a)
-            p_b = _normal_cdf(b + 1, proj_b, sigma_b) - _normal_cdf(b - 1, proj_b, sigma_b)
+            if a == b:
+                continue  # NBA final scores cannot be tied; condition on a winner.
+            p_a = _normal_cdf(a + .5, proj_a, sigma_a) - _normal_cdf(a - .5, proj_a, sigma_a)
+            p_b = _normal_cdf(b + .5, proj_b, sigma_b) - _normal_cdf(b - .5, proj_b, sigma_b)
             scores.append({
                 "home": a, "away": b, "score": f"{a}-{b}",
                 "prob": p_a * p_b,
@@ -542,6 +568,7 @@ def predict_nba_scoreline(
     ou_lines: list[float] | None = None,
     opp_strength_a: float | None = None,
     opp_strength_b: float | None = None,
+    research_projection: dict | None = None,
 ) -> dict[str, Any]:
     """
     Full NBA scoreline / points distribution prediction.
@@ -549,6 +576,7 @@ def predict_nba_scoreline(
     Returns dict with: projected_score, over_under lines, top_scorelines,
     win_probabilities, primary_ou_line, spread info.
     """
+    form_a, form_b = clean_form(form_a, "nba"), clean_form(form_b, "nba")
     if ou_lines is None:
         ou_lines = [210.5, 215.5, 220.5, 225.5, 230.5, 235.5, 240.5]
 
@@ -564,37 +592,42 @@ def predict_nba_scoreline(
         injuries_a, injuries_b, is_home_a,
         opp_strength_a, opp_strength_b
     )
+    researched = bool(research_projection and research_projection.get("available"))
+    if researched:
+        proj_a = research_projection["projected_score"]["home"]
+        proj_b = research_projection["projected_score"]["away"]
+        completeness = _research_completeness(research_projection)
     proj_total = proj_a + proj_b
 
     # Odds anchoring (45% weight when available)
-    if odds_total and odds_total > 0:
+    if odds_total and odds_total > 0 and not researched:
         blended_total = proj_total * 0.55 + odds_total * 0.45
         ratio = blended_total / proj_total if proj_total > 0 else 1.0
         proj_a *= ratio
         proj_b *= ratio
         proj_total = proj_a + proj_b
 
-    sigma_total = 12.5
-    sigma_a = 8.5
-    sigma_b = 8.5
+    sigma_total = research_projection["sigma_total"] if researched else 12.5
+    sigma_a = research_projection["sigma_home"] if researched else 8.5
+    sigma_b = research_projection["sigma_away"] if researched else 8.5
 
     ou = _nba_ou_probs(proj_total, sigma_total, ou_lines)
     top = _nba_score_distribution(proj_a, proj_b, sigma_a, sigma_b, n=20)
 
     # Win probability
-    if ml_prob_a is not None and ml_prob_b is not None:
+    if ml_prob_a is not None and ml_prob_b is not None and not researched:
         win_probs = {
             "home": round(float(ml_prob_a), 1),
             "away": round(float(ml_prob_b), 1),
         }
     else:
         margin = proj_a - proj_b
-        p_a = _normal_cdf(0, -margin, 10.5)  # P(home wins) ~ P(margin > 0)
+        p_a = _normal_cdf(0, -margin, math.hypot(sigma_a, sigma_b) if researched else 10.5)
         win_probs = {"home": round(p_a * 100, 1), "away": round((1 - p_a) * 100, 1)}
 
     primary_ou = next(
-        (o for o in ou if o["line"] == 225.5),
-        ou[3] if len(ou) > 3 else ou[0],
+        (o for o in ou if o["line"] == (odds_total or 225.5)),
+        min(ou, key=lambda o: abs(o["line"] - (odds_total or 225.5))),
     )
 
     proj_margin = round(proj_a - proj_b, 1)
@@ -609,21 +642,23 @@ def predict_nba_scoreline(
             "total": round(proj_total, 1),
         },
         "proj_margin": proj_margin,
-        "spread_favorite": team_a_name if proj_margin > 0 else team_b_name,
+        "spread_favorite": team_a_name if proj_margin > 0 else team_b_name if proj_margin < 0 else "Even",
         "most_likely_range": top[0] if top else {},
         "top_scorelines": top,
         "win_probabilities": win_probs,
         "over_under": ou,
         "primary_ou_line": primary_ou,
         "sigma_total": sigma_total,
-        "model": "normal_distribution_blend",
+        "model": research_projection["model"] if researched else "normal_descriptive",
+        "research": research_projection,
+        "notice": research_projection["notice"] if researched else "Descriptive score distribution; no validated scoring artifact is available for this request.",
         "data_inputs": {
             "form_a_games": len(form_a) if form_a else 0,
             "form_b_games": len(form_b) if form_b else 0,
             "injuries_a": len(injuries_a) if injuries_a else 0,
             "injuries_b": len(injuries_b) if injuries_b else 0,
-            "odds_anchored": odds_total is not None,
-            "ml_blended": ml_prob_a is not None,
+            "odds_anchored": odds_total is not None and not researched,
+            "ml_blended": ml_prob_a is not None and not researched,
         },
         "data_completeness": completeness,
     }

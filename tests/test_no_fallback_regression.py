@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -8,6 +9,7 @@ import app as flask_app_module
 import decision_ui as dui
 import security
 from services.prediction_contract import validate_analysis_contract
+from tests.source_contracts import fresh_source
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +23,8 @@ def client(monkeypatch):
     security.reset_chat_rate_limits()
 
     fixture = {
-        "fixture": {"id": 42, "date": "2026-04-24T15:00:00+00:00"},
+        "data_freshness": fresh_source(),
+        "fixture": {"id": 42, "date": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
         "teams": {
             "home": {"id": 1, "name": "AFC Bournemouth", "logo": ""},
             "away": {"id": 2, "name": "Leeds", "logo": ""},
@@ -67,7 +70,7 @@ def client(monkeypatch):
             sess["team_b_logo"] = ""
             sess["selected_fixture"] = {
                 "fixture_id": "42",
-                "date": "2026-04-24T15:00:00+00:00",
+                "date": fixture["fixture"]["date"],
             }
         yield c
 
@@ -159,13 +162,10 @@ def test_codebase_guard_forbidden_patterns():
         "confidence = 53",
         "38 / 26 / 36",
     ]
-    source_files = [
-        path for path in REPO_ROOT.rglob("*.py")
-        if "tests/" not in str(path).replace("\\", "/")
-    ] + [
-        path for path in REPO_ROOT.rglob("*.html")
-        if "tests/" not in str(path).replace("\\", "/")
-    ]
+    source_files = list(REPO_ROOT.glob("*.py"))
+    for directory in ("services", "utils", "scripts"):
+        source_files.extend((REPO_ROOT / directory).rglob("*.py"))
+    source_files.extend((REPO_ROOT / "templates").rglob("*.html"))
     violations = []
     for path in source_files:
         text = path.read_text(encoding="utf-8")

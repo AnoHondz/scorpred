@@ -1,0 +1,801 @@
+{
+  "version": "player-props-calibration-v1",
+  "created_at": "2026-10-24T23:21:32.406193+00:00",
+  "dataset_sha256": "6dc56af8bc75ec69bf94bbc40b86cd5bd71131e0b36a2986a6772ac7f6cdfd7b",
+  "sources": [
+    {
+      "sport": "soccer",
+      "league": "eng.1",
+      "games": 807,
+      "target_game_stride": 4,
+      "examples": 15860,
+      "start": "2024-08-16T19:00Z",
+      "end": "2026-10-19T19:00Z",
+      "sha256": "3985713a026ebb926196d0bc67495ddaecd9020d9c6fa0d9cfb6ae0ac874ada7"
+    },
+    {
+      "sport": "soccer",
+      "league": "esp.1",
+      "games": 802,
+      "target_game_stride": 4,
+      "examples": 14550,
+      "start": "2024-08-15T17:00Z",
+      "end": "2026-10-19T19:00Z",
+      "sha256": "cbea7d33cf57f45b28b27cccc2f8e8344285ec6a44d0f7f7fd6e566a6426a27a"
+    },
+    {
+      "sport": "soccer",
+      "league": "ger.1",
+      "games": 340,
+      "target_game_stride": 4,
+      "examples": 5710,
+      "start": "2025-08-22T18:30Z",
+      "end": "2026-10-18T15:30Z",
+      "sha256": "6b51fc675cdb584d663b7df064027b011d86d739462d691843b6124d9589e1fa"
+    },
+    {
+      "sport": "nba",
+      "league": "nba",
+      "games": 2486,
+      "target_game_stride": 4,
+      "examples": 39335,
+      "start": "2024-10-22T23:30Z",
+      "end": "2026-10-24T02:00Z",
+      "sha256": "ec38e24fffe011253c6a8488835c2ca0f945958f441f3cad4fdfcd3cbeecb78f"
+    },
+    {
+      "sport": "nfl",
+      "season": 2022,
+      "examples": 14125,
+      "source_sha256": "2a67db8bb3e5bdd1ba4fa8f9038f535dedc0f25a403ee316ed29fc6aaba1170f"
+    },
+    {
+      "sport": "nfl",
+      "season": 2024,
+      "examples": 14405,
+      "source_sha256": "1c4f3608170631195fb53eacce35bd30335a01f3e9d9c2c267c2fc6d092d5b91"
+    },
+    {
+      "sport": "nfl",
+      "season": 2025,
+      "examples": 14617,
+      "source_sha256": "e2ae7adae6b0ed942ae8d773be76e4b5b13f9a5b3e5093ddc9c097298bb3d0d3"
+    }
+  ],
+  "policy": "60/20/20 chronological date groups; coefficients fitted on train only; one fixed candidate; validation and test gate promotion",
+  "limitations": [
+    "Historical targets, not sportsbook lines",
+    "Conditional on participation; DNPs excluded",
+    "Historical lineups unavailable; current rosters never used to select historical players",
+    "Source box-score caches may encode unavailable statistics as zero; raw-feed audit remains necessary"
+  ],
+  "examples": 118602,
+  "markets": {
+    "soccer/shots": {
+      "slope": 0.8719732394118475,
+      "intercept": -0.15560209966879338,
+      "training_end": "2025-12-13",
+      "test": {
+        "start": "2026-03-21",
+        "end": "2026-10-18",
+        "raw": {
+          "n": 1616,
+          "brier": 0.1970841264665842,
+          "log_loss": 0.5800843300225961,
+          "predicted_over": 0.3072741955445545,
+          "actual_over": 0.2902227722772277,
+          "sides": {
+            "over": {
+              "n": 98,
+              "predicted": 0.5424969387755102,
+              "hit": 0.4489795918367347
+            },
+            "under": {
+              "n": 1518,
+              "predicted": 0.7079114624505929,
+              "hit": 0.7200263504611331
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1616,
+          "brier": 0.19649552033381523,
+          "log_loss": 0.5788381203939693,
+          "predicted_over": 0.2956014840135018,
+          "actual_over": 0.2902227722772277,
+          "sides": {
+            "over": {
+              "n": 33,
+              "predicted": 0.5390071170137704,
+              "hit": 0.5454545454545454
+            },
+            "under": {
+              "n": 1583,
+              "predicted": 0.7094726700540969,
+              "hit": 0.7150979153506001
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1616,
+          "brier": 0.20390570996287127,
+          "log_loss": 0.5952447918568428,
+          "predicted_over": 0.33313576732673267,
+          "actual_over": 0.2902227722772277,
+          "sides": {
+            "over": {
+              "n": 47,
+              "predicted": 0.5,
+              "hit": 0.3404255319148936
+            },
+            "under": {
+              "n": 1569,
+              "predicted": 0.6718627151051625,
+              "hit": 0.7112810707456979
+            }
+          }
+        }
+      }
+    },
+    "soccer/assists": {
+      "slope": 0.6395230635297915,
+      "intercept": -0.8928272131044864,
+      "training_end": "2025-12-13",
+      "test": {
+        "start": "2026-03-21",
+        "end": "2026-10-18",
+        "raw": {
+          "n": 1616,
+          "brier": 0.0697274792759901,
+          "log_loss": 0.2649833208123937,
+          "predicted_over": 0.07694016089108913,
+          "actual_over": 0.07611386138613861,
+          "sides": {
+            "over": {
+              "n": 0,
+              "predicted": null,
+              "hit": null
+            },
+            "under": {
+              "n": 1616,
+              "predicted": 0.9230598391089108,
+              "hit": 0.9238861386138614
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1616,
+          "brier": 0.06916129426724545,
+          "log_loss": 0.2613839095418518,
+          "predicted_over": 0.07293086599331382,
+          "actual_over": 0.07611386138613861,
+          "sides": {
+            "over": {
+              "n": 0,
+              "predicted": null,
+              "hit": null
+            },
+            "under": {
+              "n": 1616,
+              "predicted": 0.9270691340066862,
+              "hit": 0.9238861386138614
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1616,
+          "brier": 0.07494573,
+          "log_loss": 0.28369157053464295,
+          "predicted_over": 0.1375065594059406,
+          "actual_over": 0.07611386138613861,
+          "sides": {
+            "over": {
+              "n": 2,
+              "predicted": 0.5,
+              "hit": 0.0
+            },
+            "under": {
+              "n": 1614,
+              "predicted": 0.8629426270136308,
+              "hit": 0.9237918215613383
+            }
+          }
+        }
+      }
+    },
+    "soccer/fouls": {
+      "slope": 0.9732136730412982,
+      "intercept": -0.13933377551218676,
+      "training_end": "2025-12-13",
+      "test": {
+        "start": "2026-03-21",
+        "end": "2026-10-18",
+        "raw": {
+          "n": 1616,
+          "brier": 0.19025526422029704,
+          "log_loss": 0.5638199223979281,
+          "predicted_over": 0.3081532178217822,
+          "actual_over": 0.28836633663366334,
+          "sides": {
+            "over": {
+              "n": 130,
+              "predicted": 0.5391984615384615,
+              "hit": 0.5
+            },
+            "under": {
+              "n": 1486,
+              "predicted": 0.7120593539703902,
+              "hit": 0.7301480484522207
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1616,
+          "brier": 0.19004689522719612,
+          "log_loss": 0.5630394361985571,
+          "predicted_over": 0.2848307938530459,
+          "actual_over": 0.28836633663366334,
+          "sides": {
+            "over": {
+              "n": 56,
+              "predicted": 0.5327916606275307,
+              "hit": 0.48214285714285715
+            },
+            "under": {
+              "n": 1560,
+              "predicted": 0.7240703654670639,
+              "hit": 0.7185897435897436
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1616,
+          "brier": 0.20151074875618816,
+          "log_loss": 0.590907481028478,
+          "predicted_over": 0.3323956064356436,
+          "actual_over": 0.28836633663366334,
+          "sides": {
+            "over": {
+              "n": 59,
+              "predicted": 0.5,
+              "hit": 0.3220338983050847
+            },
+            "under": {
+              "n": 1557,
+              "predicted": 0.6739554913294797,
+              "hit": 0.7129094412331407
+            }
+          }
+        }
+      }
+    },
+    "nba/points": {
+      "slope": 0.5136286358584288,
+      "intercept": -0.09776986017092255,
+      "training_end": "2025-12-01",
+      "test": {
+        "start": "2026-02-08",
+        "end": "2026-10-24",
+        "raw": {
+          "n": 1612,
+          "brier": 0.24274734457816377,
+          "log_loss": 0.6810441850315989,
+          "predicted_over": 0.4203771712158809,
+          "actual_over": 0.4267990074441687,
+          "sides": {
+            "over": {
+              "n": 463,
+              "predicted": 0.5775116630669546,
+              "hit": 0.509719222462203
+            },
+            "under": {
+              "n": 1149,
+              "predicted": 0.6429416013925152,
+              "hit": 0.6066144473455178
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1612,
+          "brier": 0.23918536743127738,
+          "log_loss": 0.6711781827918083,
+          "predicted_over": 0.43221522757404846,
+          "actual_over": 0.4267990074441687,
+          "sides": {
+            "over": {
+              "n": 273,
+              "predicted": 0.5370663856070549,
+              "hit": 0.5384615384615384
+            },
+            "under": {
+              "n": 1339,
+              "predicted": 0.5891621929957879,
+              "hit": 0.5959671396564601
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1612,
+          "brier": 0.24648940580024817,
+          "log_loss": 0.6862405167019711,
+          "predicted_over": 0.4446269851116626,
+          "actual_over": 0.4267990074441687,
+          "sides": {
+            "over": {
+              "n": 62,
+              "predicted": 0.5,
+              "hit": 0.41935483870967744
+            },
+            "under": {
+              "n": 1550,
+              "predicted": 0.5575879354838709,
+              "hit": 0.5729032258064516
+            }
+          }
+        }
+      }
+    },
+    "nba/assists": {
+      "slope": 0.7944612047874992,
+      "intercept": -0.08396982981718942,
+      "training_end": "2025-12-01",
+      "test": {
+        "start": "2026-02-08",
+        "end": "2026-10-24",
+        "raw": {
+          "n": 1612,
+          "brier": 0.22586842921215886,
+          "log_loss": 0.6433966571470412,
+          "predicted_over": 0.38135738213399506,
+          "actual_over": 0.36476426799007444,
+          "sides": {
+            "over": {
+              "n": 267,
+              "predicted": 0.5613932584269663,
+              "hit": 0.50187265917603
+            },
+            "under": {
+              "n": 1345,
+              "predicted": 0.6543820817843866,
+              "hit": 0.6624535315985131
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1612,
+          "brier": 0.2250650102618473,
+          "log_loss": 0.6415628256931584,
+          "predicted_over": 0.3837629878766491,
+          "actual_over": 0.36476426799007444,
+          "sides": {
+            "over": {
+              "n": 188,
+              "predicted": 0.5450425733971987,
+              "hit": 0.5106382978723404
+            },
+            "under": {
+              "n": 1424,
+              "predicted": 0.6375295416724123,
+              "hit": 0.6544943820224719
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1612,
+          "brier": 0.23390069564516133,
+          "log_loss": 0.6611095321544355,
+          "predicted_over": 0.3848903225806452,
+          "actual_over": 0.36476426799007444,
+          "sides": {
+            "over": {
+              "n": 29,
+              "predicted": 0.5,
+              "hit": 0.2413793103448276
+            },
+            "under": {
+              "n": 1583,
+              "predicted": 0.6172184459886291,
+              "hit": 0.6329753632343651
+            }
+          }
+        }
+      }
+    },
+    "nba/pra": {
+      "slope": 0.507045975207859,
+      "intercept": -0.08554062622579521,
+      "training_end": "2025-12-01",
+      "test": {
+        "start": "2026-02-08",
+        "end": "2026-10-24",
+        "raw": {
+          "n": 1612,
+          "brier": 0.24501992119727048,
+          "log_loss": 0.6866130637078711,
+          "predicted_over": 0.4292964640198511,
+          "actual_over": 0.423697270471464,
+          "sides": {
+            "over": {
+              "n": 539,
+              "predicted": 0.5933150278293134,
+              "hit": 0.5120593692022264
+            },
+            "under": {
+              "n": 1073,
+              "predicted": 0.6530949673811742,
+              "hit": 0.6206896551724138
+            }
+          }
+        },
+        "calibrated": {
+          "n": 1612,
+          "brier": 0.23943980206201293,
+          "log_loss": 0.6716428386007475,
+          "predicted_over": 0.4397561309036941,
+          "actual_over": 0.423697270471464,
+          "sides": {
+            "over": {
+              "n": 388,
+              "predicted": 0.5422177731767419,
+              "hit": 0.5309278350515464
+            },
+            "under": {
+              "n": 1224,
+              "predicted": 0.5927235400129257,
+              "hit": 0.6102941176470589
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 1612,
+          "brier": 0.24457143971464024,
+          "log_loss": 0.6822868460026271,
+          "predicted_over": 0.4487260545905708,
+          "actual_over": 0.423697270471464,
+          "sides": {
+            "over": {
+              "n": 59,
+              "predicted": 0.5,
+              "hit": 0.3559322033898305
+            },
+            "under": {
+              "n": 1553,
+              "predicted": 0.5532218931101095,
+              "hit": 0.5737282678686413
+            }
+          }
+        }
+      }
+    },
+    "nfl/receptions": {
+      "slope": 0.699404394222288,
+      "intercept": -0.07768800453627095,
+      "training_end": "2024-12-28",
+      "test": {
+        "start": "2025-11-13",
+        "end": "2026-02-08",
+        "raw": {
+          "n": 2490,
+          "brier": 0.21553733038554215,
+          "log_loss": 0.6229811128999538,
+          "predicted_over": 0.35440690763052207,
+          "actual_over": 0.3546184738955823,
+          "sides": {
+            "over": {
+              "n": 464,
+              "predicted": 0.5835909482758621,
+              "hit": 0.5387931034482759
+            },
+            "under": {
+              "n": 2026,
+              "predicted": 0.6980814412635735,
+              "hit": 0.6875616979269497
+            }
+          }
+        },
+        "calibrated": {
+          "n": 2490,
+          "brier": 0.21469645491849038,
+          "log_loss": 0.6186793525307953,
+          "predicted_over": 0.37193202067300946,
+          "actual_over": 0.3546184738955823,
+          "sides": {
+            "over": {
+              "n": 350,
+              "predicted": 0.5567121868231745,
+              "hit": 0.5628571428571428
+            },
+            "under": {
+              "n": 2140,
+              "predicted": 0.6582890345384661,
+              "hit": 0.6794392523364486
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 2490,
+          "brier": 0.22281338677510043,
+          "log_loss": 0.6362403558643008,
+          "predicted_over": 0.3539018072289157,
+          "actual_over": 0.3546184738955823,
+          "sides": {
+            "over": {
+              "n": 334,
+              "predicted": 0.5,
+              "hit": 0.44011976047904194
+            },
+            "under": {
+              "n": 2156,
+              "predicted": 0.6687312152133581,
+              "hit": 0.6586270871985158
+            }
+          }
+        }
+      }
+    },
+    "nfl/receiving_yards": {
+      "slope": 0.3425138096662331,
+      "intercept": -0.10278615634238678,
+      "training_end": "2024-12-28",
+      "test": {
+        "start": "2025-11-13",
+        "end": "2026-02-08",
+        "raw": {
+          "n": 2490,
+          "brier": 0.23733367760240967,
+          "log_loss": 0.6880499811987189,
+          "predicted_over": 0.4416199598393575,
+          "actual_over": 0.43333333333333335,
+          "sides": {
+            "over": {
+              "n": 879,
+              "predicted": 0.6350085324232082,
+              "hit": 0.5517633674630261
+            },
+            "under": {
+              "n": 1611,
+              "predicted": 0.6638974549968963,
+              "hit": 0.6312849162011173
+            }
+          }
+        },
+        "calibrated": {
+          "n": 2490,
+          "brier": 0.23339392192887826,
+          "log_loss": 0.6586150689577495,
+          "predicted_over": 0.4462142404593867,
+          "actual_over": 0.43333333333333335,
+          "sides": {
+            "over": {
+              "n": 528,
+              "predicted": 0.5542306768148456,
+              "hit": 0.553030303030303
+            },
+            "under": {
+              "n": 1962,
+              "predicted": 0.5828544029634891,
+              "hit": 0.5988786952089704
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 2490,
+          "brier": 0.2393900250481928,
+          "log_loss": 0.6703085428356269,
+          "predicted_over": 0.4249610843373494,
+          "actual_over": 0.43333333333333335,
+          "sides": {
+            "over": {
+              "n": 877,
+              "predicted": 0.5,
+              "hit": 0.47206385404789053
+            },
+            "under": {
+              "n": 1613,
+              "predicted": 0.6158381277123371,
+              "hit": 0.587724736515809
+            }
+          }
+        }
+      }
+    },
+    "nfl/rushing_yards": {
+      "slope": 0.2946323374677845,
+      "intercept": -0.10523165959894672,
+      "training_end": "2024-12-28",
+      "test": {
+        "start": "2025-11-13",
+        "end": "2026-02-08",
+        "raw": {
+          "n": 997,
+          "brier": 0.24521073966901202,
+          "log_loss": 0.7039559783078463,
+          "predicted_over": 0.46206488966900705,
+          "actual_over": 0.48044132397191575,
+          "sides": {
+            "over": {
+              "n": 398,
+              "predicted": 0.6477625502512562,
+              "hit": 0.5778894472361809
+            },
+            "under": {
+              "n": 599,
+              "predicted": 0.6613202003338898,
+              "hit": 0.5843071786310517
+            }
+          }
+        },
+        "calibrated": {
+          "n": 997,
+          "brier": 0.23925986469421356,
+          "log_loss": 0.6711153803361855,
+          "predicted_over": 0.46025589847042153,
+          "actual_over": 0.48044132397191575,
+          "sides": {
+            "over": {
+              "n": 244,
+              "predicted": 0.5521068084970034,
+              "hit": 0.6065573770491803
+            },
+            "under": {
+              "n": 753,
+              "predicted": 0.5695072118170764,
+              "hit": 0.5604249667994687
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 997,
+          "brier": 0.2465248319658977,
+          "log_loss": 0.6856197728750713,
+          "predicted_over": 0.4417142427281846,
+          "actual_over": 0.48044132397191575,
+          "sides": {
+            "over": {
+              "n": 371,
+              "predicted": 0.5,
+              "hit": 0.49595687331536387
+            },
+            "under": {
+              "n": 626,
+              "predicted": 0.5928289137380192,
+              "hit": 0.5287539936102237
+            }
+          }
+        }
+      }
+    },
+    "nfl/carries": {
+      "slope": 0.7446652263125928,
+      "intercept": -0.043439811884625666,
+      "training_end": "2024-12-28",
+      "test": {
+        "start": "2025-11-13",
+        "end": "2026-02-08",
+        "raw": {
+          "n": 732,
+          "brier": 0.23583467337431693,
+          "log_loss": 0.6639849452310603,
+          "predicted_over": 0.45099412568306013,
+          "actual_over": 0.453551912568306,
+          "sides": {
+            "over": {
+              "n": 289,
+              "predicted": 0.628598615916955,
+              "hit": 0.5674740484429066
+            },
+            "under": {
+              "n": 443,
+              "predicted": 0.6648697516930022,
+              "hit": 0.6207674943566591
+            }
+          }
+        },
+        "calibrated": {
+          "n": 732,
+          "brier": 0.232910533593314,
+          "log_loss": 0.6567104509087383,
+          "predicted_over": 0.4505869384547356,
+          "actual_over": 0.453551912568306,
+          "sides": {
+            "over": {
+              "n": 268,
+              "predicted": 0.5957551293208249,
+              "hit": 0.5485074626865671
+            },
+            "under": {
+              "n": 464,
+              "predicted": 0.6332602062696437,
+              "hit": 0.6012931034482759
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 732,
+          "brier": 0.24310305726775955,
+          "log_loss": 0.6791259324902519,
+          "predicted_over": 0.4115661202185792,
+          "actual_over": 0.453551912568306,
+          "sides": {
+            "over": {
+              "n": 184,
+              "predicted": 0.5,
+              "hit": 0.5489130434782609
+            },
+            "under": {
+              "n": 548,
+              "predicted": 0.6181270072992702,
+              "hit": 0.5784671532846716
+            }
+          }
+        }
+      }
+    },
+    "nfl/rush_rec_yards": {
+      "slope": 0.5183819997025739,
+      "intercept": -0.02949081207273697,
+      "training_end": "2024-12-28",
+      "test": {
+        "start": "2025-11-13",
+        "end": "2026-02-08",
+        "raw": {
+          "n": 732,
+          "brier": 0.24042795836065572,
+          "log_loss": 0.684987392059431,
+          "predicted_over": 0.4830590163934426,
+          "actual_over": 0.4959016393442623,
+          "sides": {
+            "over": {
+              "n": 330,
+              "predicted": 0.6452,
+              "hit": 0.5969696969696969
+            },
+            "under": {
+              "n": 402,
+              "predicted": 0.6500417910447762,
+              "hit": 0.5870646766169154
+            }
+          }
+        },
+        "calibrated": {
+          "n": 732,
+          "brier": 0.23614065628614836,
+          "log_loss": 0.6649323428824117,
+          "predicted_over": 0.48097976567421485,
+          "actual_over": 0.4959016393442623,
+          "sides": {
+            "over": {
+              "n": 311,
+              "predicted": 0.58056268295136,
+              "hit": 0.5980707395498392
+            },
+            "under": {
+              "n": 421,
+              "predicted": 0.5925838620530824,
+              "hit": 0.5795724465558195
+            }
+          }
+        },
+        "historical_baseline": {
+          "n": 732,
+          "brier": 0.24726550903005462,
+          "log_loss": 0.6868216416349266,
+          "predicted_over": 0.44721188524590166,
+          "actual_over": 0.4959016393442623,
+          "sides": {
+            "over": {
+              "n": 277,
+              "predicted": 0.5,
+              "hit": 0.516245487364621
+            },
+            "under": {
+              "n": 455,
+              "predicted": 0.5849250549450549,
+              "hit": 0.5164835164835165
+            }
+          }
+        }
+      }
+    }
+  }
+}

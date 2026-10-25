@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from db_models import Bet, db
-from sqlalchemy.exc import SQLAlchemyError
+from db_models import Bet, BetSubmission, User, db
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 
 class BetValidationError(ValueError):
@@ -16,7 +18,8 @@ class BetValidationError(ValueError):
 IDEMPOTENCY_WINDOW_SECONDS = 30
 
 
-def create_bet(data: dict[str, Any]) -> dict[str, Any]:
+def create_bet(data: dict[str, Any], *, user_id: int) -> dict[str, Any]:
+    _require_owner(user_id)
     payload = data or {}
     matchup = str(payload.get("matchup") or "").strip()
     recommended_side = str(payload.get("recommended_side") or "").strip()
@@ -36,17 +39,24 @@ def create_bet(data: dict[str, Any]) -> dict[str, Any]:
         except (TypeError, ValueError) as exc:
             raise BetValidationError("confidence must be numeric") from exc
 
-    dedupe_key = _idempotency_key(match_id=str(payload.get("match_id") or ""), matchup=matchup, side=recommended_side, action=action)
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=IDEMPOTENCY_WINDOW_SECONDS)
-    existing = (
-        Bet.query.filter(Bet.idempotency_key == dedupe_key, Bet.created_at >= cutoff)
-        .order_by(Bet.created_at.desc())
-        .first()
-    )
-    if existing:
-        raise BetValidationError("duplicate bet blocked (idempotency window)")
+    dedupe_key = _idempotency_key(match_id=str(payload.get("match_id") or ""), matchup=matchup, side=recommended_side, action=action, user_id=user_id)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now - timedelta(seconds=IDEMPOTENCY_WINDOW_SECONDS)
+    try:
+        with db.session.begin_nested():
+            db.session.add(BetSubmission(key=dedupe_key, last_created_at=now))
+            db.session.flush()
+    except IntegrityError:
+        claimed = db.session.execute(
+            update(BetSubmission).where(BetSubmission.key == dedupe_key, BetSubmission.last_created_at <= cutoff)
+            .values(last_created_at=now)
+        )
+        if claimed.rowcount != 1:
+            db.session.rollback()
+            raise BetValidationError("duplicate bet blocked (idempotency window)")
 
     record = Bet(
+        user_id=user_id,
         match_id=str(payload.get("match_id") or ""),
         matchup=matchup,
         recommended_side=recommended_side,
@@ -54,7 +64,7 @@ def create_bet(data: dict[str, Any]) -> dict[str, Any]:
         confidence=parsed_confidence,
         probabilities_json=json.dumps(payload.get("probabilities") or {}),
         data_quality=payload.get("data_quality"),
-        idempotency_key=dedupe_key,
+        idempotency_key=uuid.uuid4().hex,
     )
     db.session.add(record)
     try:
@@ -65,13 +75,20 @@ def create_bet(data: dict[str, Any]) -> dict[str, Any]:
     return _to_dict(record)
 
 
-def list_bets() -> list[dict[str, Any]]:
-    rows = Bet.query.order_by(Bet.created_at.desc()).all()
+def _require_owner(user_id: int) -> None:
+    if not isinstance(user_id, int) or db.session.get(User, user_id) is None:
+        raise BetValidationError("A valid owner is required")
+
+
+def list_bets(*, user_id: int) -> list[dict[str, Any]]:
+    _require_owner(user_id)
+    rows = Bet.query.filter_by(user_id=user_id).order_by(Bet.created_at.desc()).all()
     return [_to_dict(row) for row in rows]
 
 
-def delete_bet(bet_id: int) -> bool:
-    row = Bet.query.filter_by(id=bet_id).first()
+def delete_bet(bet_id: int, *, user_id: int) -> bool:
+    _require_owner(user_id)
+    row = Bet.query.filter_by(id=bet_id, user_id=user_id).first()
     if not row:
         return False
     db.session.delete(row)
@@ -79,17 +96,18 @@ def delete_bet(bet_id: int) -> bool:
     return True
 
 
-def clear_bets() -> None:
+def clear_bets(*, user_id: int) -> None:
+    _require_owner(user_id)
     try:
-        Bet.query.delete()
+        Bet.query.filter_by(user_id=user_id).delete()
         db.session.commit()
     except SQLAlchemyError:
         db.session.rollback()
         raise
 
 
-def _idempotency_key(*, match_id: str, matchup: str, side: str, action: str) -> str:
-    raw = f"{match_id}|{matchup}|{side}|{action}".lower().encode("utf-8", errors="ignore")
+def _idempotency_key(*, match_id: str, matchup: str, side: str, action: str, user_id: int) -> str:
+    raw = f"{user_id}|{match_id}|{matchup}|{side}|{action}".lower().encode("utf-8", errors="ignore")
     return hashlib.sha256(raw).hexdigest()
 
 

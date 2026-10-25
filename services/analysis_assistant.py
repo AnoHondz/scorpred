@@ -217,8 +217,10 @@ def chat_reply(
     try:
         client = anthropic_module.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-3-5-haiku-latest",
-            max_tokens=300,
+            model="claude-haiku-5-5",
+            # Thinking tokens count against max_tokens; low effort keeps short replies from being cut off.
+            max_tokens=1024,
+            output_config={"effort": "low"},
             system=system_prompt,
             messages=messages,
         )

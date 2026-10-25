@@ -26,6 +26,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 from runtime_paths import cache_dir
+from services.data_freshness import SOURCE_KEY, stamp
+from services.prediction_lifecycle import freshness_state
 
 load_dotenv()
 
@@ -67,6 +69,31 @@ _FD_COMP_REVERSE: dict[int, int] = {v: k for k, v in FD_COMP_MAP.items()}
 _CACHE_DIR: Path = cache_dir("football") / "fd"
 _CACHE_LOCK = threading.Lock()
 _MEM_CACHE: dict[str, dict] = {}   # {"key": {"data": ..., "ts": float}}
+_REFRESH_CONTEXT = threading.local()
+
+
+def get_last_refresh_status() -> dict:
+    return dict(getattr(_REFRESH_CONTEXT, "outcome", {"status": "failed", "observed_at": None, "warning": "No usable provider response"}))
+
+
+def _served_payload(payload, observed_ts, ttl, *, degraded=False):
+    if not isinstance(payload, dict) or not payload:
+        _REFRESH_CONTEXT.outcome = {"status": "failed", "observed_at": None, "warning": "Provider returned no payload"}
+        return {}
+    original = payload.get(SOURCE_KEY)
+    degraded = degraded or (isinstance(original, dict) and original.get("state") != "fresh")
+    result = stamp(payload, "football_data", datetime.fromtimestamp(observed_ts, timezone.utc), ttl,
+                   21600 if ttl >= 3600 else min(ttl * 3, 900), degraded=degraded)
+    info = result[SOURCE_KEY]
+    state = freshness_state(info)
+    _REFRESH_CONTEXT.outcome = {"status": "success" if state == "fresh" else "degraded" if state == "degraded" else "failed",
+                                "observed_at": info.get("observed_at"), "warning": info.get("warning")}
+    if state == "unavailable":
+        return {}
+    for row in result.get("matches") or []:
+        if isinstance(row, dict):
+            row[SOURCE_KEY] = dict(info)
+    return result
 
 _TTL: dict[str, int] = {
     "competitions/%d/matches":    300,    # 5 min
@@ -127,6 +154,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
     GET {FD_BASE}/{endpoint} and return the parsed JSON.
     Returns {} on any error. Caches results to disk + memory.
     """
+    _REFRESH_CONTEXT.outcome = {"status": "failed", "observed_at": None, "warning": "Provider refresh did not succeed"}
     if not FD_ENABLED:
         return {}
 
@@ -139,19 +167,33 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
     # 1. memory cache
     with _CACHE_LOCK:
         entry = _MEM_CACHE.get(mem_key)
-        if entry and (now - entry["ts"]) < ttl:
-            return entry["data"]
+        if entry and 0 <= (now - entry["ts"]) < ttl:
+            return _served_payload(entry["data"], entry["ts"], ttl)
         stale = entry  # may be None
 
     # 2. disk cache
     if _cache_valid(disk_path, ttl):
         try:
             data = _load_json(disk_path)
+            observed_ts = disk_path.stat().st_mtime
+            data = _served_payload(data, observed_ts, ttl)
             with _CACHE_LOCK:
-                _MEM_CACHE[mem_key] = {"data": data, "ts": now}
+                _MEM_CACHE[mem_key] = {"data": data, "ts": observed_ts}
             return data
         except Exception:
             pass
+
+    def fallback():
+        if stale:
+            data = _served_payload(stale["data"], stale["ts"], ttl, degraded=True)
+            if data:
+                return data
+        if disk_path.exists():
+            try:
+                return _served_payload(_load_json(disk_path), disk_path.stat().st_mtime, ttl, degraded=True)
+            except (OSError, ValueError):
+                pass
+        return {}
 
     # 3. live request
     url = f"{FD_BASE}/{endpoint.lstrip('/')}"
@@ -161,14 +203,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
     # data immediately rather than burning rate-limit tokens on doomed attempts.
     if _circuit_is_open():
         _logger.debug("fd circuit open — skipping live request for %s", endpoint)
-        if stale:
-            return stale["data"]
-        if disk_path.exists():
-            try:
-                return _load_json(disk_path)
-            except Exception:
-                pass
-        return {}
+        return fallback()
 
     # Rate-limit guard: football-data.org free tier = 10 req/min
     # We respect this by keeping a simple per-process token bucket.
@@ -183,9 +218,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
 
             if resp.status_code == 429:
                 _logger.warning("football-data.org rate-limited (429) for %s", endpoint)
-                if stale:
-                    return stale["data"]
-                return {}
+                return fallback()
 
             if resp.status_code in (401, 403):
                 _logger.error("football-data.org auth error %s — check FOOTBALL_DATA_KEY", resp.status_code)
@@ -196,7 +229,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
                 continue
 
             resp.raise_for_status()
-            result = resp.json()
+            result = _served_payload(resp.json(), time.time(), ttl)
             _circuit_record_success()
             break
         except Exception as exc:
@@ -206,15 +239,7 @@ def fd_get(endpoint: str, params: dict | None = None) -> dict:
             if attempt < FD_RETRY_ATTEMPTS - 1:
                 time.sleep(FD_RETRY_BACKOFF)
                 continue
-            if stale:
-                return stale["data"]
-            # try disk even if stale
-            if disk_path.exists():
-                try:
-                    return _load_json(disk_path)
-                except Exception:
-                    pass
-            return {}
+            return fallback()
 
     if result:
         _save_json(disk_path, result)
@@ -324,7 +349,7 @@ def _fd_status(fd_status: str) -> str:
         "CANCELLED":  "CANC",
         "AWARDED":    "FT",
     }
-    return mapping.get(fd_status, "NS")
+    return mapping.get(fd_status, "UNK")
 
 
 def _normalize_fd_match(match: dict, our_league_id: int) -> dict:
@@ -339,6 +364,9 @@ def _normalize_fd_match(match: dict, our_league_id: int) -> dict:
     from league_config import CURRENT_SEASON
     season_val = match.get("season", {}) or {}
     season_year = season_val.get("startYear") if isinstance(season_val, dict) else CURRENT_SEASON
+    if not season_year and isinstance(season_val, dict):
+        start_year = str(season_val.get("startDate") or "")[:4]
+        season_year = int(start_year) if start_year.isdigit() else CURRENT_SEASON
 
     return {
         "fixture": {
@@ -379,6 +407,7 @@ def _normalize_fd_match(match: dict, our_league_id: int) -> dict:
         "events": [],
         "stats": [],
         "source": "football_data",
+        "data_freshness": dict(match.get(SOURCE_KEY) or {}),
     }
 
 
@@ -435,6 +464,7 @@ def get_upcoming_fixtures(
     Results are normalised to API-Football fixture format.
     Returns [] if FOOTBALL_DATA_KEY is not set or the competition is unsupported.
     """
+    _REFRESH_CONTEXT.outcome = {"status": "failed", "observed_at": None, "warning": "Competition or provider is unavailable"}
     fd_comp = FD_COMP_MAP.get(league_id)
     if not fd_comp or not FD_ENABLED:
         return []

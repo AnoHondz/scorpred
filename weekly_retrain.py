@@ -148,9 +148,9 @@ def step_train_model(dry_run: bool = False, random_state: int = 42) -> dict:
         return result
 
     try:
-        from train_model import train_model
+        from production_model import train_production_model
 
-        info = train_model(random_state=random_state)
+        info = train_production_model(random_state=random_state)
         result["details"]["total_rows"] = info.get("total_rows")
         result["details"]["train_size"] = info.get("train_size")
         result["details"]["cal_size"] = info.get("cal_size")
