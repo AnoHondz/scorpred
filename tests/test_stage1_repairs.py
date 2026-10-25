@@ -205,7 +205,7 @@ def test_frozen_export_replay_and_original_hashes_unchanged():
     root = Path(__file__).resolve().parents[1]
     baseline = json.loads((root / "docs/assets/nfl_stage1/preservation_artifacts.json").read_text())
     for name, expected in baseline["files"].items():
-        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected
+        assert hashlib.sha256((root / Path(name.replace("\\", "/"))).read_bytes()).hexdigest() == expected
     result = verify(root / "docs/assets/nfl_phase2_3", "fd4526c5da021c30c28538dcdb67faadc18f581d7ac451a2d56f1f6589534cb7")
     assert result["verified_forecasts"] == 2 and result["maximum_probability_error"] == 0
 
@@ -286,3 +286,4 @@ def test_soccer_routes_supply_distinct_rule5_ml10_and_target_date(monkeypatch, r
     features = module.sm._ml_features(context)
     assert features["home_avg_gf_10"] == 1
     assert features["home_gf_delta_5v10"] == 1
+
