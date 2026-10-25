@@ -1,0 +1,97 @@
+{
+  "mocked": false,
+  "observed_at": "2026-10-25T00:43:15.676952+00:00",
+  "sports": [
+    {
+      "sport": "soccer",
+      "matchup": "Liverpool FC vs Brighton & Hove Albion FC",
+      "status": 200,
+      "error": null,
+      "verification": {
+        "eligible_count": 34,
+        "expires_at": "2026-10-25T00:44:24.258721+00:00",
+        "max_stale_at": "2026-10-25T00:44:24.258721+00:00",
+        "method": "Exact ESPN athlete ID on current-season team roster",
+        "observed_at": "2026-10-25T00:34:24.258721+00:00",
+        "roster_count": 34,
+        "season": 2026,
+        "source": "ESPN SOCCER current roster",
+        "state": "fresh",
+        "status": "verified",
+        "team_ids": [
+          "364",
+          "331"
+        ]
+      },
+      "picks": [],
+      "forecast_count": 98,
+      "trained_forecasts": 63,
+      "market_status": {
+        "matched_picks": 0,
+        "provider": "The Odds API",
+        "reason": "No verified sportsbook opportunity. No exact upcoming matchup was found in the sportsbook feed.",
+        "status": "no_match",
+        "total_picks": 0,
+        "validation": "Experimental model comparisons; no profitable sportsbook performance established."
+      },
+      "salah_on_current_liverpool_roster": false,
+      "all_picks_current_ids": true
+    },
+    {
+      "sport": "nba",
+      "matchup": "Utah Jazz vs Los Angeles Lakers",
+      "status": 422,
+      "error": "Pregame recommendations are unavailable because their source data needs a fresh update.",
+      "verification": null,
+      "picks": []
+    },
+    {
+      "sport": "nfl",
+      "matchup": "Philadelphia Eagles vs Dallas Cowboys",
+      "status": 422,
+      "error": "Pregame recommendations are unavailable because their source data needs a fresh update.",
+      "verification": null,
+      "picks": []
+    }
+  ],
+  "health": {
+    "status": 200,
+    "payload": {
+      "overall": "ok",
+      "pipelines": {
+        "injury_reports": {
+          "consecutive_failures": 0,
+          "error": null,
+          "last_attempt": "2026-10-25T00:41:48.278909+00:00",
+          "last_success": "2026-10-25T00:41:33.470248+00:00",
+          "last_success_mins_ago": 2,
+          "status": "ok"
+        },
+        "ml_predictions": {
+          "consecutive_failures": 0,
+          "error": null,
+          "last_attempt": "2026-10-25T00:43:12.135577+00:00",
+          "last_success": "2026-10-25T00:04:21.780158+00:00",
+          "last_success_mins_ago": 39,
+          "status": "ok"
+        },
+        "nba_games": {
+          "consecutive_failures": 0,
+          "error": null,
+          "last_attempt": "2026-10-25T00:41:42.453122+00:00",
+          "last_success": "2026-10-25T00:41:35.515704+00:00",
+          "last_success_mins_ago": 2,
+          "status": "ok"
+        },
+        "soccer_fixtures": {
+          "consecutive_failures": 0,
+          "error": null,
+          "last_attempt": "2026-10-25T00:43:09.457588+00:00",
+          "last_success": "2026-10-25T00:04:21.780158+00:00",
+          "last_success_mins_ago": 39,
+          "status": "ok"
+        }
+      }
+    }
+  }
+}

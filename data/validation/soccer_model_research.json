@@ -1,0 +1,1649 @@
+{
+  "generated_at": "2026-10-23T17:19:07.611692+00:00",
+  "runtime_seconds": 91,
+  "data": {
+    "source": "football-data.co.uk results and market-average prices",
+    "leagues": [
+      "Premier League",
+      "La Liga",
+      "Serie A",
+      "Bundesliga",
+      "Ligue 1"
+    ],
+    "seasons": [
+      "1920",
+      "2021",
+      "2122",
+      "2223",
+      "2324",
+      "2425",
+      "2526"
+    ],
+    "evaluated_seasons": [
+      "2122",
+      "2223",
+      "2324",
+      "2425",
+      "2526"
+    ],
+    "evaluated_matches": 8907
+  },
+  "tuning": {
+    "dixon_coles": [
+      {
+        "half_life": 180.0,
+        "ridge": 2.0,
+        "log_loss": 1.00473
+      },
+      {
+        "half_life": 180.0,
+        "ridge": 6.0,
+        "log_loss": 1.00281
+      },
+      {
+        "half_life": 365.0,
+        "ridge": 2.0,
+        "log_loss": 1.00384
+      },
+      {
+        "half_life": 365.0,
+        "ridge": 6.0,
+        "log_loss": 1.00231
+      },
+      {
+        "half_life": 730.0,
+        "ridge": 2.0,
+        "log_loss": 1.0046
+      },
+      {
+        "half_life": 730.0,
+        "ridge": 6.0,
+        "log_loss": 1.0031
+      }
+    ],
+    "elo": [
+      {
+        "k": 15.0,
+        "log_loss": 1.00667
+      },
+      {
+        "k": 25.0,
+        "log_loss": 1.00813
+      },
+      {
+        "k": 35.0,
+        "log_loss": 1.01013
+      }
+    ],
+    "chosen": {
+      "half_life": 365.0,
+      "ridge": 6.0,
+      "elo_k": 15.0,
+      "elo_home": 60.0
+    }
+  },
+  "overall": {
+    "market_open": {
+      "matches": 8907,
+      "log_loss": 0.97075,
+      "brier": 0.19245,
+      "accuracy": 0.5376,
+      "draw_picks": 8
+    },
+    "market_close": {
+      "matches": 8907,
+      "log_loss": 0.96863,
+      "brier": 0.19199,
+      "accuracy": 0.5426,
+      "draw_picks": 19
+    },
+    "rules": {
+      "matches": 8907,
+      "log_loss": 1.06928,
+      "brier": 0.21482,
+      "accuracy": 0.4756,
+      "draw_picks": 0
+    },
+    "dixon_coles": {
+      "matches": 8907,
+      "log_loss": 0.9896,
+      "brier": 0.19668,
+      "accuracy": 0.5258,
+      "draw_picks": 29
+    },
+    "elo": {
+      "matches": 8907,
+      "log_loss": 0.99122,
+      "brier": 0.19695,
+      "accuracy": 0.5237,
+      "draw_picks": 0
+    },
+    "logistic": {
+      "matches": 8907,
+      "log_loss": 0.98567,
+      "brier": 0.19575,
+      "accuracy": 0.5266,
+      "draw_picks": 0
+    },
+    "fitted": {
+      "matches": 8907,
+      "log_loss": 0.98805,
+      "brier": 0.19632,
+      "accuracy": 0.5267,
+      "draw_picks": 1
+    },
+    "market_lr": {
+      "matches": 8907,
+      "log_loss": 0.9704,
+      "brier": 0.19239,
+      "accuracy": 0.5367,
+      "draw_picks": 8
+    },
+    "anchored": {
+      "matches": 8907,
+      "log_loss": 0.97093,
+      "brier": 0.19247,
+      "accuracy": 0.5385,
+      "draw_picks": 11
+    }
+  },
+  "log_loss_gap": {
+    "rules": {
+      "vs_market_open": {
+        "mean": 0.09853,
+        "95ci": [
+          0.09086,
+          0.10673
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.10064,
+        "95ci": [
+          0.09248,
+          0.10923
+        ]
+      }
+    },
+    "dixon_coles": {
+      "vs_market_open": {
+        "mean": 0.01885,
+        "95ci": [
+          0.01577,
+          0.022
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.02097,
+        "95ci": [
+          0.01751,
+          0.02457
+        ]
+      },
+      "vs_rules": {
+        "mean": -0.07968,
+        "95ci": [
+          -0.08818,
+          -0.07137
+        ]
+      }
+    },
+    "elo": {
+      "vs_market_open": {
+        "mean": 0.02048,
+        "95ci": [
+          0.01747,
+          0.0236
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.02259,
+        "95ci": [
+          0.01925,
+          0.02589
+        ]
+      }
+    },
+    "logistic": {
+      "vs_market_open": {
+        "mean": 0.01492,
+        "95ci": [
+          0.01217,
+          0.01778
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.01704,
+        "95ci": [
+          0.01405,
+          0.0199
+        ]
+      }
+    },
+    "fitted": {
+      "vs_market_open": {
+        "mean": 0.01731,
+        "95ci": [
+          0.01458,
+          0.02029
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.01942,
+        "95ci": [
+          0.01623,
+          0.02248
+        ]
+      }
+    },
+    "anchored": {
+      "vs_market_open": {
+        "mean": 0.00018,
+        "95ci": [
+          -0.00085,
+          0.00119
+        ]
+      },
+      "vs_market_close": {
+        "mean": 0.0023,
+        "95ci": [
+          0.0007,
+          0.00392
+        ]
+      }
+    }
+  },
+  "by_season": {
+    "2122": {
+      "market_open": {
+        "matches": 1825,
+        "log_loss": 0.97731,
+        "brier": 0.19376,
+        "accuracy": 0.5271,
+        "draw_picks": 0
+      },
+      "market_close": {
+        "matches": 1825,
+        "log_loss": 0.97542,
+        "brier": 0.19334,
+        "accuracy": 0.5321,
+        "draw_picks": 1
+      },
+      "rules": {
+        "matches": 1825,
+        "log_loss": 1.07947,
+        "brier": 0.21713,
+        "accuracy": 0.463,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1825,
+        "log_loss": 0.99209,
+        "brier": 0.19713,
+        "accuracy": 0.5211,
+        "draw_picks": 10
+      },
+      "elo": {
+        "matches": 1825,
+        "log_loss": 1.00075,
+        "brier": 0.19898,
+        "accuracy": 0.5173,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1825,
+        "log_loss": 0.99244,
+        "brier": 0.19709,
+        "accuracy": 0.5255,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1825,
+        "log_loss": 0.99304,
+        "brier": 0.19737,
+        "accuracy": 0.5222,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1825,
+        "log_loss": 0.97648,
+        "brier": 0.19361,
+        "accuracy": 0.5293,
+        "draw_picks": 0
+      },
+      "anchored": {
+        "matches": 1825,
+        "log_loss": 0.97708,
+        "brier": 0.19368,
+        "accuracy": 0.5304,
+        "draw_picks": 5
+      }
+    },
+    "2223": {
+      "market_open": {
+        "matches": 1826,
+        "log_loss": 0.9779,
+        "brier": 0.19402,
+        "accuracy": 0.5411,
+        "draw_picks": 4
+      },
+      "market_close": {
+        "matches": 1826,
+        "log_loss": 0.97564,
+        "brier": 0.19353,
+        "accuracy": 0.5411,
+        "draw_picks": 5
+      },
+      "rules": {
+        "matches": 1826,
+        "log_loss": 1.06482,
+        "brier": 0.21387,
+        "accuracy": 0.4858,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1826,
+        "log_loss": 0.99448,
+        "brier": 0.19772,
+        "accuracy": 0.5257,
+        "draw_picks": 1
+      },
+      "elo": {
+        "matches": 1826,
+        "log_loss": 0.99419,
+        "brier": 0.19728,
+        "accuracy": 0.5301,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1826,
+        "log_loss": 0.99108,
+        "brier": 0.19684,
+        "accuracy": 0.5285,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1826,
+        "log_loss": 0.99377,
+        "brier": 0.19742,
+        "accuracy": 0.5296,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1826,
+        "log_loss": 0.9803,
+        "brier": 0.1945,
+        "accuracy": 0.5367,
+        "draw_picks": 6
+      },
+      "anchored": {
+        "matches": 1826,
+        "log_loss": 0.98256,
+        "brier": 0.19496,
+        "accuracy": 0.5378,
+        "draw_picks": 6
+      }
+    },
+    "2324": {
+      "market_open": {
+        "matches": 1752,
+        "log_loss": 0.95555,
+        "brier": 0.18914,
+        "accuracy": 0.5502,
+        "draw_picks": 0
+      },
+      "market_close": {
+        "matches": 1752,
+        "log_loss": 0.95331,
+        "brier": 0.18871,
+        "accuracy": 0.5582,
+        "draw_picks": 2
+      },
+      "rules": {
+        "matches": 1752,
+        "log_loss": 1.06244,
+        "brier": 0.21299,
+        "accuracy": 0.4903,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1752,
+        "log_loss": 0.97741,
+        "brier": 0.19421,
+        "accuracy": 0.5308,
+        "draw_picks": 7
+      },
+      "elo": {
+        "matches": 1752,
+        "log_loss": 0.97725,
+        "brier": 0.1942,
+        "accuracy": 0.5303,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1752,
+        "log_loss": 0.9718,
+        "brier": 0.19291,
+        "accuracy": 0.532,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1752,
+        "log_loss": 0.97443,
+        "brier": 0.19356,
+        "accuracy": 0.5331,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1752,
+        "log_loss": 0.9536,
+        "brier": 0.18875,
+        "accuracy": 0.5479,
+        "draw_picks": 0
+      },
+      "anchored": {
+        "matches": 1752,
+        "log_loss": 0.95422,
+        "brier": 0.18884,
+        "accuracy": 0.5514,
+        "draw_picks": 0
+      }
+    },
+    "2425": {
+      "market_open": {
+        "matches": 1752,
+        "log_loss": 0.96402,
+        "brier": 0.19103,
+        "accuracy": 0.536,
+        "draw_picks": 3
+      },
+      "market_close": {
+        "matches": 1752,
+        "log_loss": 0.96076,
+        "brier": 0.19024,
+        "accuracy": 0.5474,
+        "draw_picks": 8
+      },
+      "rules": {
+        "matches": 1752,
+        "log_loss": 1.05602,
+        "brier": 0.21201,
+        "accuracy": 0.4766,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1752,
+        "log_loss": 0.98504,
+        "brier": 0.19571,
+        "accuracy": 0.528,
+        "draw_picks": 9
+      },
+      "elo": {
+        "matches": 1752,
+        "log_loss": 0.98594,
+        "brier": 0.196,
+        "accuracy": 0.5325,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1752,
+        "log_loss": 0.98021,
+        "brier": 0.19469,
+        "accuracy": 0.5325,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1752,
+        "log_loss": 0.98303,
+        "brier": 0.19532,
+        "accuracy": 0.5303,
+        "draw_picks": 1
+      },
+      "market_lr": {
+        "matches": 1752,
+        "log_loss": 0.96324,
+        "brier": 0.19089,
+        "accuracy": 0.5365,
+        "draw_picks": 1
+      },
+      "anchored": {
+        "matches": 1752,
+        "log_loss": 0.96291,
+        "brier": 0.19078,
+        "accuracy": 0.5365,
+        "draw_picks": 0
+      }
+    },
+    "2526": {
+      "market_open": {
+        "matches": 1752,
+        "log_loss": 0.97837,
+        "brier": 0.19418,
+        "accuracy": 0.5337,
+        "draw_picks": 1
+      },
+      "market_close": {
+        "matches": 1752,
+        "log_loss": 0.97744,
+        "brier": 0.19401,
+        "accuracy": 0.5348,
+        "draw_picks": 3
+      },
+      "rules": {
+        "matches": 1752,
+        "log_loss": 1.0834,
+        "brier": 0.21804,
+        "accuracy": 0.4623,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1752,
+        "log_loss": 0.99866,
+        "brier": 0.19859,
+        "accuracy": 0.5234,
+        "draw_picks": 2
+      },
+      "elo": {
+        "matches": 1752,
+        "log_loss": 0.99747,
+        "brier": 0.19817,
+        "accuracy": 0.5086,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1752,
+        "log_loss": 0.9923,
+        "brier": 0.19714,
+        "accuracy": 0.5143,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1752,
+        "log_loss": 0.99555,
+        "brier": 0.19786,
+        "accuracy": 0.5183,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1752,
+        "log_loss": 0.97768,
+        "brier": 0.19407,
+        "accuracy": 0.5331,
+        "draw_picks": 1
+      },
+      "anchored": {
+        "matches": 1752,
+        "log_loss": 0.97712,
+        "brier": 0.19396,
+        "accuracy": 0.5365,
+        "draw_picks": 0
+      }
+    }
+  },
+  "by_league": {
+    "Premier League": {
+      "market_open": {
+        "matches": 1900,
+        "log_loss": 0.95937,
+        "brier": 0.18996,
+        "accuracy": 0.5532,
+        "draw_picks": 0
+      },
+      "market_close": {
+        "matches": 1900,
+        "log_loss": 0.95559,
+        "brier": 0.189,
+        "accuracy": 0.5595,
+        "draw_picks": 0
+      },
+      "rules": {
+        "matches": 1900,
+        "log_loss": 1.04957,
+        "brier": 0.2104,
+        "accuracy": 0.4963,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1900,
+        "log_loss": 0.97891,
+        "brier": 0.19422,
+        "accuracy": 0.53,
+        "draw_picks": 0
+      },
+      "elo": {
+        "matches": 1900,
+        "log_loss": 0.97742,
+        "brier": 0.19411,
+        "accuracy": 0.5353,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1900,
+        "log_loss": 0.97449,
+        "brier": 0.19338,
+        "accuracy": 0.5368,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1900,
+        "log_loss": 0.97758,
+        "brier": 0.19411,
+        "accuracy": 0.5353,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1900,
+        "log_loss": 0.96029,
+        "brier": 0.19021,
+        "accuracy": 0.5489,
+        "draw_picks": 0
+      },
+      "anchored": {
+        "matches": 1900,
+        "log_loss": 0.96137,
+        "brier": 0.19041,
+        "accuracy": 0.5521,
+        "draw_picks": 0
+      }
+    },
+    "La Liga": {
+      "market_open": {
+        "matches": 1900,
+        "log_loss": 0.96685,
+        "brier": 0.19142,
+        "accuracy": 0.5421,
+        "draw_picks": 7
+      },
+      "market_close": {
+        "matches": 1900,
+        "log_loss": 0.96562,
+        "brier": 0.19117,
+        "accuracy": 0.5432,
+        "draw_picks": 13
+      },
+      "rules": {
+        "matches": 1900,
+        "log_loss": 1.08381,
+        "brier": 0.21832,
+        "accuracy": 0.4632,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1900,
+        "log_loss": 0.98394,
+        "brier": 0.19523,
+        "accuracy": 0.5284,
+        "draw_picks": 15
+      },
+      "elo": {
+        "matches": 1900,
+        "log_loss": 0.99113,
+        "brier": 0.19627,
+        "accuracy": 0.5242,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1900,
+        "log_loss": 0.98221,
+        "brier": 0.19462,
+        "accuracy": 0.5274,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1900,
+        "log_loss": 0.9829,
+        "brier": 0.19475,
+        "accuracy": 0.5347,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1900,
+        "log_loss": 0.96651,
+        "brier": 0.19137,
+        "accuracy": 0.5416,
+        "draw_picks": 7
+      },
+      "anchored": {
+        "matches": 1900,
+        "log_loss": 0.96705,
+        "brier": 0.19145,
+        "accuracy": 0.5442,
+        "draw_picks": 7
+      }
+    },
+    "Serie A": {
+      "market_open": {
+        "matches": 1899,
+        "log_loss": 0.97145,
+        "brier": 0.19287,
+        "accuracy": 0.5319,
+        "draw_picks": 1
+      },
+      "market_close": {
+        "matches": 1899,
+        "log_loss": 0.96912,
+        "brier": 0.19245,
+        "accuracy": 0.5377,
+        "draw_picks": 5
+      },
+      "rules": {
+        "matches": 1899,
+        "log_loss": 1.07146,
+        "brier": 0.21501,
+        "accuracy": 0.4702,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1899,
+        "log_loss": 0.988,
+        "brier": 0.19652,
+        "accuracy": 0.5303,
+        "draw_picks": 8
+      },
+      "elo": {
+        "matches": 1899,
+        "log_loss": 0.99092,
+        "brier": 0.19714,
+        "accuracy": 0.5282,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1899,
+        "log_loss": 0.98505,
+        "brier": 0.1959,
+        "accuracy": 0.5271,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1899,
+        "log_loss": 0.98619,
+        "brier": 0.19618,
+        "accuracy": 0.5287,
+        "draw_picks": 1
+      },
+      "market_lr": {
+        "matches": 1899,
+        "log_loss": 0.96863,
+        "brier": 0.19223,
+        "accuracy": 0.5324,
+        "draw_picks": 1
+      },
+      "anchored": {
+        "matches": 1899,
+        "log_loss": 0.96972,
+        "brier": 0.19246,
+        "accuracy": 0.5329,
+        "draw_picks": 0
+      }
+    },
+    "Bundesliga": {
+      "market_open": {
+        "matches": 1530,
+        "log_loss": 0.97501,
+        "brier": 0.19308,
+        "accuracy": 0.5307,
+        "draw_picks": 0
+      },
+      "market_close": {
+        "matches": 1530,
+        "log_loss": 0.97217,
+        "brier": 0.19243,
+        "accuracy": 0.5425,
+        "draw_picks": 0
+      },
+      "rules": {
+        "matches": 1530,
+        "log_loss": 1.07329,
+        "brier": 0.21561,
+        "accuracy": 0.4693,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1530,
+        "log_loss": 0.99582,
+        "brier": 0.19805,
+        "accuracy": 0.519,
+        "draw_picks": 3
+      },
+      "elo": {
+        "matches": 1530,
+        "log_loss": 0.99771,
+        "brier": 0.1984,
+        "accuracy": 0.5085,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1530,
+        "log_loss": 0.99017,
+        "brier": 0.19649,
+        "accuracy": 0.5203,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1530,
+        "log_loss": 0.99494,
+        "brier": 0.19774,
+        "accuracy": 0.5098,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1530,
+        "log_loss": 0.97478,
+        "brier": 0.1931,
+        "accuracy": 0.5327,
+        "draw_picks": 0
+      },
+      "anchored": {
+        "matches": 1530,
+        "log_loss": 0.97413,
+        "brier": 0.19294,
+        "accuracy": 0.5366,
+        "draw_picks": 0
+      }
+    },
+    "Ligue 1": {
+      "market_open": {
+        "matches": 1678,
+        "log_loss": 0.98336,
+        "brier": 0.19539,
+        "accuracy": 0.5274,
+        "draw_picks": 0
+      },
+      "market_close": {
+        "matches": 1678,
+        "log_loss": 0.98304,
+        "brier": 0.1954,
+        "accuracy": 0.5286,
+        "draw_picks": 1
+      },
+      "rules": {
+        "matches": 1678,
+        "log_loss": 1.069,
+        "brier": 0.21492,
+        "accuracy": 0.4779,
+        "draw_picks": 0
+      },
+      "dixon_coles": {
+        "matches": 1678,
+        "log_loss": 1.00425,
+        "brier": 0.20006,
+        "accuracy": 0.5191,
+        "draw_picks": 3
+      },
+      "elo": {
+        "matches": 1678,
+        "log_loss": 1.00139,
+        "brier": 0.19938,
+        "accuracy": 0.5191,
+        "draw_picks": 0
+      },
+      "logistic": {
+        "matches": 1678,
+        "log_loss": 0.99884,
+        "brier": 0.19888,
+        "accuracy": 0.5191,
+        "draw_picks": 0
+      },
+      "fitted": {
+        "matches": 1678,
+        "log_loss": 1.00157,
+        "brier": 0.19947,
+        "accuracy": 0.5209,
+        "draw_picks": 0
+      },
+      "market_lr": {
+        "matches": 1678,
+        "log_loss": 0.98425,
+        "brier": 0.19556,
+        "accuracy": 0.5256,
+        "draw_picks": 0
+      },
+      "anchored": {
+        "matches": 1678,
+        "log_loss": 0.98459,
+        "brier": 0.19557,
+        "accuracy": 0.5244,
+        "draw_picks": 4
+      }
+    }
+  },
+  "betting_at_pre_weekend_prices": {
+    "rules": {
+      "edge_over_0pct": {
+        "bets": 8840,
+        "roi": -0.1107,
+        "roi_95ci": [
+          -0.14694,
+          -0.07416
+        ],
+        "closing_line_value": -0.0043,
+        "closing_line_value_95ci": [
+          -0.00642,
+          -0.00199
+        ],
+        "beat_close_share": 0.4706
+      },
+      "edge_over_5pct": {
+        "bets": 8333,
+        "roi": -0.1145,
+        "roi_95ci": [
+          -0.15048,
+          -0.07688
+        ],
+        "closing_line_value": -0.0042,
+        "closing_line_value_95ci": [
+          -0.00666,
+          -0.0017
+        ],
+        "beat_close_share": 0.4704
+      },
+      "top_pick": {
+        "bets": 8907,
+        "roi": -0.0521,
+        "roi_95ci": [
+          -0.07459,
+          -0.02995
+        ]
+      }
+    },
+    "dixon_coles": {
+      "edge_over_0pct": {
+        "bets": 7642,
+        "roi": -0.1198,
+        "roi_95ci": [
+          -0.15688,
+          -0.08326
+        ],
+        "closing_line_value": -0.0044,
+        "closing_line_value_95ci": [
+          -0.00642,
+          -0.00246
+        ],
+        "beat_close_share": 0.4779
+      },
+      "edge_over_5pct": {
+        "bets": 5718,
+        "roi": -0.1448,
+        "roi_95ci": [
+          -0.19005,
+          -0.09848
+        ],
+        "closing_line_value": -0.0047,
+        "closing_line_value_95ci": [
+          -0.00719,
+          -0.00199
+        ],
+        "beat_close_share": 0.4755
+      }
+    },
+    "logistic": {
+      "edge_over_0pct": {
+        "bets": 7334,
+        "roi": -0.1151,
+        "roi_95ci": [
+          -0.14787,
+          -0.08244
+        ],
+        "closing_line_value": -0.001,
+        "closing_line_value_95ci": [
+          -0.00285,
+          0.00109
+        ],
+        "beat_close_share": 0.496
+      },
+      "edge_over_5pct": {
+        "bets": 4946,
+        "roi": -0.1249,
+        "roi_95ci": [
+          -0.17069,
+          -0.07475
+        ],
+        "closing_line_value": -0.0011,
+        "closing_line_value_95ci": [
+          -0.00367,
+          0.00156
+        ],
+        "beat_close_share": 0.4869
+      }
+    },
+    "fitted": {
+      "edge_over_0pct": {
+        "bets": 7333,
+        "roi": -0.1235,
+        "roi_95ci": [
+          -0.15725,
+          -0.09052
+        ],
+        "closing_line_value": -0.0059,
+        "closing_line_value_95ci": [
+          -0.00788,
+          -0.00387
+        ],
+        "beat_close_share": 0.4701
+      },
+      "edge_over_5pct": {
+        "bets": 5139,
+        "roi": -0.1362,
+        "roi_95ci": [
+          -0.1794,
+          -0.09535
+        ],
+        "closing_line_value": -0.0063,
+        "closing_line_value_95ci": [
+          -0.00889,
+          -0.00349
+        ],
+        "beat_close_share": 0.4602
+      },
+      "top_pick": {
+        "bets": 8907,
+        "roi": -0.0328,
+        "roi_95ci": [
+          -0.05099,
+          -0.01493
+        ]
+      }
+    },
+    "anchored": {
+      "edge_over_0pct": {
+        "bets": 4432,
+        "roi": -0.0611,
+        "roi_95ci": [
+          -0.11444,
+          -0.01115
+        ],
+        "closing_line_value": 0.0069,
+        "closing_line_value_95ci": [
+          0.00422,
+          0.00956
+        ],
+        "beat_close_share": 0.5997
+      },
+      "edge_over_5pct": {
+        "bets": 1139,
+        "roi": -0.124,
+        "roi_95ci": [
+          -0.23912,
+          -0.00985
+        ],
+        "closing_line_value": 0.002,
+        "closing_line_value_95ci": [
+          -0.0047,
+          0.00873
+        ],
+        "beat_close_share": 0.5558
+      }
+    }
+  },
+  "second_stage_coefficients": {
+    "elo": {
+      "2122": [
+        [
+          0.489
+        ],
+        [
+          -0.033
+        ],
+        [
+          -0.456
+        ]
+      ],
+      "2223": [
+        [
+          0.502
+        ],
+        [
+          -0.025
+        ],
+        [
+          -0.477
+        ]
+      ],
+      "2324": [
+        [
+          0.5
+        ],
+        [
+          -0.02
+        ],
+        [
+          -0.481
+        ]
+      ],
+      "2425": [
+        [
+          0.521
+        ],
+        [
+          -0.01
+        ],
+        [
+          -0.511
+        ]
+      ],
+      "2526": [
+        [
+          0.531
+        ],
+        [
+          -0.013
+        ],
+        [
+          -0.518
+        ]
+      ]
+    },
+    "logistic": {
+      "2122": [
+        [
+          0.154,
+          0.267,
+          -0.008,
+          -0.001,
+          0.143
+        ],
+        [
+          -0.055,
+          0.013,
+          0.073,
+          -0.018,
+          0.035
+        ],
+        [
+          -0.099,
+          -0.28,
+          -0.065,
+          0.019,
+          -0.178
+        ]
+      ],
+      "2223": [
+        [
+          0.126,
+          0.304,
+          -0.015,
+          -0.008,
+          0.139
+        ],
+        [
+          0.002,
+          -0.014,
+          0.09,
+          -0.009,
+          -0.0
+        ],
+        [
+          -0.127,
+          -0.29,
+          -0.075,
+          0.016,
+          -0.138
+        ]
+      ],
+      "2324": [
+        [
+          0.154,
+          0.251,
+          -0.042,
+          -0.019,
+          0.147
+        ],
+        [
+          -0.003,
+          0.02,
+          0.077,
+          -0.014,
+          -0.025
+        ],
+        [
+          -0.151,
+          -0.272,
+          -0.035,
+          0.032,
+          -0.122
+        ]
+      ],
+      "2425": [
+        [
+          0.181,
+          0.239,
+          -0.047,
+          -0.021,
+          0.151
+        ],
+        [
+          0.008,
+          0.03,
+          0.066,
+          -0.023,
+          -0.041
+        ],
+        [
+          -0.19,
+          -0.268,
+          -0.019,
+          0.044,
+          -0.11
+        ]
+      ],
+      "2526": [
+        [
+          0.194,
+          0.236,
+          -0.044,
+          -0.01,
+          0.148
+        ],
+        [
+          -0.004,
+          0.032,
+          0.056,
+          -0.035,
+          -0.033
+        ],
+        [
+          -0.19,
+          -0.269,
+          -0.013,
+          0.045,
+          -0.116
+        ]
+      ]
+    },
+    "fitted": {
+      "2122": [
+        [
+          0.203,
+          0.312,
+          -0.007,
+          0.004
+        ],
+        [
+          -0.046,
+          0.026,
+          0.073,
+          -0.019
+        ],
+        [
+          -0.156,
+          -0.338,
+          -0.066,
+          0.015
+        ]
+      ],
+      "2223": [
+        [
+          0.169,
+          0.351,
+          -0.014,
+          -0.004
+        ],
+        [
+          -0.001,
+          -0.012,
+          0.09,
+          -0.01
+        ],
+        [
+          -0.168,
+          -0.339,
+          -0.076,
+          0.014
+        ]
+      ],
+      "2324": [
+        [
+          0.2,
+          0.302,
+          -0.04,
+          -0.015
+        ],
+        [
+          -0.012,
+          0.013,
+          0.077,
+          -0.015
+        ],
+        [
+          -0.188,
+          -0.315,
+          -0.036,
+          0.03
+        ]
+      ],
+      "2425": [
+        [
+          0.227,
+          0.292,
+          -0.045,
+          -0.019
+        ],
+        [
+          -0.005,
+          0.016,
+          0.066,
+          -0.025
+        ],
+        [
+          -0.222,
+          -0.308,
+          -0.021,
+          0.044
+        ]
+      ],
+      "2526": [
+        [
+          0.241,
+          0.287,
+          -0.043,
+          -0.009
+        ],
+        [
+          -0.015,
+          0.022,
+          0.056,
+          -0.037
+        ],
+        [
+          -0.226,
+          -0.309,
+          -0.013,
+          0.045
+        ]
+      ]
+    },
+    "market_lr": {
+      "2122": [
+        [
+          0.55,
+          -0.046
+        ],
+        [
+          0.024,
+          0.143
+        ],
+        [
+          -0.575,
+          -0.097
+        ]
+      ],
+      "2223": [
+        [
+          0.556,
+          -0.048
+        ],
+        [
+          0.02,
+          0.144
+        ],
+        [
+          -0.576,
+          -0.095
+        ]
+      ],
+      "2324": [
+        [
+          0.545,
+          -0.051
+        ],
+        [
+          0.022,
+          0.124
+        ],
+        [
+          -0.567,
+          -0.073
+        ]
+      ],
+      "2425": [
+        [
+          0.565,
+          -0.051
+        ],
+        [
+          0.032,
+          0.119
+        ],
+        [
+          -0.597,
+          -0.068
+        ]
+      ],
+      "2526": [
+        [
+          0.574,
+          -0.051
+        ],
+        [
+          0.027,
+          0.118
+        ],
+        [
+          -0.601,
+          -0.067
+        ]
+      ]
+    },
+    "anchored": {
+      "2122": [
+        [
+          0.499,
+          -0.074,
+          0.111,
+          0.034,
+          -0.051
+        ],
+        [
+          0.125,
+          0.146,
+          -0.027,
+          -0.001,
+          -0.087
+        ],
+        [
+          -0.624,
+          -0.072,
+          -0.084,
+          -0.033,
+          0.138
+        ]
+      ],
+      "2223": [
+        [
+          0.534,
+          -0.078,
+          0.122,
+          0.036,
+          -0.097
+        ],
+        [
+          0.082,
+          0.14,
+          -0.056,
+          0.007,
+          -0.013
+        ],
+        [
+          -0.616,
+          -0.062,
+          -0.066,
+          -0.043,
+          0.11
+        ]
+      ],
+      "2324": [
+        [
+          0.553,
+          -0.054,
+          0.054,
+          0.002,
+          -0.062
+        ],
+        [
+          0.053,
+          0.119,
+          -0.021,
+          0.007,
+          -0.014
+        ],
+        [
+          -0.606,
+          -0.066,
+          -0.034,
+          -0.009,
+          0.076
+        ]
+      ],
+      "2425": [
+        [
+          0.588,
+          -0.049,
+          0.026,
+          -0.003,
+          -0.051
+        ],
+        [
+          0.055,
+          0.117,
+          -0.019,
+          0.002,
+          -0.006
+        ],
+        [
+          -0.643,
+          -0.068,
+          -0.007,
+          0.001,
+          0.058
+        ]
+      ],
+      "2526": [
+        [
+          0.625,
+          -0.043,
+          0.009,
+          -0.012,
+          -0.065
+        ],
+        [
+          0.033,
+          0.118,
+          0.001,
+          -0.001,
+          -0.007
+        ],
+        [
+          -0.659,
+          -0.076,
+          -0.01,
+          0.012,
+          0.073
+        ]
+      ]
+    }
+  },
+  "published_artifact": {
+    "version": "soccer-ratings-v1",
+    "trained_on": {
+      "seasons": [
+        "1920",
+        "2021",
+        "2122",
+        "2223",
+        "2324",
+        "2425",
+        "2526"
+      ],
+      "matches": 12458
+    },
+    "features": [
+      "elo_diff/400",
+      "log(dc_home/dc_away)",
+      "logit(dc_draw)",
+      "log(lambda*mu)"
+    ],
+    "classes": [
+      "home",
+      "draw",
+      "away"
+    ],
+    "ratings": {
+      "half_life": 365.0,
+      "ridge": 6.0,
+      "elo_k": 15.0,
+      "elo_home": 60.0
+    },
+    "layer": {
+      "mean": [
+        0.15089564144145423,
+        0.33933949375270217,
+        -1.119080908936357,
+        0.5462654326399047
+      ],
+      "scale": [
+        0.29689437208332314,
+        1.0174158964039361,
+        0.2849977489359882,
+        0.33738090096268747
+      ],
+      "coef": [
+        [
+          0.24419543723865408,
+          0.2802843971837399,
+          -0.04497314210099721,
+          -0.012633009638057434
+        ],
+        [
+          -0.018159540606673172,
+          0.02345920773356446,
+          0.06039324310343528,
+          -0.026647767958180753
+        ],
+        [
+          -0.2260358966319808,
+          -0.3037436049173044,
+          -0.015420101002438165,
+          0.03928077759623825
+        ]
+      ],
+      "intercept": [
+        0.2722093538588274,
+        -0.182308219541449,
+        -0.08990113431742361
+      ]
+    },
+    "walk_forward": {
+      "matches": 8907,
+      "log_loss": 0.98805,
+      "brier": 0.19632,
+      "accuracy": 0.5267,
+      "draw_picks": 1,
+      "vs_market_open": {
+        "mean": 0.01731,
+        "95ci": [
+          0.01458,
+          0.02029
+        ]
+      }
+    },
+    "goals_validation": {
+      "status": "walk_forward",
+      "test_games": 8907,
+      "points_mae": 0.9112,
+      "baseline_mae": 0.9918,
+      "total_mae": 1.3173,
+      "interval_coverage": {
+        "home": 0.9331,
+        "away": 0.9429
+      },
+      "test_end": "2026-05-24"
+    }
+  },
+  "method": {
+    "walk_forward": "Ratings use only matches before the predicted day; Dixon-Coles is refitted weekly.",
+    "logistic_layers": "Refitted at each season start on every earlier season (2020-21 is the first training season).",
+    "log_loss_gap": "Model minus reference per match, mean; negative means the model is better. Weekly-block bootstrap 95% interval.",
+    "betting": "Flat one-unit stakes at pre-weekend market-average prices on the outcome with the highest expected value above the edge.",
+    "closing_line_value": "Closing margin-free probability of the backed outcome over its pre-weekend probability, minus one.",
+    "rules_replay": "scorpred_engine.scorpred_predict with same-season last-5 form, last-5 head-to-head, a table built from results to date, and no injuries (as the dashboard runs it)."
+  }
+}

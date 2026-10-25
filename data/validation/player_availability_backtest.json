@@ -1,0 +1,150 @@
+{
+  "generated_at": "2026-10-23T13:09:07.824600+00:00",
+  "matches": {
+    "total": 1520,
+    "tuning": 380,
+    "evaluated": 1140,
+    "unmatched": 0
+  },
+  "tuning": {
+    "season": "2022-23",
+    "log_loss_by_scale": {
+      "lineup": {
+        "0.0": 0.99354,
+        "0.25": 0.99119,
+        "0.5": 0.99008,
+        "0.75": 0.99005,
+        "1.0": 0.99099,
+        "1.25": 0.9928,
+        "1.5": 0.99543
+      },
+      "absences": {
+        "0.0": 0.99354,
+        "0.25": 0.99066,
+        "0.5": 0.98854,
+        "0.75": 0.98707,
+        "1.0": 0.98616,
+        "1.25": 0.98576,
+        "1.5": 0.98582
+      }
+    },
+    "chosen_scale": {
+      "lineup": 0.75,
+      "absences": 1.25
+    }
+  },
+  "results": {
+    "ratings_model": {
+      "matches": 1140,
+      "log_loss": 0.97948,
+      "brier": 0.19471,
+      "accuracy": 0.5281,
+      "draw_picks": 0
+    },
+    "market_open": {
+      "matches": 1140,
+      "log_loss": 0.96502,
+      "brier": 0.19134,
+      "accuracy": 0.5421,
+      "draw_picks": 0
+    },
+    "market_close": {
+      "matches": 1140,
+      "log_loss": 0.95973,
+      "brier": 0.18996,
+      "accuracy": 0.55,
+      "draw_picks": 0
+    },
+    "ratings_model+lineup": {
+      "matches": 1140,
+      "log_loss": 0.97789,
+      "brier": 0.19409,
+      "accuracy": 0.5272,
+      "draw_picks": 0
+    },
+    "market_open+lineup": {
+      "matches": 1140,
+      "log_loss": 0.96523,
+      "brier": 0.19122,
+      "accuracy": 0.5342,
+      "draw_picks": 0
+    },
+    "ratings_model+absences": {
+      "matches": 1140,
+      "log_loss": 0.98002,
+      "brier": 0.19472,
+      "accuracy": 0.5298,
+      "draw_picks": 0
+    },
+    "market_open+absences": {
+      "matches": 1140,
+      "log_loss": 0.96823,
+      "brier": 0.19196,
+      "accuracy": 0.5333,
+      "draw_picks": 0
+    }
+  },
+  "log_loss_gap": {
+    "ratings_model+lineup vs ratings_model": {
+      "mean": -0.00158,
+      "95ci": [
+        -0.00734,
+        0.00406
+      ]
+    },
+    "ratings_model+lineup vs market_close": {
+      "mean": 0.01816,
+      "95ci": [
+        0.00827,
+        0.02835
+      ]
+    },
+    "market_open+lineup vs market_open": {
+      "mean": 0.00021,
+      "95ci": [
+        -0.00516,
+        0.00573
+      ]
+    },
+    "market_open+lineup vs market_close": {
+      "mean": 0.0055,
+      "95ci": [
+        0.00045,
+        0.01053
+      ]
+    },
+    "ratings_model+absences vs ratings_model": {
+      "mean": 0.00054,
+      "95ci": [
+        -0.00551,
+        0.0066
+      ]
+    },
+    "ratings_model+absences vs market_close": {
+      "mean": 0.02029,
+      "95ci": [
+        0.01041,
+        0.02967
+      ]
+    },
+    "market_open+absences vs market_open": {
+      "mean": 0.00321,
+      "95ci": [
+        -0.00262,
+        0.00932
+      ]
+    },
+    "market_open+absences vs market_close": {
+      "mean": 0.00849,
+      "95ci": [
+        0.00236,
+        0.01463
+      ]
+    }
+  },
+  "absence_goal_shift": {
+    "median": 0.081,
+    "p90": 0.305
+  },
+  "method": "Does adjusting for who plays improve Premier League probabilities? A walk-forward backtest.\n\nFor every Premier League match from 2022-23 to 2025-26:\n\n1. Base probabilities are the published ratings model's walk-forward predictions\n   (scripts/soccer_model_research.py) and the margin-free pre-weekend and closing prices.\n2. Each player's value comes from their season-to-date Fantasy Premier League totals before\n   that match, through the production formula (services.soccer_player_value.player_value).\n3. Availability is what happened: a player counts as playing if he started. The adjustment is\n   the one the injury panel uses: attack x (played - usual share) added to his team's expected\n   goals, defence x (played - usual share) taken from the opponent's.\n\n``lineup`` uses every starter and every regular who did not start. ``absences`` uses only\nplayers who did not play at all, which is closer to an injury list. Both know the lineup, so\nthey are the most this information can add; a pre-lineup injury list knows less.\n\nThe scale on the adjustment is chosen on 2022-23 and reported on 2023-24 to 2025-26.\nWrites data/validation/player_availability_backtest.json."
+}

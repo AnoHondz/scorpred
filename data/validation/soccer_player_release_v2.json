@@ -1,0 +1,161 @@
+{
+  "version": "soccer-player-counts-v2",
+  "completed_at": "2026-10-25T00:47:50.935911+00:00",
+  "data": {
+    "games": 6812,
+    "player_market_examples": 344304,
+    "examples_by_source": {
+      "statsbomb": 24780,
+      "wyscout": 129770,
+      "fpl": 38109,
+      "espn": 151645
+    },
+    "quarantined_games": [
+      {
+        "file": "wyscout\\2575959.json",
+        "reason": "Unknown athlete identity or invalid minutes"
+      },
+      {
+        "file": "wyscout\\2575965.json",
+        "reason": "Unknown athlete identity or invalid minutes"
+      },
+      {
+        "file": "wyscout\\2576016.json",
+        "reason": "Unknown athlete identity or invalid minutes"
+      }
+    ],
+    "identical_duplicate_rows_removed": 6,
+    "quality_policy": "Exact duplicate removal; unknown IDs and conflicting observations quarantined before fitting",
+    "sha256": "90509b498785e5e29b03c4e1567e40b15a19e3396ffad71fdabdbb1cb1688289",
+    "policy": "All observed games, no target-game subsampling; source/league/player IDs isolated; earlier dates only"
+  },
+  "trained_markets": [
+    "shots",
+    "shots_on_target",
+    "goals",
+    "assists",
+    "fouls",
+    "saves",
+    "tackles"
+  ],
+  "released_markets": [
+    "shots",
+    "shots_on_target",
+    "goals",
+    "assists",
+    "saves",
+    "tackles"
+  ],
+  "retained_incumbent": [
+    "fouls"
+  ],
+  "incumbent_comparison": {
+    "policy": "Fixed every-fourth held-out ESPN fixture; common participating current-role players; original calibration kept",
+    "selection": "Frozen count models; no tuning against this audit",
+    "markets": {
+      "shots": {
+        "n": 1275,
+        "incumbent_brier": 0.12387915483029342,
+        "candidate_brier": 0.1222689720041961,
+        "incumbent_mae": 0.829262745098039,
+        "candidate_mae": 0.8225254901960776,
+        "enabled": true
+      },
+      "shots_on_target": {
+        "n": 1275,
+        "incumbent_brier": 0.08108003829542489,
+        "candidate_brier": 0.08073049509605228,
+        "incumbent_mae": 0.4401254901960785,
+        "candidate_mae": 0.4382431372549019,
+        "enabled": true
+      },
+      "goals": {
+        "n": 1275,
+        "incumbent_brier": 0.048424983007842905,
+        "candidate_brier": 0.04815481683627458,
+        "incumbent_mae": 0.18672156862745207,
+        "candidate_mae": 0.18668235294117672,
+        "enabled": true
+      },
+      "assists": {
+        "n": 1275,
+        "incumbent_brier": 0.037876013733728335,
+        "candidate_brier": 0.03758205940262746,
+        "incumbent_mae": 0.15166274509804,
+        "candidate_mae": 0.14122352941176491,
+        "enabled": true
+      },
+      "fouls": {
+        "n": 1275,
+        "incumbent_brier": 0.1579232026926054,
+        "candidate_brier": 0.158303826490144,
+        "incumbent_mae": 0.7968784313725467,
+        "candidate_mae": 0.7884941176470591,
+        "enabled": false
+      },
+      "saves": {
+        "n": 144,
+        "incumbent_brier": 0.1932136735763889,
+        "candidate_brier": 0.19050656935364585,
+        "incumbent_mae": 1.4534722222222218,
+        "candidate_mae": 1.4288888888888895,
+        "enabled": true
+      },
+      "tackles": {
+        "n": 209,
+        "incumbent_brier": 0.16347602313717824,
+        "candidate_brier": 0.16071129513763546,
+        "incumbent_mae": 1.0571259843580478,
+        "candidate_mae": 1.06097070358645,
+        "enabled": true,
+        "policy": "Fixed every-fourth held-out FPL fixture; common participating regulars; no current roster leakage"
+      }
+    }
+  },
+  "live_verification": {
+    "status": 200,
+    "forecasts": 98,
+    "models": {
+      "soccer-player-counts-v2": 63,
+      "historical baseline": 35
+    },
+    "picks": 0,
+    "market": {
+      "matched_picks": 0,
+      "provider": "The Odds API",
+      "reason": "No verified sportsbook opportunity. The local sportsbook comparison credit limit has been reached for this month.",
+      "status": "budget_exhausted",
+      "total_picks": 0,
+      "validation": "Experimental model comparisons; no profitable sportsbook performance established."
+    },
+    "roster": {
+      "eligible_count": 34,
+      "expires_at": "2026-10-25T00:48:23.774579+00:00",
+      "max_stale_at": "2026-10-25T00:48:23.774579+00:00",
+      "method": "Exact ESPN athlete ID on current-season team roster",
+      "observed_at": "2026-10-25T00:38:23.774579+00:00",
+      "roster_count": 34,
+      "season": 2026,
+      "source": "ESPN SOCCER current roster",
+      "state": "fresh",
+      "status": "verified",
+      "team_ids": [
+        "364",
+        "331"
+      ]
+    },
+    "salah_present": false,
+    "quoted_picks_only": true
+  },
+  "limitations": [
+    "Count-stat validation is not sportsbook return validation",
+    "Conditional on participation; DNPs excluded",
+    "No timestamped historical odds archive",
+    "Provider definitions differ; fantasy assists and tackle definitions are not pooled",
+    "Old ESPN compact caches may contain legacy zeros; new parsing preserves missing values",
+    "StatsBomb Open Data attribution required under publisher terms; Wyscout: Pappalardo et al. 2019, CC BY 4.0"
+  ],
+  "source_audit": "soccer_props_data_audit_v2.json",
+  "training_report": "soccer_player_counts_v2.json",
+  "selection_policy": "Rank both sides only at verified current sportsbook lines; no historical-target betting picks"
+}

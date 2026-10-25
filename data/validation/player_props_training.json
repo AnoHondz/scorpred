@@ -1,0 +1,4322 @@
+{
+  "version": "player-props-calibration-v1",
+  "created_at": "2026-10-24T23:21:32.406193+00:00",
+  "dataset_sha256": "6dc56af8bc75ec69bf94bbc40b86cd5bd71131e0b36a2986a6772ac7f6cdfd7b",
+  "sources": [
+    {
+      "sport": "soccer",
+      "league": "eng.1",
+      "games": 807,
+      "target_game_stride": 4,
+      "examples": 15860,
+      "start": "2024-08-16T19:00Z",
+      "end": "2026-10-19T19:00Z",
+      "sha256": "3985713a026ebb926196d0bc67495ddaecd9020d9c6fa0d9cfb6ae0ac874ada7"
+    },
+    {
+      "sport": "soccer",
+      "league": "esp.1",
+      "games": 802,
+      "target_game_stride": 4,
+      "examples": 14550,
+      "start": "2024-08-15T17:00Z",
+      "end": "2026-10-19T19:00Z",
+      "sha256": "cbea7d33cf57f45b28b27cccc2f8e8344285ec6a44d0f7f7fd6e566a6426a27a"
+    },
+    {
+      "sport": "soccer",
+      "league": "ger.1",
+      "games": 340,
+      "target_game_stride": 4,
+      "examples": 5710,
+      "start": "2025-08-22T18:30Z",
+      "end": "2026-10-18T15:30Z",
+      "sha256": "6b51fc675cdb584d663b7df064027b011d86d739462d691843b6124d9589e1fa"
+    },
+    {
+      "sport": "nba",
+      "league": "nba",
+      "games": 2486,
+      "target_game_stride": 4,
+      "examples": 39335,
+      "start": "2024-10-22T23:30Z",
+      "end": "2026-10-24T02:00Z",
+      "sha256": "ec38e24fffe011253c6a8488835c2ca0f945958f441f3cad4fdfcd3cbeecb78f"
+    },
+    {
+      "sport": "nfl",
+      "season": 2022,
+      "examples": 14125,
+      "source_sha256": "2a67db8bb3e5bdd1ba4fa8f9038f535dedc0f25a403ee316ed29fc6aaba1170f"
+    },
+    {
+      "sport": "nfl",
+      "season": 2024,
+      "examples": 14405,
+      "source_sha256": "1c4f3608170631195fb53eacce35bd30335a01f3e9d9c2c267c2fc6d092d5b91"
+    },
+    {
+      "sport": "nfl",
+      "season": 2025,
+      "examples": 14617,
+      "source_sha256": "e2ae7adae6b0ed942ae8d773be76e4b5b13f9a5b3e5093ddc9c097298bb3d0d3"
+    }
+  ],
+  "policy": "60/20/20 chronological date groups; coefficients fitted on train only; one fixed candidate; validation and test gate promotion",
+  "limitations": [
+    "Historical targets, not sportsbook lines",
+    "Conditional on participation; DNPs excluded",
+    "Historical lineups unavailable; current rosters never used to select historical players",
+    "Source box-score caches may encode unavailable statistics as zero; raw-feed audit remains necessary"
+  ],
+  "examples": 118602,
+  "markets": {
+    "soccer/shots": {
+      "coefficients": [
+        0.8719732394118475,
+        -0.15560209966879338
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-09-14",
+          "end": "2025-12-13",
+          "raw": {
+            "n": 4047,
+            "brier": 0.19973615769458858,
+            "log_loss": 0.5856555395223925,
+            "predicted_over": 0.3115073634791204,
+            "actual_over": 0.29923400049419324,
+            "sides": {
+              "over": {
+                "n": 274,
+                "predicted": 0.5520733576642336,
+                "hit": 0.4854014598540146
+              },
+              "under": {
+                "n": 3773,
+                "predicted": 0.7059628412403921,
+                "hit": 0.7142857142857143
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4047,
+            "brier": 0.19931148728567646,
+            "log_loss": 0.5847745475680873,
+            "predicted_over": 0.2992638294489124,
+            "actual_over": 0.29923400049419324,
+            "sides": {
+              "over": {
+                "n": 133,
+                "predicted": 0.5376997890774595,
+                "hit": 0.5263157894736842
+              },
+              "under": {
+                "n": 3914,
+                "predicted": 0.7088383633539994,
+                "hit": 0.7084823709759837
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4047,
+            "brier": 0.20784991645663456,
+            "log_loss": 0.6053331046965668,
+            "predicted_over": 0.3365026439337781,
+            "actual_over": 0.29923400049419324,
+            "sides": {
+              "over": {
+                "n": 344,
+                "predicted": 0.5,
+                "hit": 0.40406976744186046
+              },
+              "under": {
+                "n": 3703,
+                "predicted": 0.6786858763165001,
+                "hit": 0.7105049959492303
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-14",
+          "end": "2026-03-20",
+          "raw": {
+            "n": 1561,
+            "brier": 0.19805054711723252,
+            "log_loss": 0.5843725250079591,
+            "predicted_over": 0.31249666880204996,
+            "actual_over": 0.29276105060858426,
+            "sides": {
+              "over": {
+                "n": 87,
+                "predicted": 0.5509689655172414,
+                "hit": 0.5402298850574713
+              },
+              "under": {
+                "n": 1474,
+                "predicted": 0.701578697421981,
+                "hit": 0.7218453188602443
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1561,
+            "brier": 0.19750870008994714,
+            "log_loss": 0.5828101655770112,
+            "predicted_over": 0.3001326677796939,
+            "actual_over": 0.29276105060858426,
+            "sides": {
+              "over": {
+                "n": 41,
+                "predicted": 0.538453259558447,
+                "hit": 0.5365853658536586
+              },
+              "under": {
+                "n": 1520,
+                "predicted": 0.706295716603812,
+                "hit": 0.7138157894736842
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1561,
+            "brier": 0.20851965917360668,
+            "log_loss": 0.6085183093834211,
+            "predicted_over": 0.3335568866111467,
+            "actual_over": 0.29276105060858426,
+            "sides": {
+              "over": {
+                "n": 75,
+                "predicted": 0.5,
+                "hit": 0.3466666666666667
+              },
+              "under": {
+                "n": 1486,
+                "predicted": 0.674843674293405,
+                "hit": 0.7099596231493943
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-03-21",
+          "end": "2026-10-18",
+          "raw": {
+            "n": 1616,
+            "brier": 0.1970841264665842,
+            "log_loss": 0.5800843300225961,
+            "predicted_over": 0.3072741955445545,
+            "actual_over": 0.2902227722772277,
+            "sides": {
+              "over": {
+                "n": 98,
+                "predicted": 0.5424969387755102,
+                "hit": 0.4489795918367347
+              },
+              "under": {
+                "n": 1518,
+                "predicted": 0.7079114624505929,
+                "hit": 0.7200263504611331
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1616,
+            "brier": 0.19649552033381523,
+            "log_loss": 0.5788381203939693,
+            "predicted_over": 0.2956014840135018,
+            "actual_over": 0.2902227722772277,
+            "sides": {
+              "over": {
+                "n": 33,
+                "predicted": 0.5390071170137704,
+                "hit": 0.5454545454545454
+              },
+              "under": {
+                "n": 1583,
+                "predicted": 0.7094726700540969,
+                "hit": 0.7150979153506001
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1616,
+            "brier": 0.20390570996287127,
+            "log_loss": 0.5952447918568428,
+            "predicted_over": 0.33313576732673267,
+            "actual_over": 0.2902227722772277,
+            "sides": {
+              "over": {
+                "n": 47,
+                "predicted": 0.5,
+                "hit": 0.3404255319148936
+              },
+              "under": {
+                "n": 1569,
+                "predicted": 0.6718627151051625,
+                "hit": 0.7112810707456979
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "soccer/shots_on_target": {
+      "coefficients": [
+        0.833763520145091,
+        -0.23950876316517586
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-09-14",
+          "end": "2025-12-13",
+          "raw": {
+            "n": 4047,
+            "brier": 0.14149025507042254,
+            "log_loss": 0.4515742106197939,
+            "predicted_over": 0.18955154435384236,
+            "actual_over": 0.18631084754138869,
+            "sides": {
+              "over": {
+                "n": 40,
+                "predicted": 0.5331275,
+                "hit": 0.475
+              },
+              "under": {
+                "n": 4007,
+                "predicted": 0.8138782131270277,
+                "hit": 0.8165710007486898
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4047,
+            "brier": 0.14152008478684472,
+            "log_loss": 0.4505104394533109,
+            "predicted_over": 0.18636057973198825,
+            "actual_over": 0.18631084754138869,
+            "sides": {
+              "over": {
+                "n": 2,
+                "predicted": 0.5269016863271325,
+                "hit": 0.5
+              },
+              "under": {
+                "n": 4045,
+                "predicted": 0.8138077965877129,
+                "hit": 0.8138442521631644
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4047,
+            "brier": 0.15035107198418582,
+            "log_loss": 0.4733374217603767,
+            "predicted_over": 0.24485085248332097,
+            "actual_over": 0.18631084754138869,
+            "sides": {
+              "over": {
+                "n": 137,
+                "predicted": 0.5,
+                "hit": 0.29927007299270075
+              },
+              "under": {
+                "n": 3910,
+                "predicted": 0.7640891560102302,
+                "hit": 0.8176470588235294
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-14",
+          "end": "2026-03-20",
+          "raw": {
+            "n": 1561,
+            "brier": 0.1456238625944907,
+            "log_loss": 0.4658494561813647,
+            "predicted_over": 0.19563350416399747,
+            "actual_over": 0.18449711723254325,
+            "sides": {
+              "over": {
+                "n": 16,
+                "predicted": 0.5419750000000001,
+                "hit": 0.75
+              },
+              "under": {
+                "n": 1545,
+                "predicted": 0.8079532038834952,
+                "hit": 0.8213592233009709
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1561,
+            "brier": 0.14480402859722188,
+            "log_loss": 0.46237891507924805,
+            "predicted_over": 0.1917563708773924,
+            "actual_over": 0.18449711723254325,
+            "sides": {
+              "over": {
+                "n": 2,
+                "predicted": 0.5092171532924424,
+                "hit": 1.0
+              },
+              "under": {
+                "n": 1559,
+                "predicted": 0.8086508911911324,
+                "hit": 0.8165490699166132
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1561,
+            "brier": 0.15470486945547726,
+            "log_loss": 0.4875834872586071,
+            "predicted_over": 0.24532722613709163,
+            "actual_over": 0.18449711723254325,
+            "sides": {
+              "over": {
+                "n": 37,
+                "predicted": 0.5,
+                "hit": 0.43243243243243246
+              },
+              "under": {
+                "n": 1524,
+                "predicted": 0.7608557742782153,
+                "hit": 0.821522309711286
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-03-21",
+          "end": "2026-10-18",
+          "raw": {
+            "n": 1616,
+            "brier": 0.15006120212252474,
+            "log_loss": 0.4696927631419767,
+            "predicted_over": 0.19763780940594058,
+            "actual_over": 0.2042079207920792,
+            "sides": {
+              "over": {
+                "n": 15,
+                "predicted": 0.55652,
+                "hit": 0.7333333333333333
+              },
+              "under": {
+                "n": 1601,
+                "predicted": 0.8057246096189881,
+                "hit": 0.8007495315427857
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1616,
+            "brier": 0.15058507605435167,
+            "log_loss": 0.47047795392298997,
+            "predicted_over": 0.19362711523641482,
+            "actual_over": 0.2042079207920792,
+            "sides": {
+              "over": {
+                "n": 6,
+                "predicted": 0.5201838225241643,
+                "hit": 0.8333333333333334
+              },
+              "under": {
+                "n": 1610,
+                "predicted": 0.8075898662814277,
+                "hit": 0.7981366459627329
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1616,
+            "brier": 0.1566003048329208,
+            "log_loss": 0.4860579063579156,
+            "predicted_over": 0.24609449257425742,
+            "actual_over": 0.2042079207920792,
+            "sides": {
+              "over": {
+                "n": 17,
+                "predicted": 0.5,
+                "hit": 0.47058823529411764
+              },
+              "under": {
+                "n": 1599,
+                "predicted": 0.7566049405878673,
+                "hit": 0.7986241400875547
+              }
+            }
+          }
+        }
+      },
+      "status": "rejected"
+    },
+    "soccer/goals": {
+      "coefficients": [
+        0.8344955187537572,
+        -0.41443315694069977
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-09-14",
+          "end": "2025-12-13",
+          "raw": {
+            "n": 4047,
+            "brier": 0.07588676331603658,
+            "log_loss": 0.2723949352866376,
+            "predicted_over": 0.09610872251050162,
+            "actual_over": 0.08846058808994317,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 4047,
+                "predicted": 0.9038912774894984,
+                "hit": 0.9115394119100568
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4047,
+            "brier": 0.07553085449990068,
+            "log_loss": 0.27105689470207545,
+            "predicted_over": 0.0885514206053928,
+            "actual_over": 0.08846058808994317,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 4047,
+                "predicted": 0.9114485793946072,
+                "hit": 0.9115394119100568
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4047,
+            "brier": 0.0841403195107487,
+            "log_loss": 0.30370525527631975,
+            "predicted_over": 0.16847585866073633,
+            "actual_over": 0.08846058808994317,
+            "sides": {
+              "over": {
+                "n": 45,
+                "predicted": 0.5,
+                "hit": 0.3111111111111111
+              },
+              "under": {
+                "n": 4002,
+                "predicted": 0.835251924037981,
+                "hit": 0.9140429785107447
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-14",
+          "end": "2026-03-20",
+          "raw": {
+            "n": 1561,
+            "brier": 0.07235891457399103,
+            "log_loss": 0.2668149356465085,
+            "predicted_over": 0.0973968609865471,
+            "actual_over": 0.08263933376041,
+            "sides": {
+              "over": {
+                "n": 2,
+                "predicted": 0.521,
+                "hit": 0.5
+              },
+              "under": {
+                "n": 1559,
+                "predicted": 0.903146568313021,
+                "hit": 0.9178960872354073
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1561,
+            "brier": 0.07170153748257432,
+            "log_loss": 0.2639654571893428,
+            "predicted_over": 0.08965332952709862,
+            "actual_over": 0.08263933376041,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1561,
+                "predicted": 0.9103466704729014,
+                "hit": 0.91736066623959
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1561,
+            "brier": 0.08048311050608585,
+            "log_loss": 0.29428370929974534,
+            "predicted_over": 0.15721563100576552,
+            "actual_over": 0.08263933376041,
+            "sides": {
+              "over": {
+                "n": 11,
+                "predicted": 0.5,
+                "hit": 0.2727272727272727
+              },
+              "under": {
+                "n": 1550,
+                "predicted": 0.8452170322580647,
+                "hit": 0.9187096774193548
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-03-21",
+          "end": "2026-10-18",
+          "raw": {
+            "n": 1616,
+            "brier": 0.08275195098391089,
+            "log_loss": 0.29648681607320293,
+            "predicted_over": 0.0966046410891089,
+            "actual_over": 0.09900990099009901,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1616,
+                "predicted": 0.9033953589108911,
+                "hit": 0.900990099009901
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1616,
+            "brier": 0.0829089106576702,
+            "log_loss": 0.29550360685801774,
+            "predicted_over": 0.08907428167265198,
+            "actual_over": 0.09900990099009901,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1616,
+                "predicted": 0.910925718327348,
+                "hit": 0.900990099009901
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1616,
+            "brier": 0.08805797422029703,
+            "log_loss": 0.3134251561046842,
+            "predicted_over": 0.15539591584158416,
+            "actual_over": 0.09900990099009901,
+            "sides": {
+              "over": {
+                "n": 2,
+                "predicted": 0.5,
+                "hit": 0.0
+              },
+              "under": {
+                "n": 1614,
+                "predicted": 0.845031102850062,
+                "hit": 0.9008674101610905
+              }
+            }
+          }
+        }
+      },
+      "status": "rejected"
+    },
+    "soccer/assists": {
+      "coefficients": [
+        0.6395230635297915,
+        -0.8928272131044864
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-09-14",
+          "end": "2025-12-13",
+          "raw": {
+            "n": 4047,
+            "brier": 0.06686201672596986,
+            "log_loss": 0.25323608147078547,
+            "predicted_over": 0.07805379293303681,
+            "actual_over": 0.072646404744255,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 4047,
+                "predicted": 0.9219462070669631,
+                "hit": 0.927353595255745
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4047,
+            "brier": 0.06596365844053362,
+            "log_loss": 0.24970174521896407,
+            "predicted_over": 0.07283120288656961,
+            "actual_over": 0.072646404744255,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 4047,
+                "predicted": 0.9271687971134305,
+                "hit": 0.927353595255745
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4047,
+            "brier": 0.07658794553743514,
+            "log_loss": 0.2885941336026347,
+            "predicted_over": 0.15184455151964418,
+            "actual_over": 0.072646404744255,
+            "sides": {
+              "over": {
+                "n": 16,
+                "predicted": 0.5,
+                "hit": 0.25
+              },
+              "under": {
+                "n": 4031,
+                "predicted": 0.8495373604564623,
+                "hit": 0.9280575539568345
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-14",
+          "end": "2026-03-20",
+          "raw": {
+            "n": 1561,
+            "brier": 0.06415163834721332,
+            "log_loss": 0.24377532143651903,
+            "predicted_over": 0.07717809096732864,
+            "actual_over": 0.07110826393337603,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1561,
+                "predicted": 0.9228219090326715,
+                "hit": 0.928891736066624
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1561,
+            "brier": 0.06396860536388149,
+            "log_loss": 0.24258451221986094,
+            "predicted_over": 0.07250598975422418,
+            "actual_over": 0.07110826393337603,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1561,
+                "predicted": 0.9274940102457758,
+                "hit": 0.928891736066624
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1561,
+            "brier": 0.07046937612427931,
+            "log_loss": 0.26874075546336257,
+            "predicted_over": 0.14036752081998718,
+            "actual_over": 0.07110826393337603,
+            "sides": {
+              "over": {
+                "n": 7,
+                "predicted": 0.5,
+                "hit": 0.5714285714285714
+              },
+              "under": {
+                "n": 1554,
+                "predicted": 0.8612524453024454,
+                "hit": 0.9311454311454311
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-03-21",
+          "end": "2026-10-18",
+          "raw": {
+            "n": 1616,
+            "brier": 0.0697274792759901,
+            "log_loss": 0.2649833208123937,
+            "predicted_over": 0.07694016089108913,
+            "actual_over": 0.07611386138613861,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1616,
+                "predicted": 0.9230598391089108,
+                "hit": 0.9238861386138614
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1616,
+            "brier": 0.06916129426724545,
+            "log_loss": 0.2613839095418518,
+            "predicted_over": 0.07293086599331382,
+            "actual_over": 0.07611386138613861,
+            "sides": {
+              "over": {
+                "n": 0,
+                "predicted": null,
+                "hit": null
+              },
+              "under": {
+                "n": 1616,
+                "predicted": 0.9270691340066862,
+                "hit": 0.9238861386138614
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1616,
+            "brier": 0.07494573,
+            "log_loss": 0.28369157053464295,
+            "predicted_over": 0.1375065594059406,
+            "actual_over": 0.07611386138613861,
+            "sides": {
+              "over": {
+                "n": 2,
+                "predicted": 0.5,
+                "hit": 0.0
+              },
+              "under": {
+                "n": 1614,
+                "predicted": 0.8629426270136308,
+                "hit": 0.9237918215613383
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "soccer/fouls": {
+      "coefficients": [
+        0.9732136730412982,
+        -0.13933377551218676
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-09-14",
+          "end": "2025-12-13",
+          "raw": {
+            "n": 4047,
+            "brier": 0.1961927217445021,
+            "log_loss": 0.5778683362221387,
+            "predicted_over": 0.3181018532246109,
+            "actual_over": 0.2940449715838893,
+            "sides": {
+              "over": {
+                "n": 318,
+                "predicted": 0.5421559748427673,
+                "hit": 0.5125786163522013
+              },
+              "under": {
+                "n": 3729,
+                "predicted": 0.7010049342987397,
+                "hit": 0.724591043175114
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4047,
+            "brier": 0.19555901627020011,
+            "log_loss": 0.576404064294267,
+            "predicted_over": 0.29407001784692444,
+            "actual_over": 0.2940449715838893,
+            "sides": {
+              "over": {
+                "n": 149,
+                "predicted": 0.5355634755143116,
+                "hit": 0.5167785234899329
+              },
+              "under": {
+                "n": 3898,
+                "predicted": 0.7151610045215826,
+                "hit": 0.7144689584402257
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4047,
+            "brier": 0.2090248484086978,
+            "log_loss": 0.6086519429884782,
+            "predicted_over": 0.3402045712873734,
+            "actual_over": 0.2940449715838893,
+            "sides": {
+              "over": {
+                "n": 392,
+                "predicted": 0.5,
+                "hit": 0.39540816326530615
+              },
+              "under": {
+                "n": 3655,
+                "predicted": 0.6769335430916552,
+                "hit": 0.7168262653898769
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-14",
+          "end": "2026-03-20",
+          "raw": {
+            "n": 1561,
+            "brier": 0.1952041348110186,
+            "log_loss": 0.5760013051687741,
+            "predicted_over": 0.319391800128123,
+            "actual_over": 0.29980781550288277,
+            "sides": {
+              "over": {
+                "n": 129,
+                "predicted": 0.5397953488372094,
+                "hit": 0.5426356589147286
+              },
+              "under": {
+                "n": 1432,
+                "predicted": 0.7004629888268157,
+                "hit": 0.7220670391061452
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1561,
+            "brier": 0.19492487248836773,
+            "log_loss": 0.5752082211179413,
+            "predicted_over": 0.2953116493610617,
+            "actual_over": 0.29980781550288277,
+            "sides": {
+              "over": {
+                "n": 57,
+                "predicted": 0.5314499661700608,
+                "hit": 0.5789473684210527
+              },
+              "under": {
+                "n": 1504,
+                "predicted": 0.713637741635024,
+                "hit": 0.7107712765957447
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1561,
+            "brier": 0.20463791764253686,
+            "log_loss": 0.59899486804708,
+            "predicted_over": 0.33487405509288914,
+            "actual_over": 0.29980781550288277,
+            "sides": {
+              "over": {
+                "n": 95,
+                "predicted": 0.5,
+                "hit": 0.4631578947368421
+              },
+              "under": {
+                "n": 1466,
+                "predicted": 0.6758264665757162,
+                "hit": 0.7107776261937244
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-03-21",
+          "end": "2026-10-18",
+          "raw": {
+            "n": 1616,
+            "brier": 0.19025526422029704,
+            "log_loss": 0.5638199223979281,
+            "predicted_over": 0.3081532178217822,
+            "actual_over": 0.28836633663366334,
+            "sides": {
+              "over": {
+                "n": 130,
+                "predicted": 0.5391984615384615,
+                "hit": 0.5
+              },
+              "under": {
+                "n": 1486,
+                "predicted": 0.7120593539703902,
+                "hit": 0.7301480484522207
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1616,
+            "brier": 0.19004689522719612,
+            "log_loss": 0.5630394361985571,
+            "predicted_over": 0.2848307938530459,
+            "actual_over": 0.28836633663366334,
+            "sides": {
+              "over": {
+                "n": 56,
+                "predicted": 0.5327916606275307,
+                "hit": 0.48214285714285715
+              },
+              "under": {
+                "n": 1560,
+                "predicted": 0.7240703654670639,
+                "hit": 0.7185897435897436
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1616,
+            "brier": 0.20151074875618816,
+            "log_loss": 0.590907481028478,
+            "predicted_over": 0.3323956064356436,
+            "actual_over": 0.28836633663366334,
+            "sides": {
+              "over": {
+                "n": 59,
+                "predicted": 0.5,
+                "hit": 0.3220338983050847
+              },
+              "under": {
+                "n": 1557,
+                "predicted": 0.6739554913294797,
+                "hit": 0.7129094412331407
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nba/points": {
+      "coefficients": [
+        0.5136286358584288,
+        -0.09776986017092255
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-11-01",
+          "end": "2025-12-01",
+          "raw": {
+            "n": 4666,
+            "brier": 0.24436776384483497,
+            "log_loss": 0.6837117411536476,
+            "predicted_over": 0.43174483497642524,
+            "actual_over": 0.43891984569224174,
+            "sides": {
+              "over": {
+                "n": 1418,
+                "predicted": 0.5902390691114245,
+                "hit": 0.5232722143864598
+              },
+              "under": {
+                "n": 3248,
+                "predicted": 0.6374500000000001,
+                "hit": 0.5979064039408867
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4666,
+            "brier": 0.24068752730222856,
+            "log_loss": 0.6742307355670588,
+            "predicted_over": 0.4389393794995327,
+            "actual_over": 0.43891984569224174,
+            "sides": {
+              "over": {
+                "n": 917,
+                "predicted": 0.5434567105605036,
+                "hit": 0.5288985823336968
+              },
+              "under": {
+                "n": 3749,
+                "predicted": 0.5866254091328788,
+                "hit": 0.5830888236863163
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4666,
+            "brier": 0.24563711802400343,
+            "log_loss": 0.6843677154176926,
+            "predicted_over": 0.44320608658379773,
+            "actual_over": 0.43891984569224174,
+            "sides": {
+              "over": {
+                "n": 366,
+                "predicted": 0.5,
+                "hit": 0.46174863387978143
+              },
+              "under": {
+                "n": 4300,
+                "predicted": 0.561628,
+                "hit": 0.5630232558139535
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-02",
+          "end": "2026-02-07",
+          "raw": {
+            "n": 1589,
+            "brier": 0.2416293623096287,
+            "log_loss": 0.6775000264197037,
+            "predicted_over": 0.4204543108873506,
+            "actual_over": 0.41787287602265577,
+            "sides": {
+              "over": {
+                "n": 442,
+                "predicted": 0.5817990950226245,
+                "hit": 0.5158371040723982
+              },
+              "under": {
+                "n": 1147,
+                "predicted": 0.6417204010462075,
+                "hit": 0.6198779424585876
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1589,
+            "brier": 0.23815061014895955,
+            "log_loss": 0.6688427274032055,
+            "predicted_over": 0.43235989634945654,
+            "actual_over": 0.41787287602265577,
+            "sides": {
+              "over": {
+                "n": 287,
+                "predicted": 0.5356921058025563,
+                "hit": 0.5226480836236934
+              },
+              "under": {
+                "n": 1302,
+                "predicted": 0.5904176336912803,
+                "hit": 0.6052227342549923
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1589,
+            "brier": 0.24257038694147262,
+            "log_loss": 0.6781186277041484,
+            "predicted_over": 0.4425042794210196,
+            "actual_over": 0.41787287602265577,
+            "sides": {
+              "over": {
+                "n": 23,
+                "predicted": 0.5,
+                "hit": 0.08695652173913043
+              },
+              "under": {
+                "n": 1566,
+                "predicted": 0.558340166028097,
+                "hit": 0.5772669220945083
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-02-08",
+          "end": "2026-10-24",
+          "raw": {
+            "n": 1612,
+            "brier": 0.24274734457816377,
+            "log_loss": 0.6810441850315989,
+            "predicted_over": 0.4203771712158809,
+            "actual_over": 0.4267990074441687,
+            "sides": {
+              "over": {
+                "n": 463,
+                "predicted": 0.5775116630669546,
+                "hit": 0.509719222462203
+              },
+              "under": {
+                "n": 1149,
+                "predicted": 0.6429416013925152,
+                "hit": 0.6066144473455178
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1612,
+            "brier": 0.23918536743127738,
+            "log_loss": 0.6711781827918083,
+            "predicted_over": 0.43221522757404846,
+            "actual_over": 0.4267990074441687,
+            "sides": {
+              "over": {
+                "n": 273,
+                "predicted": 0.5370663856070549,
+                "hit": 0.5384615384615384
+              },
+              "under": {
+                "n": 1339,
+                "predicted": 0.5891621929957879,
+                "hit": 0.5959671396564601
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1612,
+            "brier": 0.24648940580024817,
+            "log_loss": 0.6862405167019711,
+            "predicted_over": 0.4446269851116626,
+            "actual_over": 0.4267990074441687,
+            "sides": {
+              "over": {
+                "n": 62,
+                "predicted": 0.5,
+                "hit": 0.41935483870967744
+              },
+              "under": {
+                "n": 1550,
+                "predicted": 0.5575879354838709,
+                "hit": 0.5729032258064516
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nba/rebounds": {
+      "coefficients": [
+        0.9366822532266009,
+        -0.14029074037673872
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-11-01",
+          "end": "2025-12-01",
+          "raw": {
+            "n": 4666,
+            "brier": 0.22675920335405061,
+            "log_loss": 0.6447717648117679,
+            "predicted_over": 0.41396153021860266,
+            "actual_over": 0.3866266609515645,
+            "sides": {
+              "over": {
+                "n": 1081,
+                "predicted": 0.5687788159111933,
+                "hit": 0.5411655874190564
+              },
+              "under": {
+                "n": 3585,
+                "predicted": 0.6327211715481172,
+                "hit": 0.6599721059972106
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4666,
+            "brier": 0.2259390790822466,
+            "log_loss": 0.6430297112339268,
+            "predicted_over": 0.3866508380820265,
+            "actual_over": 0.3866266609515645,
+            "sides": {
+              "over": {
+                "n": 712,
+                "predicted": 0.5552766848997636,
+                "hit": 0.5589887640449438
+              },
+              "under": {
+                "n": 3954,
+                "predicted": 0.6437137554774649,
+                "hit": 0.6444107233181589
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4666,
+            "brier": 0.2365813320724389,
+            "log_loss": 0.6659073437875994,
+            "predicted_over": 0.4054657736819546,
+            "actual_over": 0.3866266609515645,
+            "sides": {
+              "over": {
+                "n": 262,
+                "predicted": 0.5,
+                "hit": 0.4312977099236641
+              },
+              "under": {
+                "n": 4404,
+                "predicted": 0.6001581970935512,
+                "hit": 0.616030881017257
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-02",
+          "end": "2026-02-07",
+          "raw": {
+            "n": 1589,
+            "brier": 0.2297884265575834,
+            "log_loss": 0.6512787630187805,
+            "predicted_over": 0.39712662051604786,
+            "actual_over": 0.3989930774071743,
+            "sides": {
+              "over": {
+                "n": 280,
+                "predicted": 0.5673339285714286,
+                "hit": 0.55
+              },
+              "under": {
+                "n": 1309,
+                "predicted": 0.6392813598166539,
+                "hit": 0.6333078686019863
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1589,
+            "brier": 0.23043720179060903,
+            "log_loss": 0.6527188922189108,
+            "predicted_over": 0.3711475463903342,
+            "actual_over": 0.3989930774071743,
+            "sides": {
+              "over": {
+                "n": 170,
+                "predicted": 0.5600153087191484,
+                "hit": 0.611764705882353
+              },
+              "under": {
+                "n": 1419,
+                "predicted": 0.6514793173136112,
+                "hit": 0.6264975334742776
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1589,
+            "brier": 0.23822725448709883,
+            "log_loss": 0.669282155919166,
+            "predicted_over": 0.3995368156073002,
+            "actual_over": 0.3989930774071743,
+            "sides": {
+              "over": {
+                "n": 17,
+                "predicted": 0.5,
+                "hit": 0.058823529411764705
+              },
+              "under": {
+                "n": 1572,
+                "predicted": 0.6015496183206107,
+                "hit": 0.5973282442748091
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-02-08",
+          "end": "2026-10-24",
+          "raw": {
+            "n": 1612,
+            "brier": 0.22133334717121592,
+            "log_loss": 0.6334068398405767,
+            "predicted_over": 0.40511947890818856,
+            "actual_over": 0.37220843672456577,
+            "sides": {
+              "over": {
+                "n": 355,
+                "predicted": 0.5685276056338029,
+                "hit": 0.5352112676056338
+              },
+              "under": {
+                "n": 1257,
+                "predicted": 0.6410299920445506,
+                "hit": 0.6738265712012729
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1612,
+            "brier": 0.22036674707159615,
+            "log_loss": 0.6312034535824874,
+            "predicted_over": 0.378581288127864,
+            "actual_over": 0.37220843672456577,
+            "sides": {
+              "over": {
+                "n": 224,
+                "predicted": 0.5587201126115409,
+                "hit": 0.5535714285714286
+              },
+              "under": {
+                "n": 1388,
+                "predicted": 0.650490107177859,
+                "hit": 0.6570605187319885
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1612,
+            "brier": 0.23151690728287844,
+            "log_loss": 0.6552082180894293,
+            "predicted_over": 0.40439454094292804,
+            "actual_over": 0.37220843672456577,
+            "sides": {
+              "over": {
+                "n": 39,
+                "predicted": 0.5,
+                "hit": 0.38461538461538464
+              },
+              "under": {
+                "n": 1573,
+                "predicted": 0.5979758423394786,
+                "hit": 0.628099173553719
+              }
+            }
+          }
+        }
+      },
+      "status": "rejected"
+    },
+    "nba/assists": {
+      "coefficients": [
+        0.7944612047874992,
+        -0.08396982981718942
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-11-01",
+          "end": "2025-12-01",
+          "raw": {
+            "n": 4666,
+            "brier": 0.22971551692456071,
+            "log_loss": 0.6514360998560003,
+            "predicted_over": 0.3896155807972568,
+            "actual_over": 0.390484354907844,
+            "sides": {
+              "over": {
+                "n": 830,
+                "predicted": 0.564602048192771,
+                "hit": 0.5228915662650603
+              },
+              "under": {
+                "n": 3836,
+                "predicted": 0.6482464546402503,
+                "hit": 0.6381647549530761
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4666,
+            "brier": 0.2292409000684434,
+            "log_loss": 0.6502643839295348,
+            "predicted_over": 0.39050208134588493,
+            "actual_over": 0.390484354907844,
+            "sides": {
+              "over": {
+                "n": 591,
+                "predicted": 0.54795651802722,
+                "hit": 0.5329949238578681
+              },
+              "under": {
+                "n": 4075,
+                "predicted": 0.6323336418636044,
+                "hit": 0.6301840490797546
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4666,
+            "brier": 0.23378710143806258,
+            "log_loss": 0.6603841316459783,
+            "predicted_over": 0.38244579939991424,
+            "actual_over": 0.390484354907844,
+            "sides": {
+              "over": {
+                "n": 197,
+                "predicted": 0.5,
+                "hit": 0.47715736040609136
+              },
+              "under": {
+                "n": 4469,
+                "predicted": 0.622736160214813,
+                "hit": 0.613336316849407
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-02",
+          "end": "2026-02-07",
+          "raw": {
+            "n": 1589,
+            "brier": 0.23127746785399625,
+            "log_loss": 0.6548541951236587,
+            "predicted_over": 0.37894046570169926,
+            "actual_over": 0.394587791063562,
+            "sides": {
+              "over": {
+                "n": 236,
+                "predicted": 0.5582745762711864,
+                "hit": 0.5169491525423728
+              },
+              "under": {
+                "n": 1353,
+                "predicted": 0.6523402808573541,
+                "hit": 0.6267553584626755
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1589,
+            "brier": 0.23069158905421602,
+            "log_loss": 0.6532798134597743,
+            "predicted_over": 0.3817554075982157,
+            "actual_over": 0.394587791063562,
+            "sides": {
+              "over": {
+                "n": 161,
+                "predicted": 0.5430064981950359,
+                "hit": 0.5527950310559007
+              },
+              "under": {
+                "n": 1428,
+                "predicted": 0.6364248624200533,
+                "hit": 0.623249299719888
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1589,
+            "brier": 0.23694488254247956,
+            "log_loss": 0.6677952330226649,
+            "predicted_over": 0.38310585273757086,
+            "actual_over": 0.394587791063562,
+            "sides": {
+              "over": {
+                "n": 17,
+                "predicted": 0.5,
+                "hit": 0.47058823529411764
+              },
+              "under": {
+                "n": 1572,
+                "predicted": 0.6181582697201018,
+                "hit": 0.6062340966921119
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-02-08",
+          "end": "2026-10-24",
+          "raw": {
+            "n": 1612,
+            "brier": 0.22586842921215886,
+            "log_loss": 0.6433966571470412,
+            "predicted_over": 0.38135738213399506,
+            "actual_over": 0.36476426799007444,
+            "sides": {
+              "over": {
+                "n": 267,
+                "predicted": 0.5613932584269663,
+                "hit": 0.50187265917603
+              },
+              "under": {
+                "n": 1345,
+                "predicted": 0.6543820817843866,
+                "hit": 0.6624535315985131
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1612,
+            "brier": 0.2250650102618473,
+            "log_loss": 0.6415628256931584,
+            "predicted_over": 0.3837629878766491,
+            "actual_over": 0.36476426799007444,
+            "sides": {
+              "over": {
+                "n": 188,
+                "predicted": 0.5450425733971987,
+                "hit": 0.5106382978723404
+              },
+              "under": {
+                "n": 1424,
+                "predicted": 0.6375295416724123,
+                "hit": 0.6544943820224719
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1612,
+            "brier": 0.23390069564516133,
+            "log_loss": 0.6611095321544355,
+            "predicted_over": 0.3848903225806452,
+            "actual_over": 0.36476426799007444,
+            "sides": {
+              "over": {
+                "n": 29,
+                "predicted": 0.5,
+                "hit": 0.2413793103448276
+              },
+              "under": {
+                "n": 1583,
+                "predicted": 0.6172184459886291,
+                "hit": 0.6329753632343651
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nba/threes": {
+      "coefficients": [
+        1.1197723894399214,
+        0.08962982451805873
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-11-01",
+          "end": "2025-12-01",
+          "raw": {
+            "n": 4666,
+            "brier": 0.2081158906086584,
+            "log_loss": 0.6026623635749687,
+            "predicted_over": 0.3324782254607801,
+            "actual_over": 0.3349764252036005,
+            "sides": {
+              "over": {
+                "n": 354,
+                "predicted": 0.5552983050847458,
+                "hit": 0.559322033898305
+              },
+              "under": {
+                "n": 4312,
+                "predicted": 0.685814517625232,
+                "hit": 0.6834415584415584
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4666,
+            "brier": 0.2080759650551083,
+            "log_loss": 0.6022791401265778,
+            "predicted_over": 0.33495983587468625,
+            "actual_over": 0.3349764252036005,
+            "sides": {
+              "over": {
+                "n": 464,
+                "predicted": 0.5661710351214163,
+                "hit": 0.5452586206896551
+              },
+              "under": {
+                "n": 4202,
+                "predicted": 0.690571338911245,
+                "hit": 0.6882436934792956
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4666,
+            "brier": 0.2110040855850836,
+            "log_loss": 0.6055710268199903,
+            "predicted_over": 0.3401807543934847,
+            "actual_over": 0.3349764252036005,
+            "sides": {
+              "over": {
+                "n": 152,
+                "predicted": 0.5,
+                "hit": 0.45394736842105265
+              },
+              "under": {
+                "n": 4514,
+                "predicted": 0.6652008418254319,
+                "hit": 0.669029685423128
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-02",
+          "end": "2026-02-07",
+          "raw": {
+            "n": 1589,
+            "brier": 0.20483649127123973,
+            "log_loss": 0.5965454265495223,
+            "predicted_over": 0.32599943360604156,
+            "actual_over": 0.3108873505349276,
+            "sides": {
+              "over": {
+                "n": 109,
+                "predicted": 0.5519981651376148,
+                "hit": 0.5045871559633027
+              },
+              "under": {
+                "n": 1480,
+                "predicted": 0.6906450675675675,
+                "hit": 0.7033783783783784
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1589,
+            "brier": 0.20534516424130136,
+            "log_loss": 0.597432841318024,
+            "predicted_over": 0.3277259072872091,
+            "actual_over": 0.3108873505349276,
+            "sides": {
+              "over": {
+                "n": 144,
+                "predicted": 0.5628288156525041,
+                "hit": 0.5069444444444444
+              },
+              "under": {
+                "n": 1445,
+                "predicted": 0.6957030330619968,
+                "hit": 0.7086505190311418
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1589,
+            "brier": 0.2036981949024544,
+            "log_loss": 0.5895820615965373,
+            "predicted_over": 0.3331071113908118,
+            "actual_over": 0.3108873505349276,
+            "sides": {
+              "over": {
+                "n": 11,
+                "predicted": 0.5,
+                "hit": 0.18181818181818182
+              },
+              "under": {
+                "n": 1578,
+                "predicted": 0.6680562737642585,
+                "hit": 0.688212927756654
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-02-08",
+          "end": "2026-10-24",
+          "raw": {
+            "n": 1612,
+            "brier": 0.20484629354838707,
+            "log_loss": 0.5951766252763363,
+            "predicted_over": 0.3322341191066997,
+            "actual_over": 0.31575682382133996,
+            "sides": {
+              "over": {
+                "n": 128,
+                "predicted": 0.5538757812499999,
+                "hit": 0.4609375
+              },
+              "under": {
+                "n": 1484,
+                "predicted": 0.6868832210242588,
+                "hit": 0.6967654986522911
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1612,
+            "brier": 0.20530519192085192,
+            "log_loss": 0.5957346957393346,
+            "predicted_over": 0.3347400773712191,
+            "actual_over": 0.31575682382133996,
+            "sides": {
+              "over": {
+                "n": 164,
+                "predicted": 0.5660163470487383,
+                "hit": 0.4573170731707317
+              },
+              "under": {
+                "n": 1448,
+                "predicted": 0.69145419626629,
+                "hit": 0.7002762430939227
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1612,
+            "brier": 0.20832470346153847,
+            "log_loss": 0.5998883536587596,
+            "predicted_over": 0.33829888337468983,
+            "actual_over": 0.31575682382133996,
+            "sides": {
+              "over": {
+                "n": 14,
+                "predicted": 0.5,
+                "hit": 0.35714285714285715
+              },
+              "under": {
+                "n": 1598,
+                "predicted": 0.6631177722152691,
+                "hit": 0.6846057571964956
+              }
+            }
+          }
+        }
+      },
+      "status": "rejected"
+    },
+    "nba/pra": {
+      "coefficients": [
+        0.507045975207859,
+        -0.08554062622579521
+      ],
+      "splits": {
+        "train": {
+          "start": "2024-11-01",
+          "end": "2025-12-01",
+          "raw": {
+            "n": 4666,
+            "brier": 0.2445836999935705,
+            "log_loss": 0.6852566281006139,
+            "predicted_over": 0.43811870981568796,
+            "actual_over": 0.4453493356193742,
+            "sides": {
+              "over": {
+                "n": 1584,
+                "predicted": 0.599012058080808,
+                "hit": 0.5448232323232324
+              },
+              "under": {
+                "n": 3082,
+                "predicted": 0.6445727449707982,
+                "hit": 0.6057754704737184
+              }
+            }
+          },
+          "calibrated": {
+            "n": 4666,
+            "brier": 0.2404974731730088,
+            "log_loss": 0.6739414293654351,
+            "predicted_over": 0.4453630074689791,
+            "actual_over": 0.4453493356193742,
+            "sides": {
+              "over": {
+                "n": 1154,
+                "predicted": 0.5464914818316731,
+                "hit": 0.5649913344887348
+              },
+              "under": {
+                "n": 3512,
+                "predicted": 0.5878665652572591,
+                "hit": 0.5939635535307517
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 4666,
+            "brier": 0.2468808330668667,
+            "log_loss": 0.6870848835931461,
+            "predicted_over": 0.44877207458208324,
+            "actual_over": 0.4453493356193742,
+            "sides": {
+              "over": {
+                "n": 414,
+                "predicted": 0.5,
+                "hit": 0.47342995169082125
+              },
+              "under": {
+                "n": 4252,
+                "predicted": 0.556215780809031,
+                "hit": 0.5573847601128881
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2025-12-02",
+          "end": "2026-02-07",
+          "raw": {
+            "n": 1589,
+            "brier": 0.24162479404657014,
+            "log_loss": 0.6778660988312667,
+            "predicted_over": 0.41993719320327244,
+            "actual_over": 0.42164883574575207,
+            "sides": {
+              "over": {
+                "n": 468,
+                "predicted": 0.5862645299145299,
+                "hit": 0.5042735042735043
+              },
+              "under": {
+                "n": 1121,
+                "predicted": 0.6495018733273863,
+                "hit": 0.6128456735057984
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1589,
+            "brier": 0.23767132694922888,
+            "log_loss": 0.6677765360760807,
+            "predicted_over": 0.43501178960827647,
+            "actual_over": 0.42164883574575207,
+            "sides": {
+              "over": {
+                "n": 309,
+                "predicted": 0.5420599857863406,
+                "hit": 0.5275080906148867
+              },
+              "under": {
+                "n": 1280,
+                "predicted": 0.5908303140003344,
+                "hit": 0.60390625
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1589,
+            "brier": 0.24564426044052867,
+            "log_loss": 0.6843655042642456,
+            "predicted_over": 0.4483580868470737,
+            "actual_over": 0.42164883574575207,
+            "sides": {
+              "over": {
+                "n": 26,
+                "predicted": 0.5,
+                "hit": 0.11538461538461539
+              },
+              "under": {
+                "n": 1563,
+                "predicted": 0.5525009596928981,
+                "hit": 0.5732565579014716
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2026-02-08",
+          "end": "2026-10-24",
+          "raw": {
+            "n": 1612,
+            "brier": 0.24501992119727048,
+            "log_loss": 0.6866130637078711,
+            "predicted_over": 0.4292964640198511,
+            "actual_over": 0.423697270471464,
+            "sides": {
+              "over": {
+                "n": 539,
+                "predicted": 0.5933150278293134,
+                "hit": 0.5120593692022264
+              },
+              "under": {
+                "n": 1073,
+                "predicted": 0.6530949673811742,
+                "hit": 0.6206896551724138
+              }
+            }
+          },
+          "calibrated": {
+            "n": 1612,
+            "brier": 0.23943980206201293,
+            "log_loss": 0.6716428386007475,
+            "predicted_over": 0.4397561309036941,
+            "actual_over": 0.423697270471464,
+            "sides": {
+              "over": {
+                "n": 388,
+                "predicted": 0.5422177731767419,
+                "hit": 0.5309278350515464
+              },
+              "under": {
+                "n": 1224,
+                "predicted": 0.5927235400129257,
+                "hit": 0.6102941176470589
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 1612,
+            "brier": 0.24457143971464024,
+            "log_loss": 0.6822868460026271,
+            "predicted_over": 0.4487260545905708,
+            "actual_over": 0.423697270471464,
+            "sides": {
+              "over": {
+                "n": 59,
+                "predicted": 0.5,
+                "hit": 0.3559322033898305
+              },
+              "under": {
+                "n": 1553,
+                "predicted": 0.5532218931101095,
+                "hit": 0.5737282678686413
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/rushing_yards": {
+      "coefficients": [
+        0.32723941999175876,
+        -0.10312735306694124
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 26604,
+            "brier": 0.23580796393400852,
+            "log_loss": 0.712028651484932,
+            "predicted_over": 0.43945875984814314,
+            "actual_over": 0.45015787099684257,
+            "sides": {
+              "over": {
+                "n": 9365,
+                "predicted": 0.6506722949279231,
+                "hit": 0.5851575013347571
+              },
+              "under": {
+                "n": 17239,
+                "predicted": 0.6752819302163697,
+                "hit": 0.6231799988398399
+              }
+            }
+          },
+          "calibrated": {
+            "n": 26604,
+            "brier": 0.23244678367821045,
+            "log_loss": 0.6588838210330101,
+            "predicted_over": 0.45018646176902616,
+            "actual_over": 0.45015787099684257,
+            "sides": {
+              "over": {
+                "n": 5894,
+                "predicted": 0.5750741046192721,
+                "hit": 0.6148625721072277
+              },
+              "under": {
+                "n": 20710,
+                "predicted": 0.5853561633859399,
+                "hit": 0.5967165620473202
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 26604,
+            "brier": 0.24152473678168696,
+            "log_loss": 0.674085673884284,
+            "predicted_over": 0.42826224627875503,
+            "actual_over": 0.45015787099684257,
+            "sides": {
+              "over": {
+                "n": 9575,
+                "predicted": 0.5,
+                "hit": 0.4789556135770235
+              },
+              "under": {
+                "n": 17029,
+                "predicted": 0.612074179341124,
+                "hit": 0.5660344118856069
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 7606,
+            "brier": 0.23841233361426045,
+            "log_loss": 0.7089240615902168,
+            "predicted_over": 0.4488521476465948,
+            "actual_over": 0.4633184328161977,
+            "sides": {
+              "over": {
+                "n": 2840,
+                "predicted": 0.638672477112676,
+                "hit": 0.5887323943661972
+              },
+              "under": {
+                "n": 4766,
+                "predicted": 0.6642594208980276,
+                "hit": 0.6114141838019304
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7606,
+            "brier": 0.2366897758717912,
+            "log_loss": 0.6681881162397046,
+            "predicted_over": 0.45493754804220876,
+            "actual_over": 0.4633184328161977,
+            "sides": {
+              "over": {
+                "n": 1727,
+                "predicted": 0.5617920243188868,
+                "hit": 0.6137811233352635
+              },
+              "under": {
+                "n": 5879,
+                "predicted": 0.5764517495474873,
+                "hit": 0.5808811022282702
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7606,
+            "brier": 0.24718772980410203,
+            "log_loss": 0.6872045350794848,
+            "predicted_over": 0.4389879174336051,
+            "actual_over": 0.4633184328161977,
+            "sides": {
+              "over": {
+                "n": 2920,
+                "predicted": 0.5,
+                "hit": 0.4773972602739726
+              },
+              "under": {
+                "n": 4686,
+                "predicted": 0.5990307084933845,
+                "hit": 0.5454545454545454
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 7374,
+            "brier": 0.24090324069298344,
+            "log_loss": 0.7127043400305437,
+            "predicted_over": 0.4569827556278817,
+            "actual_over": 0.4651478166531055,
+            "sides": {
+              "over": {
+                "n": 2720,
+                "predicted": 0.6451900514705882,
+                "hit": 0.5841911764705883
+              },
+              "under": {
+                "n": 4654,
+                "predicted": 0.6530137730984099,
+                "hit": 0.6044262999570262
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7374,
+            "brier": 0.23814425240366566,
+            "log_loss": 0.671319386912998,
+            "predicted_over": 0.45917451633720635,
+            "actual_over": 0.4651478166531055,
+            "sides": {
+              "over": {
+                "n": 1723,
+                "predicted": 0.5629659482009645,
+                "hit": 0.608241439349971
+              },
+              "under": {
+                "n": 5651,
+                "predicted": 0.5724716767438863,
+                "hit": 0.5784816846575828
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7374,
+            "brier": 0.24825137254407378,
+            "log_loss": 0.6892487673417816,
+            "predicted_over": 0.4416295362082995,
+            "actual_over": 0.4651478166531055,
+            "sides": {
+              "over": {
+                "n": 2811,
+                "predicted": 0.5,
+                "hit": 0.47705442902881534
+              },
+              "under": {
+                "n": 4563,
+                "predicted": 0.5943291255752794,
+                "hit": 0.5421871575717729
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/carries": {
+      "coefficients": [
+        0.6878034827039791,
+        -0.016559040963208982
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 19196,
+            "brier": 0.2288504704855178,
+            "log_loss": 0.649670668323612,
+            "predicted_over": 0.422455657428631,
+            "actual_over": 0.43712231714940614,
+            "sides": {
+              "over": {
+                "n": 6409,
+                "predicted": 0.6254023404587299,
+                "hit": 0.5840224684038071
+              },
+              "under": {
+                "n": 12787,
+                "predicted": 0.6792636896848362,
+                "hit": 0.6365058262297646
+              }
+            }
+          },
+          "calibrated": {
+            "n": 19196,
+            "brier": 0.2264051544379425,
+            "log_loss": 0.6424941431055344,
+            "predicted_over": 0.43712433783654464,
+            "actual_over": 0.43712231714940614,
+            "sides": {
+              "over": {
+                "n": 6191,
+                "predicted": 0.5890542230108726,
+                "hit": 0.5868195768050396
+              },
+              "under": {
+                "n": 13005,
+                "predicted": 0.6352015306074588,
+                "hit": 0.6341407151095733
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 19196,
+            "brier": 0.23893896567149409,
+            "log_loss": 0.6686810720675009,
+            "predicted_over": 0.40738576265888726,
+            "actual_over": 0.43712231714940614,
+            "sides": {
+              "over": {
+                "n": 5552,
+                "predicted": 0.5,
+                "hit": 0.4809077809798271
+              },
+              "under": {
+                "n": 13644,
+                "predicted": 0.6303007109352096,
+                "hit": 0.5806948109058927
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 5473,
+            "brier": 0.2287509451434314,
+            "log_loss": 0.6503928387590254,
+            "predicted_over": 0.436389713137219,
+            "actual_over": 0.4483829709482916,
+            "sides": {
+              "over": {
+                "n": 1935,
+                "predicted": 0.6193247545219638,
+                "hit": 0.5963824289405685
+              },
+              "under": {
+                "n": 3538,
+                "predicted": 0.6636609666478237,
+                "hit": 0.6325607687959299
+              }
+            }
+          },
+          "calibrated": {
+            "n": 5473,
+            "brier": 0.22777683179794309,
+            "log_loss": 0.6466481267358261,
+            "predicted_over": 0.44852916210148025,
+            "actual_over": 0.4483829709482916,
+            "sides": {
+              "over": {
+                "n": 1860,
+                "predicted": 0.5847934755379974,
+                "hit": 0.5994623655913979
+              },
+              "under": {
+                "n": 3613,
+                "predicted": 0.6216207473897798,
+                "hit": 0.6293938555217271
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 5473,
+            "brier": 0.24568659073999635,
+            "log_loss": 0.6847003013796126,
+            "predicted_over": 0.4146404165905354,
+            "actual_over": 0.4483829709482916,
+            "sides": {
+              "over": {
+                "n": 1635,
+                "predicted": 0.5,
+                "hit": 0.4813455657492355
+              },
+              "under": {
+                "n": 3838,
+                "predicted": 0.6217230328295987,
+                "hit": 0.5656591974986972
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 5349,
+            "brier": 0.2314989657936063,
+            "log_loss": 0.6568087189614793,
+            "predicted_over": 0.44033911011404003,
+            "actual_over": 0.4466255374836418,
+            "sides": {
+              "over": {
+                "n": 1876,
+                "predicted": 0.6252480277185501,
+                "hit": 0.587953091684435
+              },
+              "under": {
+                "n": 3473,
+                "predicted": 0.659542585660812,
+                "hit": 0.629714943852577
+              }
+            }
+          },
+          "calibrated": {
+            "n": 5349,
+            "brier": 0.2299689477522812,
+            "log_loss": 0.6515579644573045,
+            "predicted_over": 0.4517239386169194,
+            "actual_over": 0.4466255374836418,
+            "sides": {
+              "over": {
+                "n": 1817,
+                "predicted": 0.5885056127764398,
+                "hit": 0.5921849201981287
+              },
+              "under": {
+                "n": 3532,
+                "predicted": 0.6186419452867751,
+                "hit": 0.6282559456398641
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 5349,
+            "brier": 0.2457715148083754,
+            "log_loss": 0.6842871152320517,
+            "predicted_over": 0.4163033277248084,
+            "actual_over": 0.4466255374836418,
+            "sides": {
+              "over": {
+                "n": 1556,
+                "predicted": 0.5,
+                "hit": 0.4717223650385604
+              },
+              "under": {
+                "n": 3793,
+                "predicted": 0.6180315054046929,
+                "hit": 0.5636699182704983
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/receptions": {
+      "coefficients": [
+        0.6686563672138176,
+        0.015530310365043825
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 60806,
+            "brier": 0.2235171198039667,
+            "log_loss": 0.6419430697459758,
+            "predicted_over": 0.3247864026576325,
+            "actual_over": 0.37460119067197317,
+            "sides": {
+              "over": {
+                "n": 8137,
+                "predicted": 0.5829955634754823,
+                "hit": 0.5665478677645324
+              },
+              "under": {
+                "n": 52669,
+                "predicted": 0.7151051453416621,
+                "hit": 0.6550532571341776
+              }
+            }
+          },
+          "calibrated": {
+            "n": 60806,
+            "brier": 0.2198827930882735,
+            "log_loss": 0.6294216980852199,
+            "predicted_over": 0.37459682986799014,
+            "actual_over": 0.37460119067197317,
+            "sides": {
+              "over": {
+                "n": 8624,
+                "predicted": 0.5571840712123586,
+                "hit": 0.5647031539888683
+              },
+              "under": {
+                "n": 52182,
+                "predicted": 0.6555789466326007,
+                "hit": 0.6568165267716837
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 60806,
+            "brier": 0.22764121390043748,
+            "log_loss": 0.6463942165782525,
+            "predicted_over": 0.3647931240338125,
+            "actual_over": 0.37460119067197317,
+            "sides": {
+              "over": {
+                "n": 11382,
+                "predicted": 0.5,
+                "hit": 0.4652960815322439
+              },
+              "under": {
+                "n": 49424,
+                "predicted": 0.6663440696827452,
+                "hit": 0.6462852055681451
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 18504,
+            "brier": 0.22477238196335922,
+            "log_loss": 0.6432470680964285,
+            "predicted_over": 0.36805604734111547,
+            "actual_over": 0.38575443147427585,
+            "sides": {
+              "over": {
+                "n": 3565,
+                "predicted": 0.5866951472650772,
+                "hit": 0.5604488078541374
+              },
+              "under": {
+                "n": 14939,
+                "predicted": 0.6841193587254837,
+                "hit": 0.6559341321373586
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18504,
+            "brier": 0.2241971450305721,
+            "log_loss": 0.6395454260166392,
+            "predicted_over": 0.40844293991428005,
+            "actual_over": 0.38575443147427585,
+            "sides": {
+              "over": {
+                "n": 3738,
+                "predicted": 0.5601954546931288,
+                "hit": 0.5556447298020332
+              },
+              "under": {
+                "n": 14766,
+                "predicted": 0.6299730766266475,
+                "hit": 0.6572531491263713
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18504,
+            "brier": 0.23468269486651538,
+            "log_loss": 0.6627836977268515,
+            "predicted_over": 0.3753654074794639,
+            "actual_over": 0.38575443147427585,
+            "sides": {
+              "over": {
+                "n": 3601,
+                "predicted": 0.5,
+                "hit": 0.4548736462093863
+              },
+              "under": {
+                "n": 14903,
+                "predicted": 0.6547499496745621,
+                "hit": 0.6309467892370664
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 18100,
+            "brier": 0.22177982244530386,
+            "log_loss": 0.6367443191372547,
+            "predicted_over": 0.36467013259668507,
+            "actual_over": 0.378232044198895,
+            "sides": {
+              "over": {
+                "n": 3445,
+                "predicted": 0.5858576197387517,
+                "hit": 0.5648766328011611
+              },
+              "under": {
+                "n": 14655,
+                "predicted": 0.6873251518253156,
+                "hit": 0.6656431252132378
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18100,
+            "brier": 0.2216423549054686,
+            "log_loss": 0.6338796858016074,
+            "predicted_over": 0.405211561156038,
+            "actual_over": 0.378232044198895,
+            "sides": {
+              "over": {
+                "n": 3625,
+                "predicted": 0.5594002721756375,
+                "hit": 0.5616551724137931
+              },
+              "under": {
+                "n": 14475,
+                "predicted": 0.6334021920353988,
+                "hit": 0.6677029360967185
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18100,
+            "brier": 0.23037930260607736,
+            "log_loss": 0.6531100035221555,
+            "predicted_over": 0.3670059723756906,
+            "actual_over": 0.378232044198895,
+            "sides": {
+              "over": {
+                "n": 3310,
+                "predicted": 0.5,
+                "hit": 0.45770392749244715
+              },
+              "under": {
+                "n": 14790,
+                "predicted": 0.6627580730223125,
+                "hit": 0.639553752535497
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/receiving_yards": {
+      "coefficients": [
+        0.3765767319599559,
+        -0.06436122876988344
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 60806,
+            "brier": 0.24223334245551437,
+            "log_loss": 0.69795534457865,
+            "predicted_over": 0.4007360275795152,
+            "actual_over": 0.43574647238759334,
+            "sides": {
+              "over": {
+                "n": 16458,
+                "predicted": 0.6398394454368695,
+                "hit": 0.5582087738485842
+              },
+              "under": {
+                "n": 44348,
+                "predicted": 0.6879977157932713,
+                "hit": 0.6097005501939208
+              }
+            }
+          },
+          "calibrated": {
+            "n": 60806,
+            "brier": 0.23382251221900321,
+            "log_loss": 0.659035834039103,
+            "predicted_over": 0.4357605613542097,
+            "actual_over": 0.43574647238759334,
+            "sides": {
+              "over": {
+                "n": 12575,
+                "predicted": 0.5610584691540825,
+                "hit": 0.5683499005964214
+              },
+              "under": {
+                "n": 48231,
+                "predicted": 0.5969076642804112,
+                "hit": 0.5988264808940308
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 60806,
+            "brier": 0.23947715161464325,
+            "log_loss": 0.6699341200211502,
+            "predicted_over": 0.42484969904285763,
+            "actual_over": 0.43574647238759334,
+            "sides": {
+              "over": {
+                "n": 21894,
+                "predicted": 0.5,
+                "hit": 0.46898693706038186
+              },
+              "under": {
+                "n": 38912,
+                "predicted": 0.6174339329769737,
+                "hit": 0.5829564144736842
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 18504,
+            "brier": 0.24287314350410732,
+            "log_loss": 0.6947582773416339,
+            "predicted_over": 0.45120731722870727,
+            "actual_over": 0.44833549502810205,
+            "sides": {
+              "over": {
+                "n": 6467,
+                "predicted": 0.642078737900108,
+                "hit": 0.5549713932271533
+              },
+              "under": {
+                "n": 12037,
+                "predicted": 0.6513402841239512,
+                "hit": 0.6089557198637534
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18504,
+            "brier": 0.23770900458397762,
+            "log_loss": 0.6683241751977088,
+            "predicted_over": 0.4620815238940869,
+            "actual_over": 0.44833549502810205,
+            "sides": {
+              "over": {
+                "n": 5006,
+                "predicted": 0.5614230497402882,
+                "hit": 0.5733120255693168
+              },
+              "under": {
+                "n": 13498,
+                "predicted": 0.5747612438038004,
+                "hit": 0.5980145206697288
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18504,
+            "brier": 0.24690146351437525,
+            "log_loss": 0.6869881391396452,
+            "predicted_over": 0.43555265348032857,
+            "actual_over": 0.44833549502810205,
+            "sides": {
+              "over": {
+                "n": 6870,
+                "predicted": 0.5,
+                "hit": 0.46084425036390103
+              },
+              "under": {
+                "n": 11634,
+                "predicted": 0.6025041860065325,
+                "hit": 0.5590510572460031
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 18100,
+            "brier": 0.24137535741049745,
+            "log_loss": 0.6940232008825059,
+            "predicted_over": 0.44678045834254143,
+            "actual_over": 0.45005524861878454,
+            "sides": {
+              "over": {
+                "n": 6434,
+                "predicted": 0.6413195051290022,
+                "hit": 0.5626359962698166
+              },
+              "under": {
+                "n": 11666,
+                "predicted": 0.6605111777815875,
+                "hit": 0.6120349734270529
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18100,
+            "brier": 0.23625144812888038,
+            "log_loss": 0.6649485073933225,
+            "predicted_over": 0.4582147739308823,
+            "actual_over": 0.45005524861878454,
+            "sides": {
+              "over": {
+                "n": 5022,
+                "predicted": 0.5600320654215573,
+                "hit": 0.5722819593787336
+              },
+              "under": {
+                "n": 13078,
+                "predicted": 0.5808834397001139,
+                "hit": 0.5968802569200183
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18100,
+            "brier": 0.24381265838176797,
+            "log_loss": 0.6802338719900108,
+            "predicted_over": 0.43049688950276244,
+            "actual_over": 0.45005524861878454,
+            "sides": {
+              "over": {
+                "n": 6621,
+                "predicted": 0.5,
+                "hit": 0.4830086089714545
+              },
+              "under": {
+                "n": 11479,
+                "predicted": 0.6095919766530185,
+                "hit": 0.5689519993030752
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/rush_rec_yards": {
+      "coefficients": [
+        0.5121643521408953,
+        0.005936415054919126
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 19196,
+            "brier": 0.23606740913419472,
+            "log_loss": 0.6776572848413351,
+            "predicted_over": 0.45537124390498024,
+            "actual_over": 0.47364034173786207,
+            "sides": {
+              "over": {
+                "n": 7340,
+                "predicted": 0.634573759945504,
+                "hit": 0.5983651226158038
+              },
+              "under": {
+                "n": 11856,
+                "predicted": 0.6555722840755736,
+                "hit": 0.6035762483130904
+              }
+            }
+          },
+          "calibrated": {
+            "n": 19196,
+            "brier": 0.23371042237496903,
+            "log_loss": 0.6608255223332737,
+            "predicted_over": 0.47363869582497364,
+            "actual_over": 0.47364034173786207,
+            "sides": {
+              "over": {
+                "n": 7446,
+                "predicted": 0.5762745593982159,
+                "hit": 0.5972334139135106
+              },
+              "under": {
+                "n": 11750,
+                "predicted": 0.5914018692955677,
+                "hit": 0.6046808510638297
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 19196,
+            "brier": 0.24575931423942488,
+            "log_loss": 0.6831879982390064,
+            "predicted_over": 0.4424166284642634,
+            "actual_over": 0.47364034173786207,
+            "sides": {
+              "over": {
+                "n": 7716,
+                "predicted": 0.5,
+                "hit": 0.4893727319854847
+              },
+              "under": {
+                "n": 11480,
+                "predicted": 0.5962866202090592,
+                "hit": 0.5369337979094077
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 5473,
+            "brier": 0.23876687150922712,
+            "log_loss": 0.6794293143732497,
+            "predicted_over": 0.4680822766307327,
+            "actual_over": 0.48931116389548696,
+            "sides": {
+              "over": {
+                "n": 2224,
+                "predicted": 0.628192715827338,
+                "hit": 0.6056654676258992
+              },
+              "under": {
+                "n": 3249,
+                "predicted": 0.6415162511542012,
+                "hit": 0.5903354878424131
+              }
+            }
+          },
+          "calibrated": {
+            "n": 5473,
+            "brier": 0.2368926858429991,
+            "log_loss": 0.6678305558411718,
+            "predicted_over": 0.48271772829164983,
+            "actual_over": 0.48931116389548696,
+            "sides": {
+              "over": {
+                "n": 2244,
+                "predicted": 0.5714593124845454,
+                "hit": 0.6056149732620321
+              },
+              "under": {
+                "n": 3229,
+                "predicted": 0.5789534129065098,
+                "hit": 0.5915144007432642
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 5473,
+            "brier": 0.2515631216097204,
+            "log_loss": 0.6966024840677869,
+            "predicted_over": 0.4521609903160972,
+            "actual_over": 0.48931116389548696,
+            "sides": {
+              "over": {
+                "n": 2291,
+                "predicted": 0.5,
+                "hit": 0.49803579223046707
+              },
+              "under": {
+                "n": 3182,
+                "predicted": 0.5822824952859836,
+                "hit": 0.516970458830924
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 5349,
+            "brier": 0.23751278702187326,
+            "log_loss": 0.6774591326956579,
+            "predicted_over": 0.46904269957001316,
+            "actual_over": 0.4763507197607029,
+            "sides": {
+              "over": {
+                "n": 2108,
+                "predicted": 0.6350902751423151,
+                "hit": 0.5915559772296015
+              },
+              "under": {
+                "n": 3241,
+                "predicted": 0.6389573896945387,
+                "hit": 0.5985806849737735
+              }
+            }
+          },
+          "calibrated": {
+            "n": 5349,
+            "brier": 0.23585965690176378,
+            "log_loss": 0.6650348262760925,
+            "predicted_over": 0.4828560763426199,
+            "actual_over": 0.4763507197607029,
+            "sides": {
+              "over": {
+                "n": 2130,
+                "predicted": 0.5762194456035981,
+                "hit": 0.5896713615023474
+              },
+              "under": {
+                "n": 3219,
+                "predicted": 0.5789221083501057,
+                "hit": 0.5986331158744952
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 5349,
+            "brier": 0.24930385781454473,
+            "log_loss": 0.6914781866678293,
+            "predicted_over": 0.44968900729108247,
+            "actual_over": 0.4763507197607029,
+            "sides": {
+              "over": {
+                "n": 2214,
+                "predicted": 0.5,
+                "hit": 0.48057813911472447
+              },
+              "under": {
+                "n": 3135,
+                "predicted": 0.5858416267942583,
+                "hit": 0.5266347687400319
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/anytime_td": {
+      "coefficients": [
+        0.7438261833522593,
+        -0.17403274549432238
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 60806,
+            "brier": 0.15116530442456336,
+            "log_loss": 0.47366263885771637,
+            "predicted_over": 0.18457429529980593,
+            "actual_over": 0.20693681544584416,
+            "sides": {
+              "over": {
+                "n": 2143,
+                "predicted": 0.5735553896406905,
+                "hit": 0.5086327578161456
+              },
+              "under": {
+                "n": 58663,
+                "predicted": 0.8296354533521981,
+                "hit": 0.8040843461807272
+              }
+            }
+          },
+          "calibrated": {
+            "n": 60806,
+            "brier": 0.14998104062234968,
+            "log_loss": 0.4675228128257391,
+            "predicted_over": 0.20697164804000467,
+            "actual_over": 0.20693681544584416,
+            "sides": {
+              "over": {
+                "n": 1046,
+                "predicted": 0.5506370169228101,
+                "hit": 0.5573613766730402
+              },
+              "under": {
+                "n": 59760,
+                "predicted": 0.7990436460672814,
+                "hit": 0.7991967871485943
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 60806,
+            "brier": 0.1611255626081308,
+            "log_loss": 0.4961300352361586,
+            "predicted_over": 0.27376322566851957,
+            "actual_over": 0.20693681544584416,
+            "sides": {
+              "over": {
+                "n": 7173,
+                "predicted": 0.5820600167294019,
+                "hit": 0.4045727031925275
+              },
+              "under": {
+                "n": 53633,
+                "predicted": 0.7674690917905022,
+                "hit": 0.8194954598847725
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 18504,
+            "brier": 0.15767808129107222,
+            "log_loss": 0.48983389116624676,
+            "predicted_over": 0.20295788478166885,
+            "actual_over": 0.21498054474708173,
+            "sides": {
+              "over": {
+                "n": 739,
+                "predicted": 0.5691519621109608,
+                "hit": 0.510148849797023
+              },
+              "under": {
+                "n": 17765,
+                "predicted": 0.812275294117647,
+                "hit": 0.7972980579791725
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18504,
+            "brier": 0.15661719334947677,
+            "log_loss": 0.48463832521769995,
+            "predicted_over": 0.2233797088680262,
+            "actual_over": 0.21498054474708173,
+            "sides": {
+              "over": {
+                "n": 343,
+                "predicted": 0.5462518643652098,
+                "hit": 0.521865889212828
+              },
+              "under": {
+                "n": 18161,
+                "predicted": 0.7827182565157926,
+                "hit": 0.7908154837288696
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18504,
+            "brier": 0.16883315307338956,
+            "log_loss": 0.5155432772882156,
+            "predicted_over": 0.28368717574578467,
+            "actual_over": 0.21498054474708173,
+            "sides": {
+              "over": {
+                "n": 2213,
+                "predicted": 0.5854500225937641,
+                "hit": 0.3926796204247628
+              },
+              "under": {
+                "n": 16291,
+                "predicted": 0.7573048554416549,
+                "hit": 0.8091584310355411
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 18100,
+            "brier": 0.1494921764563536,
+            "log_loss": 0.4673860644024977,
+            "predicted_over": 0.19249108287292818,
+            "actual_over": 0.20458563535911603,
+            "sides": {
+              "over": {
+                "n": 693,
+                "predicted": 0.5663239538239538,
+                "hit": 0.494949494949495
+              },
+              "under": {
+                "n": 17407,
+                "predicted": 0.8223917906589302,
+                "hit": 0.8069742057792842
+              }
+            }
+          },
+          "calibrated": {
+            "n": 18100,
+            "brier": 0.14873780188255906,
+            "log_loss": 0.46404228572149675,
+            "predicted_over": 0.21403554901976024,
+            "actual_over": 0.20458563535911603,
+            "sides": {
+              "over": {
+                "n": 320,
+                "predicted": 0.54182811859209,
+                "hit": 0.55625
+              },
+              "under": {
+                "n": 17780,
+                "predicted": 0.7918639797914404,
+                "hit": 0.8017435320584927
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 18100,
+            "brier": 0.1598607780441989,
+            "log_loss": 0.49358732725592086,
+            "predicted_over": 0.27019507182320446,
+            "actual_over": 0.20458563535911603,
+            "sides": {
+              "over": {
+                "n": 2067,
+                "predicted": 0.5814170778906628,
+                "hit": 0.40783744557329465
+              },
+              "under": {
+                "n": 16033,
+                "predicted": 0.7699281669057569,
+                "hit": 0.8216179130543254
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/passing_yards": {
+      "coefficients": [
+        0.7443540577905222,
+        -0.1420661869048244
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 7408,
+            "brier": 0.23943025205723542,
+            "log_loss": 0.6722558585021926,
+            "predicted_over": 0.5068120950323974,
+            "actual_over": 0.4715172786177106,
+            "sides": {
+              "over": {
+                "n": 3793,
+                "predicted": 0.618482230424466,
+                "hit": 0.5589243343000264
+              },
+              "under": {
+                "n": 3615,
+                "predicted": 0.6103565975103734,
+                "hit": 0.6201936376210235
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7408,
+            "brier": 0.23718552401982784,
+            "log_loss": 0.6669492387337064,
+            "predicted_over": 0.4715452987822734,
+            "actual_over": 0.4715172786177106,
+            "sides": {
+              "over": {
+                "n": 2854,
+                "predicted": 0.5809854892747454,
+                "hit": 0.5844428871758934
+              },
+              "under": {
+                "n": 4554,
+                "predicted": 0.5970410656589903,
+                "hit": 0.5992534036012297
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7408,
+            "brier": 0.2516695517764579,
+            "log_loss": 0.6965727514084752,
+            "predicted_over": 0.4620231371490281,
+            "actual_over": 0.4715172786177106,
+            "sides": {
+              "over": {
+                "n": 3294,
+                "predicted": 0.5,
+                "hit": 0.46265938069216755
+              },
+              "under": {
+                "n": 4114,
+                "predicted": 0.5683842002916869,
+                "hit": 0.5213903743315508
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 2133,
+            "brier": 0.24003243177684014,
+            "log_loss": 0.6722612504233799,
+            "predicted_over": 0.5011749648382561,
+            "actual_over": 0.4477262072198781,
+            "sides": {
+              "over": {
+                "n": 1101,
+                "predicted": 0.6101684831970935,
+                "hit": 0.5249772933696639
+              },
+              "under": {
+                "n": 1032,
+                "predicted": 0.6151059108527132,
+                "hit": 0.6346899224806202
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2133,
+            "brier": 0.23627954713905525,
+            "log_loss": 0.6645539567971862,
+            "predicted_over": 0.46690218957825563,
+            "actual_over": 0.4477262072198781,
+            "sides": {
+              "over": {
+                "n": 820,
+                "predicted": 0.5730675017617839,
+                "hit": 0.5487804878048781
+              },
+              "under": {
+                "n": 1313,
+                "predicted": 0.5994005948775655,
+                "hit": 0.6153846153846154
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2133,
+            "brier": 0.24894587476793248,
+            "log_loss": 0.6907940423277763,
+            "predicted_over": 0.4609996249413971,
+            "actual_over": 0.4477262072198781,
+            "sides": {
+              "over": {
+                "n": 951,
+                "predicted": 0.5,
+                "hit": 0.4416403785488959
+              },
+              "under": {
+                "n": 1182,
+                "predicted": 0.5703788494077834,
+                "hit": 0.5473773265651438
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 2025,
+            "brier": 0.23911940132345677,
+            "log_loss": 0.6715296633044426,
+            "predicted_over": 0.509791901234568,
+            "actual_over": 0.4883950617283951,
+            "sides": {
+              "over": {
+                "n": 1045,
+                "predicted": 0.6215419138755982,
+                "hit": 0.5827751196172248
+              },
+              "under": {
+                "n": 980,
+                "predicted": 0.6093701020408164,
+                "hit": 0.6122448979591837
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2025,
+            "brier": 0.23792484544552855,
+            "log_loss": 0.6683404121658926,
+            "predicted_over": 0.4739105288440264,
+            "actual_over": 0.4883950617283951,
+            "sides": {
+              "over": {
+                "n": 801,
+                "predicted": 0.582385827760143,
+                "hit": 0.5880149812734082
+              },
+              "under": {
+                "n": 1224,
+                "predicted": 0.5970769829466676,
+                "hit": 0.576797385620915
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2025,
+            "brier": 0.2526919282419753,
+            "log_loss": 0.6988840361879551,
+            "predicted_over": 0.4634420246913581,
+            "actual_over": 0.4883950617283951,
+            "sides": {
+              "over": {
+                "n": 905,
+                "predicted": 0.5,
+                "hit": 0.49060773480662984
+              },
+              "under": {
+                "n": 1120,
+                "predicted": 0.566098125,
+                "hit": 0.5133928571428571
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/completions": {
+      "coefficients": [
+        0.6824675315884832,
+        -0.07138623263285557
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 7408,
+            "brier": 0.2373118311042117,
+            "log_loss": 0.668347948359324,
+            "predicted_over": 0.4533767008639309,
+            "actual_over": 0.44964902807775375,
+            "sides": {
+              "over": {
+                "n": 2713,
+                "predicted": 0.611025101363804,
+                "hit": 0.561002580169554
+              },
+              "under": {
+                "n": 4695,
+                "predicted": 0.6377202342917997,
+                "hit": 0.6146964856230032
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7408,
+            "brier": 0.23568488147494762,
+            "log_loss": 0.6637774949962193,
+            "predicted_over": 0.44966303920981626,
+            "actual_over": 0.44964902807775375,
+            "sides": {
+              "over": {
+                "n": 2316,
+                "predicted": 0.5730604103208693,
+                "hit": 0.5746977547495682
+              },
+              "under": {
+                "n": 5092,
+                "predicted": 0.606461923769995,
+                "hit": 0.6072270227808326
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7408,
+            "brier": 0.2502152303442225,
+            "log_loss": 0.6940642640298693,
+            "predicted_over": 0.4399907802375811,
+            "actual_over": 0.44964902807775375,
+            "sides": {
+              "over": {
+                "n": 2575,
+                "predicted": 0.5,
+                "hit": 0.44932038834951454
+              },
+              "under": {
+                "n": 4833,
+                "predicted": 0.5919818539209599,
+                "hit": 0.5501758741982206
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 2133,
+            "brier": 0.23483992100328174,
+            "log_loss": 0.6618712347498182,
+            "predicted_over": 0.43972808251289264,
+            "actual_over": 0.4388185654008439,
+            "sides": {
+              "over": {
+                "n": 692,
+                "predicted": 0.5970846820809249,
+                "hit": 0.5736994219653179
+              },
+              "under": {
+                "n": 1441,
+                "predicted": 0.6358380291464261,
+                "hit": 0.6259541984732825
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2133,
+            "brier": 0.23394323956810045,
+            "log_loss": 0.6594907516580731,
+            "predicted_over": 0.43960092703994164,
+            "actual_over": 0.4388185654008439,
+            "sides": {
+              "over": {
+                "n": 563,
+                "predicted": 0.5644758295313667,
+                "hit": 0.5790408525754884
+              },
+              "under": {
+                "n": 1570,
+                "predicted": 0.6051790539171745,
+                "hit": 0.6114649681528662
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2133,
+            "brier": 0.24644781861228313,
+            "log_loss": 0.6856342731154911,
+            "predicted_over": 0.44310445382090957,
+            "actual_over": 0.4388185654008439,
+            "sides": {
+              "over": {
+                "n": 786,
+                "predicted": 0.5,
+                "hit": 0.43638676844783714
+              },
+              "under": {
+                "n": 1347,
+                "predicted": 0.5900951744617668,
+                "hit": 0.5597624350408315
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 2025,
+            "brier": 0.23818690573333332,
+            "log_loss": 0.6729213714313157,
+            "predicted_over": 0.46223511111111115,
+            "actual_over": 0.4641975308641975,
+            "sides": {
+              "over": {
+                "n": 796,
+                "predicted": 0.6134368090452261,
+                "hit": 0.5879396984924623
+              },
+              "under": {
+                "n": 1229,
+                "predicted": 0.6356953620829944,
+                "hit": 0.6159479251423922
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2025,
+            "brier": 0.2367817434172425,
+            "log_loss": 0.6675173887462629,
+            "predicted_over": 0.45605370106120435,
+            "actual_over": 0.4641975308641975,
+            "sides": {
+              "over": {
+                "n": 669,
+                "predicted": 0.5768594222773208,
+                "hit": 0.5964125560538116
+              },
+              "under": {
+                "n": 1356,
+                "predicted": 0.6035473516626763,
+                "hit": 0.6010324483775811
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2025,
+            "brier": 0.2526167295012346,
+            "log_loss": 0.6996649472940121,
+            "predicted_over": 0.44025916049382724,
+            "actual_over": 0.4641975308641975,
+            "sides": {
+              "over": {
+                "n": 691,
+                "predicted": 0.5,
+                "hit": 0.4761215629522431
+              },
+              "under": {
+                "n": 1334,
+                "predicted": 0.5906860569715142,
+                "hit": 0.5419790104947526
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/passing_attempts": {
+      "coefficients": [
+        0.6075933906438035,
+        -0.02680490092955711
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 7408,
+            "brier": 0.24212398059800214,
+            "log_loss": 0.6795159638244868,
+            "predicted_over": 0.4765980426565874,
+            "actual_over": 0.4786717062634989,
+            "sides": {
+              "over": {
+                "n": 3145,
+                "predicted": 0.6139869634340223,
+                "hit": 0.5647058823529412
+              },
+              "under": {
+                "n": 4263,
+                "predicted": 0.6247597231996247,
+                "hit": 0.5847994370161858
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7408,
+            "brier": 0.2398201614942168,
+            "log_loss": 0.6725971021518157,
+            "predicted_over": 0.4786776140718628,
+            "actual_over": 0.4786717062634989,
+            "sides": {
+              "over": {
+                "n": 2946,
+                "predicted": 0.5708311080905083,
+                "hit": 0.5695858791581806
+              },
+              "under": {
+                "n": 4462,
+                "predicted": 0.5821659971739752,
+                "hit": 0.581353653070372
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7408,
+            "brier": 0.2525456288903888,
+            "log_loss": 0.6986455533824154,
+            "predicted_over": 0.44794025377969765,
+            "actual_over": 0.4786717062634989,
+            "sides": {
+              "over": {
+                "n": 2824,
+                "predicted": 0.5,
+                "hit": 0.48194050991501414
+              },
+              "under": {
+                "n": 4584,
+                "predicted": 0.5841314572425829,
+                "hit": 0.5233420593368238
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 2133,
+            "brier": 0.24112427627285513,
+            "log_loss": 0.6760493671894569,
+            "predicted_over": 0.4716203938115331,
+            "actual_over": 0.4702297233942804,
+            "sides": {
+              "over": {
+                "n": 895,
+                "predicted": 0.6074706145251397,
+                "hit": 0.5586592178770949
+              },
+              "under": {
+                "n": 1238,
+                "predicted": 0.6265911954765752,
+                "hit": 0.5936995153473344
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2133,
+            "brier": 0.23901850814090517,
+            "log_loss": 0.6702763561545497,
+            "predicted_over": 0.4751896332082987,
+            "actual_over": 0.4702297233942804,
+            "sides": {
+              "over": {
+                "n": 818,
+                "predicted": 0.5680409758335401,
+                "hit": 0.5721271393643031
+              },
+              "under": {
+                "n": 1315,
+                "predicted": 0.5825688445616234,
+                "hit": 0.5931558935361216
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2133,
+            "brier": 0.2508251341772152,
+            "log_loss": 0.6950340153558556,
+            "predicted_over": 0.4504908579465542,
+            "actual_over": 0.4702297233942804,
+            "sides": {
+              "over": {
+                "n": 856,
+                "predicted": 0.5,
+                "hit": 0.47079439252336447
+              },
+              "under": {
+                "n": 1277,
+                "predicted": 0.5826961628817541,
+                "hit": 0.5301487862176977
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 2025,
+            "brier": 0.23922614423703703,
+            "log_loss": 0.6796331115970398,
+            "predicted_over": 0.4848475061728395,
+            "actual_over": 0.4775308641975309,
+            "sides": {
+              "over": {
+                "n": 894,
+                "predicted": 0.6264154362416108,
+                "hit": 0.5838926174496645
+              },
+              "under": {
+                "n": 1131,
+                "predicted": 0.6270549955791336,
+                "hit": 0.6065428824049514
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2025,
+            "brier": 0.23779081493079643,
+            "log_loss": 0.6706367791009075,
+            "predicted_over": 0.4842281851617199,
+            "actual_over": 0.4775308641975309,
+            "sides": {
+              "over": {
+                "n": 837,
+                "predicted": 0.5807051929430675,
+                "hit": 0.5961768219832736
+              },
+              "under": {
+                "n": 1188,
+                "predicted": 0.5837442521387751,
+                "hit": 0.6060606060606061
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2025,
+            "brier": 0.25400253144691354,
+            "log_loss": 0.7021376996314699,
+            "predicted_over": 0.4466439506172839,
+            "actual_over": 0.4775308641975309,
+            "sides": {
+              "over": {
+                "n": 749,
+                "predicted": 0.5,
+                "hit": 0.48464619492656874
+              },
+              "under": {
+                "n": 1276,
+                "predicted": 0.5846755485893417,
+                "hit": 0.5266457680250783
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/passing_tds": {
+      "coefficients": [
+        0.9271852625596765,
+        -0.004607290894258299
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 7408,
+            "brier": 0.20842008640928722,
+            "log_loss": 0.6059597971012791,
+            "predicted_over": 0.33250502159827217,
+            "actual_over": 0.3412526997840173,
+            "sides": {
+              "over": {
+                "n": 823,
+                "predicted": 0.5828409477521264,
+                "hit": 0.6160388821385177
+              },
+              "under": {
+                "n": 6585,
+                "predicted": 0.6987822171602127,
+                "hit": 0.6930903568716781
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7408,
+            "brier": 0.20839669275812964,
+            "log_loss": 0.6055785780995847,
+            "predicted_over": 0.34125362392904673,
+            "actual_over": 0.3412526997840173,
+            "sides": {
+              "over": {
+                "n": 813,
+                "predicted": 0.5769698545707503,
+                "hit": 0.6150061500615006
+              },
+              "under": {
+                "n": 6595,
+                "predicted": 0.6878043435480883,
+                "hit": 0.6924943138741471
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7408,
+            "brier": 0.22092979950053998,
+            "log_loss": 0.6339196364725347,
+            "predicted_over": 0.3476510529157668,
+            "actual_over": 0.3412526997840173,
+            "sides": {
+              "over": {
+                "n": 1118,
+                "predicted": 0.5,
+                "hit": 0.44991055456171736
+              },
+              "under": {
+                "n": 6290,
+                "predicted": 0.6794278219395867,
+                "hit": 0.678060413354531
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 2133,
+            "brier": 0.2077641729254571,
+            "log_loss": 0.6027664088807184,
+            "predicted_over": 0.3338552742616034,
+            "actual_over": 0.33286451007969997,
+            "sides": {
+              "over": {
+                "n": 250,
+                "predicted": 0.5819256,
+                "hit": 0.544
+              },
+              "under": {
+                "n": 1883,
+                "predicted": 0.699080244291025,
+                "hit": 0.6951672862453532
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2133,
+            "brier": 0.20764525591382058,
+            "log_loss": 0.6023779641393602,
+            "predicted_over": 0.34236432478236645,
+            "actual_over": 0.33286451007969997,
+            "sides": {
+              "over": {
+                "n": 247,
+                "predicted": 0.5761868671467681,
+                "hit": 0.5425101214574899
+              },
+              "under": {
+                "n": 1886,
+                "predicted": 0.6882582457181675,
+                "hit": 0.694591728525981
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2133,
+            "brier": 0.2183810976652602,
+            "log_loss": 0.6276233192699768,
+            "predicted_over": 0.35479118612283167,
+            "actual_over": 0.33286451007969997,
+            "sides": {
+              "over": {
+                "n": 353,
+                "predicted": 0.5,
+                "hit": 0.4192634560906516
+              },
+              "under": {
+                "n": 1780,
+                "predicted": 0.6740058426966292,
+                "hit": 0.6842696629213483
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 2025,
+            "brier": 0.21690889919012343,
+            "log_loss": 0.6246631233615124,
+            "predicted_over": 0.34463911111111106,
+            "actual_over": 0.36098765432098767,
+            "sides": {
+              "over": {
+                "n": 272,
+                "predicted": 0.5788036764705882,
+                "hit": 0.5625
+              },
+              "under": {
+                "n": 1753,
+                "predicted": 0.6916944666286365,
+                "hit": 0.6702795208214489
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2025,
+            "brier": 0.21653036449371083,
+            "log_loss": 0.6234504733629928,
+            "predicted_over": 0.352715444324855,
+            "actual_over": 0.36098765432098767,
+            "sides": {
+              "over": {
+                "n": 268,
+                "predicted": 0.5733657666788254,
+                "hit": 0.5671641791044776
+              },
+              "under": {
+                "n": 1757,
+                "predicted": 0.6809409508890688,
+                "hit": 0.6704610130904952
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2025,
+            "brier": 0.22705329802962965,
+            "log_loss": 0.6477751666417532,
+            "predicted_over": 0.3488321481481481,
+            "actual_over": 0.36098765432098767,
+            "sides": {
+              "over": {
+                "n": 308,
+                "predicted": 0.5,
+                "hit": 0.4512987012987013
+              },
+              "under": {
+                "n": 1717,
+                "predicted": 0.678284740827024,
+                "hit": 0.6552125800815376
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    },
+    "nfl/interceptions": {
+      "coefficients": [
+        0.8840761525763292,
+        0.018588305246785418
+      ],
+      "splits": {
+        "train": {
+          "start": "1999-10-03",
+          "end": "2016-12-04",
+          "raw": {
+            "n": 7408,
+            "brier": 0.21011669853806694,
+            "log_loss": 0.6100017729722768,
+            "predicted_over": 0.3357756884449244,
+            "actual_over": 0.3544816414686825,
+            "sides": {
+              "over": {
+                "n": 1203,
+                "predicted": 0.5749527015793848,
+                "hit": 0.5677472984206151
+              },
+              "under": {
+                "n": 6205,
+                "predicted": 0.7105949717969379,
+                "hit": 0.6868654311039484
+              }
+            }
+          },
+          "calibrated": {
+            "n": 7408,
+            "brier": 0.209788660061165,
+            "log_loss": 0.6085203507977687,
+            "predicted_over": 0.35447707880866486,
+            "actual_over": 0.3544816414686825,
+            "sides": {
+              "over": {
+                "n": 1262,
+                "predicted": 0.5679023017663034,
+                "hit": 0.56973058637084
+              },
+              "under": {
+                "n": 6146,
+                "predicted": 0.6893469744572869,
+                "hit": 0.6897168890335177
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 7408,
+            "brier": 0.22318592489065875,
+            "log_loss": 0.6392615811042196,
+            "predicted_over": 0.3437362985961123,
+            "actual_over": 0.3544816414686825,
+            "sides": {
+              "over": {
+                "n": 1122,
+                "predicted": 0.5,
+                "hit": 0.483065953654189
+              },
+              "under": {
+                "n": 6286,
+                "predicted": 0.6841555042952593,
+                "hit": 0.6684696150174992
+              }
+            }
+          }
+        },
+        "validation": {
+          "start": "2016-12-05",
+          "end": "2021-12-18",
+          "raw": {
+            "n": 2133,
+            "brier": 0.21013737536802624,
+            "log_loss": 0.6093778568703716,
+            "predicted_over": 0.31901209563994376,
+            "actual_over": 0.3408345053914674,
+            "sides": {
+              "over": {
+                "n": 240,
+                "predicted": 0.5560166666666667,
+                "hit": 0.525
+              },
+              "under": {
+                "n": 1893,
+                "predicted": 0.7110360274696249,
+                "hit": 0.6825145272054939
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2133,
+            "brier": 0.2094768964959421,
+            "log_loss": 0.6070213329585181,
+            "predicted_over": 0.3389355978193396,
+            "actual_over": 0.3408345053914674,
+            "sides": {
+              "over": {
+                "n": 253,
+                "predicted": 0.5516007532875395,
+                "hit": 0.5098814229249012
+              },
+              "under": {
+                "n": 1880,
+                "predicted": 0.68968370235803,
+                "hit": 0.6819148936170213
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2133,
+            "brier": 0.2210050778996718,
+            "log_loss": 0.635486420758272,
+            "predicted_over": 0.33694861697140177,
+            "actual_over": 0.3408345053914674,
+            "sides": {
+              "over": {
+                "n": 300,
+                "predicted": 0.5,
+                "hit": 0.46
+              },
+              "under": {
+                "n": 1833,
+                "predicted": 0.6897373704309874,
+                "hit": 0.6786688488816148
+              }
+            }
+          }
+        },
+        "test": {
+          "start": "2021-12-19",
+          "end": "2026-10-22",
+          "raw": {
+            "n": 2025,
+            "brier": 0.1993788967604938,
+            "log_loss": 0.5857006208363629,
+            "predicted_over": 0.3067760987654321,
+            "actual_over": 0.31851851851851853,
+            "sides": {
+              "over": {
+                "n": 209,
+                "predicted": 0.5540712918660287,
+                "hit": 0.48325358851674644
+              },
+              "under": {
+                "n": 1816,
+                "predicted": 0.7216846365638766,
+                "hit": 0.7004405286343612
+              }
+            }
+          },
+          "calibrated": {
+            "n": 2025,
+            "brier": 0.19937336873320746,
+            "log_loss": 0.5851754924968361,
+            "predicted_over": 0.32749284385733407,
+            "actual_over": 0.31851851851851853,
+            "sides": {
+              "over": {
+                "n": 224,
+                "predicted": 0.5491538334056504,
+                "hit": 0.46875
+              },
+              "under": {
+                "n": 1801,
+                "predicted": 0.7000763186406243,
+                "hit": 0.7001665741254859
+              }
+            }
+          },
+          "historical_baseline": {
+            "n": 2025,
+            "brier": 0.2092968749728395,
+            "log_loss": 0.6073190322350341,
+            "predicted_over": 0.3339861728395062,
+            "actual_over": 0.31851851851851853,
+            "sides": {
+              "over": {
+                "n": 275,
+                "predicted": 0.5,
+                "hit": 0.4290909090909091
+              },
+              "under": {
+                "n": 1750,
+                "predicted": 0.6921017142857142,
+                "hit": 0.6988571428571428
+              }
+            }
+          }
+        }
+      },
+      "status": "accepted"
+    }
+  },
+  "sport_runs": {
+    "nfl": {
+      "version": "player-props-calibration-v1",
+      "created_at": "2026-10-25T01:42:15.536577+00:00",
+      "dataset_sha256": "0308468ba941fb27be8388e62e91cfeb94f5f280c9f6ff260a608dd66490647e",
+      "sources": [
+        {
+          "sport": "nfl",
+          "season": 1999,
+          "examples": 15801,
+          "source_sha256": "e13eab5484d19ae1194fe5aaf69ae8b2e06d900191fa61bcc5d3a1960ca43bab",
+          "prior_sha256": null
+        },
+        {
+          "sport": "nfl",
+          "season": 2000,
+          "examples": 15291,
+          "source_sha256": "bf5c521b7ed88b274102767c0d7f192ab0e4b47bfc6b52ba5e3603f0abadf0ca",
+          "prior_sha256": "e13eab5484d19ae1194fe5aaf69ae8b2e06d900191fa61bcc5d3a1960ca43bab"
+        },
+        {
+          "sport": "nfl",
+          "season": 2001,
+          "examples": 16080,
+          "source_sha256": "bf9bb1ac15b035b09794da7bd1558785e9f6d158b64256756cbc9c4f3dc8c6e9",
+          "prior_sha256": "bf5c521b7ed88b274102767c0d7f192ab0e4b47bfc6b52ba5e3603f0abadf0ca"
+        },
+        {
+          "sport": "nfl",
+          "season": 2002,
+          "examples": 16731,
+          "source_sha256": "b48f6f0d55a11ca078b9a81f92c6c7393e9ce1118dc9e976f3388a1ec585105b",
+          "prior_sha256": "bf9bb1ac15b035b09794da7bd1558785e9f6d158b64256756cbc9c4f3dc8c6e9"
+        },
+        {
+          "sport": "nfl",
+          "season": 2003,
+          "examples": 16011,
+          "source_sha256": "e89b58446af463ca4feb57352b44098de0f11ed9276118f764753357142c5571",
+          "prior_sha256": "b48f6f0d55a11ca078b9a81f92c6c7393e9ce1118dc9e976f3388a1ec585105b"
+        },
+        {
+          "sport": "nfl",
+          "season": 2004,
+          "examples": 15396,
+          "source_sha256": "bf079c0d0090fe7d36bbc45ec9ac5d177e0fef723034d19e26a3462a19803537",
+          "prior_sha256": "e89b58446af463ca4feb57352b44098de0f11ed9276118f764753357142c5571"
+        },
+        {
+          "sport": "nfl",
+          "season": 2005,
+          "examples": 15759,
+          "source_sha256": "e01d4831305bd9ebdad6a979dc2bb5308f403c0a9e2cea238aa7c9106b5446cc",
+          "prior_sha256": "bf079c0d0090fe7d36bbc45ec9ac5d177e0fef723034d19e26a3462a19803537"
+        },
+        {
+          "sport": "nfl",
+          "season": 2006,
+          "examples": 15735,
+          "source_sha256": "4426dd8ca3d921b4d1a2ed9dde1debe59bcfc4ee60b2b24b47824c0cef7605fe",
+          "prior_sha256": "e01d4831305bd9ebdad6a979dc2bb5308f403c0a9e2cea238aa7c9106b5446cc"
+        },
+        {
+          "sport": "nfl",
+          "season": 2007,
+          "examples": 15672,
+          "source_sha256": "3df70281f996f4197260660c84875a99f0aac7613c7f3cca2646265947b830f9",
+          "prior_sha256": "4426dd8ca3d921b4d1a2ed9dde1debe59bcfc4ee60b2b24b47824c0cef7605fe"
+        },
+        {
+          "sport": "nfl",
+          "season": 2008,
+          "examples": 15447,
+          "source_sha256": "59a9ff8f132f089f8d0fbf735444762d78bc63d82a4885a93a2ffcc1d8de964b",
+          "prior_sha256": "3df70281f996f4197260660c84875a99f0aac7613c7f3cca2646265947b830f9"
+        },
+        {
+          "sport": "nfl",
+          "season": 2009,
+          "examples": 16590,
+          "source_sha256": "c02938725bfa65e4c14671e00e9f3c24c85ec1281248ef6981d902db71484f6a",
+          "prior_sha256": "59a9ff8f132f089f8d0fbf735444762d78bc63d82a4885a93a2ffcc1d8de964b"
+        },
+        {
+          "sport": "nfl",
+          "season": 2010,
+          "examples": 16323,
+          "source_sha256": "119fd1f06fc393500efe1b71cc9178cf564dd17f54ac667730985b10cddb0e9d",
+          "prior_sha256": "c02938725bfa65e4c14671e00e9f3c24c85ec1281248ef6981d902db71484f6a"
+        },
+        {
+          "sport": "nfl",
+          "season": 2011,
+          "examples": 16419,
+          "source_sha256": "801df458f0cc6d65ef173ebf01fd609328fd0f8808f28a040c76010b6c91fc49",
+          "prior_sha256": "119fd1f06fc393500efe1b71cc9178cf564dd17f54ac667730985b10cddb0e9d"
+        },
+        {
+          "sport": "nfl",
+          "season": 2012,
+          "examples": 16524,
+          "source_sha256": "dd2bcf13f87d9a1a4b74aefce06f51de4bbabf9eef4eb1d9ef868dbdbc281f23",
+          "prior_sha256": "801df458f0cc6d65ef173ebf01fd609328fd0f8808f28a040c76010b6c91fc49"
+        },
+        {
+          "sport": "nfl",
+          "season": 2013,
+          "examples": 16362,
+          "source_sha256": "da2ae01d88b7b449153d16b8dd21abff59ab71202834d36e44c0e72f893a6821",
+          "prior_sha256": "dd2bcf13f87d9a1a4b74aefce06f51de4bbabf9eef4eb1d9ef868dbdbc281f23"
+        },
+        {
+          "sport": "nfl",
+          "season": 2014,
+          "examples": 16977,
+          "source_sha256": "5107c5d3531cb708ec87564c9426262b611ad98ee84594eee26d2a6b99500eed",
+          "prior_sha256": "da2ae01d88b7b449153d16b8dd21abff59ab71202834d36e44c0e72f893a6821"
+        },
+        {
+          "sport": "nfl",
+          "season": 2015,
+          "examples": 16794,
+          "source_sha256": "4dc5eb23a733f74e1b57cc6e8e553ecfb6bf6726322ac398957065b8fe091040",
+          "prior_sha256": "5107c5d3531cb708ec87564c9426262b611ad98ee84594eee26d2a6b99500eed"
+        },
+        {
+          "sport": "nfl",
+          "season": 2016,
+          "examples": 16686,
+          "source_sha256": "94e086d0b1597c0561bec5117ed6219d3eb38b3f64bf671829c9c89e8e30b6a9",
+          "prior_sha256": "4dc5eb23a733f74e1b57cc6e8e553ecfb6bf6726322ac398957065b8fe091040"
+        },
+        {
+          "sport": "nfl",
+          "season": 2017,
+          "examples": 16872,
+          "source_sha256": "4a257e5827aa1bd4f09594ced5706442ef1249295d230725b4364ca0805ed257",
+          "prior_sha256": "94e086d0b1597c0561bec5117ed6219d3eb38b3f64bf671829c9c89e8e30b6a9"
+        },
+        {
+          "sport": "nfl",
+          "season": 2018,
+          "examples": 16257,
+          "source_sha256": "041bcbe3326875c05b3f3d8912cd0db5bf617cddcaf7ab199bd84975ede091d2",
+          "prior_sha256": "4a257e5827aa1bd4f09594ced5706442ef1249295d230725b4364ca0805ed257"
+        },
+        {
+          "sport": "nfl",
+          "season": 2019,
+          "examples": 16536,
+          "source_sha256": "8d698521cbae15608d69e43b42e9803930abf563a8d346644754c71bc68ed59c",
+          "prior_sha256": "041bcbe3326875c05b3f3d8912cd0db5bf617cddcaf7ab199bd84975ede091d2"
+        },
+        {
+          "sport": "nfl",
+          "season": 2020,
+          "examples": 17001,
+          "source_sha256": "531171ea9f4d2961560f0c861dee52a3621f2c9e793830a37a3a1cdf4e972b7b",
+          "prior_sha256": "8d698521cbae15608d69e43b42e9803930abf563a8d346644754c71bc68ed59c"
+        },
+        {
+          "sport": "nfl",
+          "season": 2021,
+          "examples": 17934,
+          "source_sha256": "10bb606749b8d20ec0b76ff85820bc5ddd81596e480321eb5fc4b74e16a928a0",
+          "prior_sha256": "531171ea9f4d2961560f0c861dee52a3621f2c9e793830a37a3a1cdf4e972b7b"
+        },
+        {
+          "sport": "nfl",
+          "season": 2022,
+          "examples": 18078,
+          "source_sha256": "2a67db8bb3e5bdd1ba4fa8f9038f535dedc0f25a403ee316ed29fc6aaba1170f",
+          "prior_sha256": "10bb606749b8d20ec0b76ff85820bc5ddd81596e480321eb5fc4b74e16a928a0"
+        },
+        {
+          "sport": "nfl",
+          "season": 2023,
+          "examples": 18129,
+          "source_sha256": "f9c10ce9a1b8487dc9666350ee1e7c5870b9898f40080073833bf34d577ef054",
+          "prior_sha256": "2a67db8bb3e5bdd1ba4fa8f9038f535dedc0f25a403ee316ed29fc6aaba1170f"
+        },
+        {
+          "sport": "nfl",
+          "season": 2024,
+          "examples": 18417,
+          "source_sha256": "1c4f3608170631195fb53eacce35bd30335a01f3e9d9c2c267c2fc6d092d5b91",
+          "prior_sha256": "f9c10ce9a1b8487dc9666350ee1e7c5870b9898f40080073833bf34d577ef054"
+        },
+        {
+          "sport": "nfl",
+          "season": 2025,
+          "examples": 18753,
+          "source_sha256": "e2ae7adae6b0ed942ae8d773be76e4b5b13f9a5b3e5093ddc9c097298bb3d0d3",
+          "prior_sha256": "1c4f3608170631195fb53eacce35bd30335a01f3e9d9c2c267c2fc6d092d5b91"
+        },
+        {
+          "sport": "nfl",
+          "season": 2026,
+          "examples": 3105,
+          "source_sha256": "3143f7e7472990ecd3b6779bf1631d75d5cff198e24b2f3d2c4ddc0141a70508",
+          "prior_sha256": "e2ae7adae6b0ed942ae8d773be76e4b5b13f9a5b3e5093ddc9c097298bb3d0d3"
+        }
+      ],
+      "policy": "60/20/20 chronological date groups; coefficients fitted on train only; one fixed candidate; validation and test gate promotion",
+      "limitations": [
+        "Historical targets, not sportsbook lines",
+        "Conditional on participation; DNPs excluded",
+        "Base projection heuristics include constants previously tuned on 2024; evaluation is not independent of that model design",
+        "Historical source publication vintages are unverified; replay chronology is by game week",
+        "Historical lineups unavailable; current rosters never used to select historical players",
+        "Source box-score caches may encode unavailable statistics as zero; raw-feed audit remains necessary"
+      ],
+      "examples": 451680
+    }
+  }
+}

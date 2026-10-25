@@ -1,0 +1,188 @@
+{
+  "generated_at": "2026-10-17T02:04:43.373351+00:00",
+  "sport": "nfl",
+  "role": "experimental_scoring_only",
+  "decision_engine_changed": false,
+  "method": "nfl_ridge_pregame_v2",
+  "feature_names": [
+    "home_points_for",
+    "home_points_against",
+    "home_win_rate",
+    "home_off_epa_per_play",
+    "home_def_epa_per_play",
+    "home_passing_cpoe",
+    "home_giveaways",
+    "away_points_for",
+    "away_points_against",
+    "away_win_rate",
+    "away_off_epa_per_play",
+    "away_def_epa_per_play",
+    "away_passing_cpoe",
+    "away_giveaways",
+    "neutral",
+    "rest_difference",
+    "postseason",
+    "home_samples",
+    "away_samples"
+  ],
+  "schema": "af28eab6051eba5fb6bb3b368792f877355b15c3d38fed9f47f0a90a4aa26b62",
+  "sources": [
+    {
+      "dataset": "depth_charts",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:36.564395+00:00",
+      "row_count": 2305,
+      "sha256": "5113b019479be75cbbc857704ec40843fd06639de8ddc3109760051e9b6d4153"
+    },
+    {
+      "dataset": "pbp",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:36.933912+00:00",
+      "row_count": 14031,
+      "sha256": "ebaf9aa05ed40870acc5815eea81d2cec1c749a18f5521dd0ffc80d4890c1f45"
+    },
+    {
+      "dataset": "player_stats",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:35.015635+00:00",
+      "row_count": 5575,
+      "sha256": "092dcb656db3617d1a7892f0e8dd8fc21e88a182fb6d947fd9f0ad6624549b1c"
+    },
+    {
+      "dataset": "rosters",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:36.290348+00:00",
+      "row_count": 3043,
+      "sha256": "53d8aad571a8ea9fa29d3dde920a5ec9e18cf6c6838b314944ec2b665ed60e44"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2022,
+      "synced_at": "2026-10-16T18:15:25.928510+00:00",
+      "row_count": 284,
+      "sha256": "50bf6637cbf50f5dfa6a0ca4862e964869569e2937bec6f2c3bbcdd63feb331b"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2023,
+      "synced_at": "2026-10-16T18:15:25.948150+00:00",
+      "row_count": 285,
+      "sha256": "5bcf30c576b5d30b3456ea5d9af9b11aea449b6d362ab5a283834e6f493337c0"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2024,
+      "synced_at": "2026-10-16T18:15:25.982237+00:00",
+      "row_count": 285,
+      "sha256": "88d2e03cdadf56cd3e2136f946d15adb638d372db7b44f166ccce0cae41ddf43"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2025,
+      "synced_at": "2026-10-16T18:15:25.998873+00:00",
+      "row_count": 285,
+      "sha256": "05cf1239334c92c6bcdb5aa0d2bb9338fea731c9d0f985bd259f405603c6b6c1"
+    },
+    {
+      "dataset": "schedules",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:30:42.653392+00:00",
+      "row_count": 272,
+      "sha256": "b20bfb19b4f91712c375f9bebe53856a068f375029ae0e81230c22bc81939079"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2022,
+      "synced_at": "2026-10-16T18:15:26.986509+00:00",
+      "row_count": 568,
+      "sha256": "b6f86b75028a35751cfd396b1c834fa315e41e9222cbff9670d9ced4aeaeb492"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2023,
+      "synced_at": "2026-10-16T18:15:27.331535+00:00",
+      "row_count": 570,
+      "sha256": "abff22c27bc90a43aa89eb6c12f427366e33359428f059327145b5f5d58b838c"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2024,
+      "synced_at": "2026-10-16T18:15:27.556918+00:00",
+      "row_count": 570,
+      "sha256": "cb2a585f2725bf06f64bb3f9e9a348afa8772df9cc70bd4b1f4dfcaf92349b07"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2025,
+      "synced_at": "2026-10-16T18:15:27.777417+00:00",
+      "row_count": 570,
+      "sha256": "9a226bdfa16e1b8d71f0b22cae1ac8d0e9e1b6926c23fa0e1332eb3e543885f9"
+    },
+    {
+      "dataset": "team_stats",
+      "season": 2026,
+      "synced_at": "2026-10-16T18:15:27.896483+00:00",
+      "row_count": 160,
+      "sha256": "f40750c26f3abac5c70d3ac8bc2e44b9d61bdfe5eb24a05cefa3b170064aae0d"
+    },
+    {
+      "dataset": "teams",
+      "season": 0,
+      "synced_at": "2026-10-16T18:15:25.904424+00:00",
+      "row_count": 36,
+      "sha256": "ce660dae77623575e3cbe7d87413259afdcd4290319481310dfcdfbf106255d5"
+    }
+  ],
+  "excluded_sources": [],
+  "dataset_sha256": "3a5ac21ec6e3d12e60ecfb9cd1230f32ee0d2aa56970d48fb49adb470523c2e8",
+  "windows": {
+    "train": {
+      "count": 578,
+      "start": "2022-09-29",
+      "end": "2024-11-14"
+    },
+    "calibration": {
+      "count": 205,
+      "start": "2024-11-17",
+      "end": "2025-10-27"
+    },
+    "test": {
+      "count": 196,
+      "start": "2025-10-30",
+      "end": "2026-10-15"
+    }
+  },
+  "metrics": {
+    "points_mae": 7.466681527428608,
+    "baseline_mae": 7.820086858272719,
+    "total_mae": 10.880424332765427,
+    "interval_coverage": {
+      "home": 0.8775510204081632,
+      "away": 0.8214285714285714
+    },
+    "nominal_interval_coverage": 0.8
+  },
+  "references": [
+    {
+      "title": "nflfastR: predictive EPA analysis",
+      "url": "https://nflfastr.com/articles/beginners_guide"
+    },
+    {
+      "title": "Hoerl & Kennard: ridge regression",
+      "url": "https://doi.org/10.1080/00401706.1970.10488634"
+    },
+    {
+      "title": "Angelopoulos & Bates: conformal prediction",
+      "url": "https://arxiv.org/abs/2107.07511"
+    }
+  ],
+  "limitations": [
+    "Retrospective data may contain later corrections; no prospective accuracy claim.",
+    "Time dependence and season shifts can invalidate exchangeability; interval coverage is empirical, not guaranteed.",
+    "No injury, starting-lineup, weather or market-price features.",
+    "Hyperparameters fixed in advance; test window is not used for tuning or refitting.",
+    "NBA model uses scores, not possession-level efficiency or player RAPM.",
+    "Soccer is an adaptation using rolling features, not a reproduction of the full Dixon-Coles team-strength MLE."
+  ],
+  "artifact_sha256": "ab0f7c9b49015c8bcb7bd099cb9363e4f0ec4a8d80b654a95a032741d39546be"
+}

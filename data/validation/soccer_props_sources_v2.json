@@ -1,0 +1,173 @@
+{
+  "observed_at": "2026-10-24T23:40:40.053733+00:00",
+  "sources": [
+    {
+      "provider": "ESPN",
+      "status": "used",
+      "games": 1949,
+      "fingerprint": "7d653d6a090c27860926cd5454f16131e3ce8e65c8595682f0c46d39d7dd7af7",
+      "limitations": "Existing compact caches may contain legacy zeros for originally omitted fields; new parsing preserves missing values."
+    },
+    {
+      "provider": "FPL archive",
+      "season": "2018-19",
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2018-19/gws/merged_gw.csv",
+      "status": "unavailable",
+      "reason": "'utf-8' codec can't decode byte 0xe9 in position 1799: invalid continuation byte"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2019-20/gws/merged_gw.csv",
+      "sha256": "750dbc03cab3f894152173f6e0a42d1cfa86efd6d8dab7e9b5c6c608c93b72cc",
+      "bytes": 3018585,
+      "provider": "FPL archive",
+      "season": "2019-20",
+      "status": "excluded_overlap",
+      "games": 0,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2020-21/gws/merged_gw.csv",
+      "sha256": "fb2a2bc54b6cfbe835a39183b096b382f7961e3828e7845e9288671cccca3ad8",
+      "bytes": 3578432,
+      "provider": "FPL archive",
+      "season": "2020-21",
+      "status": "used",
+      "games": 380,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2021-22/gws/merged_gw.csv",
+      "sha256": "29770bbe305feee681f7122c0bd08451783366e0a3a9604194f528a0880f23de",
+      "bytes": 3733462,
+      "provider": "FPL archive",
+      "season": "2021-22",
+      "status": "used",
+      "games": 380,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2022-23/gws/merged_gw.csv",
+      "sha256": "b78a6d0456141f9033c32fc4122931baae780ac4a4938683451b1fce7a4fdd15",
+      "bytes": 4638801,
+      "provider": "FPL archive",
+      "season": "2022-23",
+      "status": "used",
+      "games": 380,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2023-24/gws/merged_gw.csv",
+      "sha256": "e9c09c8856f1c86b4f920f46ddd5033af83409439dfda53be925df2a3e7c8a9e",
+      "bytes": 4997188,
+      "provider": "FPL archive",
+      "season": "2023-24",
+      "status": "used",
+      "games": 380,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2024-25/gws/merged_gw.csv",
+      "sha256": "5bbbcba6353b4c72ad273adcc8e3aa451946a826564679788f45b1cb3325b84e",
+      "bytes": 5125595,
+      "provider": "FPL archive",
+      "season": "2024-25",
+      "status": "excluded_overlap",
+      "games": 0,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/master/data/2025-26/gws/merged_gw.csv",
+      "sha256": "0d09f1f1cb1b5520ec8e2f25238aa652efe2a263d8ca7cb2b6538b27bf86727d",
+      "bytes": 5445456,
+      "provider": "FPL archive",
+      "season": "2025-26",
+      "status": "excluded_overlap",
+      "games": 0,
+      "limitations": "No xP or post-match season aggregates used. FPL assists are provider-specific."
+    },
+    {
+      "url": "https://ndownloader.figshare.com/files/15073721",
+      "sha256": "877a111cb1005b73df5645e9338bd74fb4b496bace2fbc545a72abb3b73efa2e",
+      "bytes": 1737347,
+      "provider": "Wyscout Players",
+      "status": "downloaded",
+      "license": {
+        "value": 1,
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "attribution": "Pappalardo et al. 2019, doi:10.1038/s41597-019-0247-7"
+    },
+    {
+      "url": "https://ndownloader.figshare.com/files/14464685",
+      "sha256": "877e015b716ffdeea18f04418e3f24fed307ed03c37ff305cabe1f47c4822a45",
+      "bytes": 77323413,
+      "provider": "Wyscout Events",
+      "status": "downloaded",
+      "license": {
+        "value": 1,
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "attribution": "Pappalardo et al. 2019, doi:10.1038/s41597-019-0247-7"
+    },
+    {
+      "url": "https://ndownloader.figshare.com/files/14464622",
+      "sha256": "c8f92bb7533e5c127e043cee764c991b5c25b4f5e70a65be931baae0b1765ce9",
+      "bytes": 645097,
+      "provider": "Wyscout Matches",
+      "status": "downloaded",
+      "license": {
+        "value": 1,
+        "name": "CC BY 4.0",
+        "url": "https://creativecommons.org/licenses/by/4.0/"
+      },
+      "attribution": "Pappalardo et al. 2019, doi:10.1038/s41597-019-0247-7"
+    },
+    {
+      "provider": "Wyscout",
+      "status": "unavailable",
+      "reason": "string indices must be integers, not 'str'"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/2/27.json",
+      "sha256": "e07d6d360b30e0cd17f9aeea0db1502d2a5666d298f1b44b83a2d2f21ba3d21b",
+      "bytes": 698179,
+      "provider": "StatsBomb",
+      "status": "used",
+      "games": 380,
+      "failures": [],
+      "event_fingerprint": "548dfc26f4be9b93baf9e36556c9b2d7266bb0eb9727472fff4cdc108134066b",
+      "attribution": "StatsBomb Open Data; https://github.com/statsbomb/open-data; research use under publisher terms",
+      "limitations": "Regular time only; event-derived assists and shots definitions; no keeper saves inferred from shot outcomes."
+    },
+    {
+      "provider": "StatsBomb",
+      "status": "unavailable",
+      "reason": "'charmap' codec can't decode byte 0x8d in position 21431: character maps to <undefined>"
+    }
+  ],
+  "policy": "Provider IDs never merged by names; same-match FPL/ESPN labels excluded; no current rosters in training",
+  "not_available": [
+    {
+      "provider": "BALLDONTLIE",
+      "reason": "No BALLDONTLIE credential configured; player stats/props require entitled access"
+    },
+    {
+      "provider": "Opta / Sportradar commercial feeds",
+      "reason": "No licensed feed configured"
+    },
+    {
+      "provider": "FBref / Understat",
+      "reason": "Not ingested: no verified permitted bulk player-game feed; no access-control bypass"
+    },
+    {
+      "provider": "Football-data.org",
+      "reason": "Current team/schedule verification; no comparable historical player count-stat labels"
+    },
+    {
+      "provider": "The Odds API",
+      "reason": "Live quote comparison only; no timestamped historical soccer prop-line archive configured"
+    }
+  ]
+}
