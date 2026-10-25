@@ -9,6 +9,22 @@ injured, doubtful or suspended; other leagues have no injury feed here.
 from api_client import ESPN_SLUG_BY_LEAGUE
 from services import espn_box_scores as box
 from services import prop_model
+from utils.parsing import normalize_team_name
+
+
+def resolve_team_ids(league_id, home_name, away_name):
+    """Resolve fixture names against ESPN's own roster, never foreign numeric IDs."""
+    from api_client import _espn_league_teams
+    teams = [entry.get("team") or entry for entry in _espn_league_teams(int(league_id))]
+
+    def resolve(name):
+        matches = [str(team["id"]) for team in teams if team.get("id") and
+                   normalize_team_name(team.get("displayName") or team.get("name")) == normalize_team_name(name)]
+        if len(matches) != 1:
+            raise ValueError("Player props are unavailable because the team identity could not be verified with ESPN.")
+        return matches[0]
+
+    return resolve(home_name), resolve(away_name)
 
 
 def position(raw):
@@ -24,6 +40,7 @@ def position(raw):
 
 OUTFIELD = {"D", "M", "F"}
 CONFIG = {
+    "sport": "soccer",
     "markets": {"shots": (("shots",), 0.25), "shots_on_target": (("shots_on_target",), 0.30),
                 "goals": (("goals",), 0.10), "assists": (("assists",), 0.10), "fouls": (("fouls",), 0.15),
                 "saves": (("saves",), 0.10)},
@@ -57,8 +74,32 @@ def slug_for(league_id):
 
 def project(league_id, home_id, away_id, kickoff, excluded=frozenset()):
     slug, season = slug_for(league_id), season_of(kickoff)
+    from services import current_rosters
+    from services.data_freshness import worst
+    from services.prediction_lifecycle import freshness_state
+    snapshots = {str(team): current_rosters.current("soccer", team, slug) for team in (home_id, away_id)}
+    overlap = set(snapshots[str(home_id)][0]) & set(snapshots[str(away_id)][0])
+    eligible = {team: set(row[0]) - overlap for team, row in snapshots.items()}
     games = {}
     for team_id in (home_id, away_id):
         for game in box.team_games("soccer", team_id, (season - 1, season), league=slug, before=kickoff):
             games[game["id"]] = game
-    return prop_model.game_props(CONFIG, home_id, away_id, list(games.values()), excluded)
+    result = prop_model.game_props(CONFIG, home_id, away_id, list(games.values()), excluded,
+                                   eligible_players=eligible)
+    for player in result["players"]:
+        player["name"] = snapshots[player["team"]][0][player["id"]]["displayName"]
+    from services import soccer_player_model, soccer_model_picks
+    prior_games = sorted((g for g in games.values() if g.get("date", "")[:10] < kickoff.date().isoformat()), key=lambda g: g["date"])
+    soccer_model_picks.attach_context(result["players"], prior_games, CONFIG, home_id, away_id)
+    result["players"] = soccer_player_model.apply_to_players(result["players"], list(games.values()),
+                                                            home_id, away_id, kickoff)
+    result["picks"] = prop_model.best_picks(result["players"], CONFIG["pick_markets"], CONFIG["shrink"],
+                                            sides=CONFIG.get("pick_sides"))
+    verification = worst([row[1] for row in snapshots.values()])
+    if freshness_state(verification) != "fresh":
+        raise current_rosters.RosterUnavailable("Soccer roster verification expired while props were loading.")
+    result["roster_verification"] = {**verification, "status": "verified", "team_ids": list(snapshots)}
+    result["roster_players"] = {team: [{"id": pid, "name": row[0][pid]["displayName"],
+                                      "full_name": row[0][pid].get("fullName") or row[0][pid]["displayName"]}
+                                     for pid in eligible[team]] for team, row in snapshots.items()}
+    return result

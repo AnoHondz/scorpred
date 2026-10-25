@@ -1,0 +1,24 @@
+{
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/2/27.json",
+      "sha256": "e07d6d360b30e0cd17f9aeea0db1502d2a5666d298f1b44b83a2d2f21ba3d21b",
+      "bytes": 698179,
+      "provider": "StatsBomb",
+      "status": "used",
+      "games": 380,
+      "failures": [],
+      "event_fingerprint": "548dfc26f4be9b93baf9e36556c9b2d7266bb0eb9727472fff4cdc108134066b",
+      "attribution": "StatsBomb Open Data; https://github.com/statsbomb/open-data; research use under publisher terms",
+      "limitations": "Regular time only; event-derived assists and shots definitions; no keeper saves inferred from shot outcomes."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/statsbomb/open-data/master/data/matches/9/281.json",
+      "sha256": "13dff90f126d9f73da410ae3292b2773744657d3ba968a2b7a9c02135033581c",
+      "bytes": 63079,
+      "provider": "StatsBomb",
+      "status": "excluded_sparse_season",
+      "games": 0
+    }
+  ]
+}

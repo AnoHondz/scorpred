@@ -7,6 +7,7 @@ import { decisionAt } from '../decisionLifecycle';
 import { slatePlan } from '../slate';
 import { CardSkeleton, DateTabs, DecisionCard, EmptyState, PlanStrip, type Decision } from '../components/DecisionCard';
 import DataStatus from '../components/DataStatus';
+import RecentResults from '../components/RecentResults';
 
 interface SoccerData {
   slate: Decision[];
@@ -46,9 +47,10 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
   const params = new URLSearchParams(location.split('?')[1]);
   const selectedLeagueId = Number(params.get('league_id') || 39);
   const requestedDate = params.get('date') || '';
+  const results = params.get('view') === 'results';
   const leagueData = useFetch<{ leagues: League[] }>('/api/leagues');
   const leagues = leagueData.data?.leagues ?? [];
-  const url = `/api/dashboard/soccer?league_id=${selectedLeagueId}&date=${requestedDate}`;
+  const url = results ? null : `/api/dashboard/soccer?league_id=${selectedLeagueId}&date=${requestedDate}`;
   const { data, loading, error, retry, status } = useFetch<SoccerData>(url);
   const deadlines = (data?.slate ?? []).filter(game => Date.parse(game.matchDate || '') > now)
     .map(game => Date.parse(game.dataFreshness?.expires_at || '')).filter(Number.isFinite);
@@ -80,6 +82,12 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
         </p>
       </section>
 
+      <div className="dashboard-controls"><div className="sport-filter" aria-label="Soccer view">
+        <button aria-pressed={!results} onClick={() => navigate(`/soccer?league_id=${selectedLeagueId}`)}>Upcoming</button>
+        <button aria-pressed={results} onClick={() => navigate(`/soccer?league_id=${selectedLeagueId}&view=results`)}>Recent results</button>
+      </div></div>
+
+      {results ? <RecentResults sport="soccer" /> : <>
       {/* League switcher */}
       {leagueData.error && <RequestError message={leagueData.error} onRetry={leagueData.retry} />}
       {error && <RequestError message={error} onRetry={retry} />}
@@ -164,6 +172,7 @@ export default function SoccerPage({ onSelectMatch }: { onSelectMatch: (d: Decis
         )}
       </section>
       )}
+      </>}
     </div>
   );
 }

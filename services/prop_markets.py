@@ -104,9 +104,14 @@ def _same_game(event, home, away, kickoff):
     if not isinstance(event, dict):
         return False
     start = parse_kickoff(event.get("commence_time"))
-    return bool(start and _name(home) and _name(away) and abs((start - kickoff).total_seconds()) <= 300
-                and _name(event.get("home_team")) == _name(home)
-                and _name(event.get("away_team")) == _name(away))
+    from utils.parsing import normalize_team_name
+    # Legal club suffixes and '&' spelling differ across team providers. Player
+    # names still use the strict full-name key; team matching is never fuzzy.
+    team_key = lambda name: normalize_team_name(name).replace(" ", "")
+    return bool(start and team_key(home) and team_key(away) and team_key(home) != team_key(away)
+                and abs((start - kickoff).total_seconds()) <= 300
+                and team_key(event.get("home_team")) == team_key(home)
+                and team_key(event.get("away_team")) == team_key(away))
 
 
 def _quotes(payload, market_keys, kickoff, fetched_at, now):
@@ -223,6 +228,8 @@ def _model_at_line(pick, line):
 
 def compare(result, sport, home, away, kickoff, league_id=None):
     """Add sportsbook evidence without mutating model output or changing rankings."""
+    if sport == "soccer" and result.get("selection_policy") == "verified_market_only":
+        return soccer_opportunities(result, home, away, kickoff, league_id)
     picks = result.get("picks") or []
     mapping = MARKETS.get(sport, {})
     market_keys = {mapping[pick["market"]] for pick in picks if pick.get("market") in mapping}
@@ -256,3 +263,69 @@ def compare(result, sport, home, away, kickoff, league_id=None):
         "reason": MESSAGES.get(status, f"{matched} of {len(picks)} props matched to fresh sportsbook lines."),
         "validation": "Market comparisons are experimental; accuracy at sportsbook lines is not established.",
     }}
+
+
+def soccer_opportunities(result, home, away, kickoff, league_id):
+    """Price both sides of actual quotes. Historical medians cannot create ranked picks."""
+    players = result.get("players") or []
+    mapping = MARKETS["soccer"]
+    keys = {mapping[m["market"]] for player in players for m in player["markets"] if m["market"] in mapping}
+    feed = snapshot("soccer", home, away, kickoff, keys, league_id) if keys else {"status": "no_picks", "quotes": []}
+    names = Counter(_name(p["name"]) for p in players)
+    now = datetime.now(UTC)
+    choices, forecasts = [], []
+    for player in players:
+        for market in player["markets"]:
+            forecasts.append({"name": player["name"], "player_id": player.get("id"), "team": player["team"],
+                "market": market["market"], "label": market["label"], "projection": market["projection"],
+                "minutes": market.get("minutes"), "games": market.get("games"),
+                "model": market.get("model") or "historical baseline"})
+            if market.get("model") != "soccer-player-counts-v2" or market.get("games", 0) < 8: continue
+            if names[_name(player["name"])] != 1: continue
+            matching = [q for q in feed["quotes"] if q["player"] == _name(player["name"])
+                        and q["market"] == mapping.get(market["market"])]
+            for quote in matching:
+                expiration = parse_kickoff(quote.get("expires_at"))
+                updated = parse_kickoff(quote.get("updated_at"))
+                if not expiration or expiration <= now or not updated or updated > now: continue
+                line = quote["line"]
+                if line % 1 != .5: continue  # Whole-number settlement needs an explicit push model.
+                over = _model_at_line({**market, "side": "over", "chance": market["probability"],
+                    "probability": market["probability"]}, line)
+                if over is None: continue
+                for side, probability in (("over", over), ("under", 1 - over)):
+                    odds = quote[f"{side}_decimal"]
+                    ev = probability * odds - 1
+                    implied = 1 / odds
+                    total = 1 / quote["over_decimal"] + 1 / quote["under_decimal"]
+                    fair = implied / total
+                    if ev < .03 or probability - fair < .02: continue
+                    comparison = {**{k: v for k, v in quote.items() if k not in {"player", "over_decimal", "under_decimal"}},
+                        "side": side, "decimal_odds": odds, "model_chance": round(probability, 4),
+                        "implied_probability": implied, "fair_probability": fair, "source": "The Odds API"}
+                    choices.append({**market, "name": player["name"], "player_id": player.get("id"),
+                        "team": player["team"], "position": player["position"], "side": side, "line": line,
+                        "chance": round(probability, 4), "probability": round(probability, 4), "record": None,
+                        "edge": probability - fair, "expected_value": ev, "line_source": "sportsbook",
+                        "sportsbook_quotes": [comparison]})
+    # One quoted opportunity per player; no quota for overs or unders.
+    picks, seen = [], set()
+    for choice in sorted(choices, key=lambda p: -p["expected_value"]):
+        pid = str(choice["player_id"])
+        if pid not in seen:
+            picks.append(choice); seen.add(pid)
+        if len(picks) == 5: break
+    status = "available" if picks else feed["status"] if not feed["quotes"] else "no_verified_opportunity"
+    reason = f"{len(picks)} experimental model comparisons at verified sportsbook prices." if picks else (
+        "No verified sportsbook opportunity. " + MESSAGES.get(feed["status"], "No quoted side passed the model's research thresholds."))
+    quoted_count = len(picks)
+    if not picks:
+        from services import soccer_model_picks
+        picks = soccer_model_picks.select(players)
+        if picks:
+            status = "model_picks"
+            reason = f"{len(picks)} model picks using player history and team matchup data. Targets are model selections; sportsbook prices are unavailable or did not qualify."
+    return {**{k: v for k, v in result.items() if k not in {"players", "picks"}}, "picks": picks,
+        "forecasts": forecasts, "sportsbook": {"status": status, "provider": "The Odds API", "reason": reason,
+        "matched_picks": quoted_count, "total_picks": len(picks),
+        "validation": "Experimental model comparisons; no profitable sportsbook performance established."}}

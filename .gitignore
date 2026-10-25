@@ -22,6 +22,8 @@ pip-wheel-metadata/
 venv/
 env/
 .venv/
+.runtime/
+transfer-metadata/
 venv313/
 ENV/
 

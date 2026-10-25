@@ -11,6 +11,7 @@ Usage: python scripts/backtest_box_props.py nba 2026
        python scripts/backtest_box_props.py nba 2026 --early   (only the first three weeks, normally skipped)
 """
 import sys
+import os
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -18,6 +19,7 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ["SCORPRED_PROPS_TRAINING"] = "1"  # Published future calibration cannot enter a historical replay.
 
 from services import espn_box_scores as box  # noqa: E402
 from services import prop_model  # noqa: E402

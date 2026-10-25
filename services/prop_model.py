@@ -31,6 +31,11 @@ def value(row, fields):
     return sum(float(row.get(field) or 0.0) for field in fields)
 
 
+def has_stats(row, fields):
+    return all(isinstance(row.get(field), (int, float)) and not isinstance(row[field], bool)
+               and math.isfinite(row[field]) for field in fields)
+
+
 def projected_minutes(rows):
     recent = rows[-RECENT_MINUTES_GAMES:]
     weights = _weights(len(recent))
@@ -44,6 +49,8 @@ def league_rates(games, markets, position_of):
         for team in game["teams"].values():
             for row in team["players"]:
                 for key, (fields, _alpha) in markets.items():
+                    if not has_stats(row, fields):
+                        continue
                     entry = totals[(key, position_of(row))]
                     entry[0] += value(row, fields)
                     entry[1] += row["minutes"]
@@ -57,6 +64,8 @@ def allowed(games, markets):
         for team_id, team in game["teams"].items():
             opponent = game["teams"][team["opponent"]]
             for key, (fields, _alpha) in markets.items():
+                if not all(has_stats(row, fields) for row in opponent["players"]):
+                    continue
                 result[key][team_id].append(sum(value(row, fields) for row in opponent["players"]))
     return result
 
@@ -73,6 +82,9 @@ def opponent_factor(allowed_by_team, opponent, league_mean):
 def project_market(rows, fields, alpha_default, league_rate, prior_minutes, factor, min_games):
     """One market from a player's games (oldest first). None without enough games in role."""
     minutes = projected_minutes(rows)
+    # Missing provider statistics are unavailable observations, never zero-count
+    # games that can artificially inflate the probability of an under.
+    rows = [row for row in rows if has_stats(row, fields)]
     in_role = [r for r in rows if r["minutes"] >= ROLE_MINUTES * minutes]
     if minutes <= 0 or len(in_role) < min_games:
         return None
@@ -137,6 +149,7 @@ def game_props(config, home_id, away_id, games, excluded=frozenset(), limit=5, *
     an injury report: a prop on a player who sits is void, and a listed one may be limited.
     """
     from services.injury_reports import normalize_name
+    excluded_keys = {tuple(sorted(normalize_name(name).split())) for name in excluded}
     markets = config["markets"]
     histories = player_histories(games)
     positions = {}
@@ -153,7 +166,7 @@ def game_props(config, home_id, away_id, games, excluded=frozenset(), limit=5, *
         for player_id, rows in histories.items():
             if eligible_players is not None and player_id not in eligible_players.get(team_id, set()):
                 continue
-            if rows[-1]["team"] != team_id or normalize_name(rows[-1]["name"]) in excluded:
+            if rows[-1]["team"] != team_id or tuple(sorted(normalize_name(rows[-1]["name"]).split())) in excluded_keys:
                 continue
             if projected_minutes(rows) < config["min_minutes"]:
                 continue
@@ -162,11 +175,15 @@ def game_props(config, home_id, away_id, games, excluded=frozenset(), limit=5, *
             for key, (fields, alpha) in markets.items():
                 if key in config.get("position_markets", {}) and position not in config["position_markets"][key]:
                     continue
-                factor = opponent_factor(conceded[key], opponent, league_mean[key])
+                factor = opponent_factor(conceded[key], opponent, league_mean.get(key, 0.0))
                 market = project_market(rows, fields, alpha, rates.get((key, position), 0.0), config["prior_minutes"],
                                         factor, config["min_games"])
                 if market:
-                    entry["markets"].append({**market, "market": key, "label": config["labels"][key]})
+                    market = {**market, "market": key, "label": config["labels"][key]}
+                    if config.get("sport"):
+                        from services import prop_calibration
+                        market = prop_calibration.apply(market, config["sport"])
+                    entry["markets"].append(market)
             if entry["markets"]:
                 players.append(entry)
     return {"players": players,

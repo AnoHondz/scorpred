@@ -160,7 +160,7 @@ def _recency_mean(values):
     return sum(w * v for w, v in zip(weights, values, strict=True)) / sum(weights), weights
 
 
-def project_market(key, current, previous, opponent_allowed, league_allowed, rate_prior=None):
+def project_market(key, current, previous, opponent_allowed, league_allowed, rate_prior=None, *, include_distribution=True):
     """Pure model step: chronological values (oldest first) -> distribution summary.
 
     rate_prior is the league per-opportunity rate times the player's recent volume.
@@ -193,21 +193,23 @@ def project_market(key, current, previous, opponent_allowed, league_allowed, rat
         variance *= YARDS_DISPERSION
     variance = max(variance, mu * 1.0001 if kind == "count" else 1.0)
     dist = _distribution(kind, mu, variance)
-    middle = float(dist.median())
     result = {"market": key, "label": label, "kind": kind, "projection": round(mu, 2),
-              "median": round(middle, 1), "range": [round(float(dist.ppf(0.2)), 1), round(float(dist.ppf(0.8)), 1)],
               "games": n, "previous_games": len(previous), "opponent_factor": round(factor, 3),
               "recent": [round(v, 1) for v in current[-5:]]}
+    if include_distribution:
+        middle = float(dist.median())
+        result.update(median=round(middle, 1), range=[round(float(dist.ppf(0.2)), 1), round(float(dist.ppf(0.8)), 1)])
     if key == "anytime_td":
         result["probability"] = round(float(dist.sf(0)), 4)
         if n >= MIN_GAMES:
             record = (sum(v >= 1 for v in current) + 1) / (n + 2)
             result["pick"] = {"line": None, "side": "yes", "probability": result["probability"], "record": round(record, 4)}
         return result
-    line = math.floor(middle) + 0.5
-    result["model_line"] = line
-    result["hit_rate"] = round(sum(v > line for v in current) / n, 3) if n else None
-    result["ladder"] = _ladder(dist, kind)
+    if include_distribution:
+        line = math.floor(middle) + 0.5
+        result["model_line"] = line
+        result["hit_rate"] = round(sum(v > line for v in current) / n, 3) if n else None
+        result["ladder"] = _ladder(dist, kind)
     if n >= MIN_GAMES:
         # Stand-in for a sportsbook line: the player's own season median. "record" is the
         # smoothed share of this season's games over it, roughly what a book's price reflects.
@@ -235,6 +237,7 @@ def best_picks(teams, limit=PICKS):
             allowed = PICK_MARKETS.get(player["position"], {})
             options = [{**market["pick"], "edge": market["pick"]["probability"] - market["pick"]["record"],
                         "market": market["market"], "label": market["label"], "projection": market["projection"],
+                        "calibration": market["pick"].get("calibration"),
                         "ladder": market.get("ladder")}
                        for market in player["markets"] if market.get("pick") and market["market"] in allowed
                        and market["pick"]["line"] >= allowed[market["market"]]]
@@ -262,7 +265,7 @@ class Context:
         return self.allowances[(key, position)]
 
 
-def player_markets(position, rows, previous_rows, opponent, context):
+def player_markets(position, rows, previous_rows, opponent, context, *, include_distribution=True):
     """Every market for one player, from rows before the target game (oldest first)."""
     # Quarterbacks are starters or not: a backup spell or partial game would drag
     # every mean down. Skill-player workloads swing weekly, so theirs are kept.
@@ -281,7 +284,10 @@ def player_markets(position, rows, previous_rows, opponent, context):
         if key in OPPORTUNITY and (rate := context.rates.get((key, position))) is not None:
             volume = [v for row in rows if (v := _value(row, OPPORTUNITY[key])) is not None]
             rate_prior = rate * _recency_mean(volume)[0] if volume else None
-        if (market := project_market(key, values, prior, by_team.get(opponent), league, rate_prior)):
+        if (market := project_market(key, values, prior, by_team.get(opponent), league, rate_prior,
+                                     include_distribution=include_distribution)):
+            from services import prop_calibration
+            market = prop_calibration.apply(market, "nfl")
             markets.append(market)
     return markets
 
@@ -290,7 +296,7 @@ def _usage(rows):
     return sum((row.get("attempts") or 0) + (row.get("carries") or 0) + (row.get("targets") or 0) for row in rows)
 
 
-def _select(team, current):
+def _select(team, current, eligible=None):
     """Likely starters on the player's latest team.
 
     The quarterback is whoever led the team's latest game: summed usage would
@@ -303,7 +309,7 @@ def _select(team, current):
     usage, latest = defaultdict(float), {}
     for row in ordered:
         if row.get("team") != team or row["week"] not in weeks or latest_team[row["player_id"]] != team \
-                or row.get("position") not in POSITIONS:
+                or row.get("position") not in POSITIONS or (eligible is not None and row["player_id"] not in eligible):
             continue
         age = len(weeks) - 1 - weeks.index(row["week"])
         if row["position"] != "QB" or age == 0:
@@ -339,6 +345,33 @@ def check_coverage(game, records, rows):
                                + ". Props need every completed game; run the nflverse sync.")
 
 
+def current_eligibility(home, away):
+    from services import current_rosters
+    from services.data_freshness import worst
+    from services.prediction_lifecycle import freshness_state
+    crosswalk = defaultdict(set)
+    for row in store.records("players"):
+        if row.get("espn_id") and row.get("gsis_id"):
+            crosswalk[str(row["espn_id"])].add(row["gsis_id"])
+    directory = {("espn_id", pid): next(iter(ids)) for pid, ids in crosswalk.items() if len(ids) == 1}
+    rosters, sources = {}, []
+    for team in (home, away):
+        players, source = current_rosters.current("nfl", current_rosters.nfl_team_id(team))
+        rosters[team] = {directory[("espn_id", pid)]: athlete for pid, athlete in players.items()
+                         if ("espn_id", pid) in directory}
+        sources.append(source)
+        if not rosters[team]:
+            raise current_rosters.RosterUnavailable("No verified NFL player ID crosswalk is available for this team.")
+    ambiguous = set(rosters[home]) & set(rosters[away])
+    for team in rosters:
+        rosters[team] = {pid: athlete for pid, athlete in rosters[team].items() if pid not in ambiguous}
+    verification = worst(sources)
+    if freshness_state(verification) != "fresh":
+        raise current_rosters.RosterUnavailable("NFL current roster verification expired.")
+    return rosters, {**verification, "status": "verified", "team_ids": [home, away],
+                     "method": "Current ESPN roster athlete ID joined to nflverse GSIS player ID"}
+
+
 def project(game, records):
     if not game.get("nflverse_id"):
         raise PropsUnavailable("Player props need the local nflverse store; this game came from the ESPN fallback.")
@@ -347,6 +380,11 @@ def project(game, records):
     check_coverage(game, records, current)
     if not current:
         raise PropsUnavailable("No current-season player statistics precede this game.")
+    from services import current_rosters
+    try:
+        rosters, verification = current_eligibility(game["home_id"], game["away_id"])
+    except current_rosters.RosterUnavailable as exc:
+        raise PropsUnavailable(str(exc)) from exc
     injuries, report_synced = _injuries(season, week)
     by_player = defaultdict(list)
     for row in sorted(current, key=lambda r: r["week"]):
@@ -357,10 +395,10 @@ def project(game, records):
     teams = []
     for team, opponent, home in ((game["home_id"], game["away_id"], True), (game["away_id"], game["home_id"], False)):
         players, ruled_out, limited = [], [], []
-        for player_id, latest in _select(team, current):
+        for player_id, latest in _select(team, current, set(rosters[team])):
             injury = injuries.get(player_id) or {}
             status = injury.get("report_status")
-            entry = {"player_id": player_id, "name": latest.get("player_display_name") or latest.get("player_name"),
+            entry = {"player_id": player_id, "name": rosters[team][player_id]["displayName"],
                      "position": latest["position"], "headshot": latest.get("headshot_url"),
                      "injury": {"status": status, "detail": injury.get("report_primary_injury")} if status else None}
             if status == "Out":
@@ -376,5 +414,6 @@ def project(game, records):
         teams.append({"team": team, "opponent": opponent, "home": home, "players": players,
                       "ruled_out": ruled_out, "limited": limited})
     return {"game_id": game["nflverse_id"], "season": season, "week": week, "teams": teams, "picks": best_picks(teams),
+            "roster_verification": verification,
             "injury_report": "synced" if report_synced else "not_synced",
             "data_through_week": max(row["week"] for row in current), "notice": NOTICE, "data_source": "nflverse"}

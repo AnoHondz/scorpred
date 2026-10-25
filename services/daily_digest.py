@@ -48,6 +48,16 @@ def settings():
     path = root() / "config.json"
     value = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     config = {**DEFAULTS, **value}
+    # Hosted services configure delivery through secrets/settings, not an
+    # ephemeral local config file. Keep local configuration as the fallback.
+    for field, variable in (("recipient", "DAILY_DIGEST_RECIPIENT"), ("time", "DAILY_DIGEST_TIME")):
+        if os.getenv(variable, "").strip():
+            config[field] = os.environ[variable].strip()
+    enabled = os.getenv("DAILY_DIGEST_ENABLED", "").strip().lower()
+    if enabled:
+        if enabled not in {"true", "false", "1", "0"}:
+            raise ValueError("Invalid daily digest enabled setting.")
+        config["enabled"] = enabled in {"true", "1"}
     if not isinstance(config["enabled"], bool) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", config["time"]):
         raise ValueError("Invalid daily digest schedule.")
     if config["timezone"] != DEFAULTS["timezone"]:
@@ -288,7 +298,8 @@ def collect(api_get, props_for, *, now=None, clock=None, leagues=None, roster_lo
                     candidates.append({**{key: pick.get(key) for key in ("name", "label", "side", "line", "chance", "edge", "games")},
                                        "team": team, "kickoff": card["matchDate"], "match_id": str(card["matchId"]),
                                        "line": quote["line"] if quote else line, "chance": quote["model_chance"] if quote else chance,
-                                       "line_source": "sportsbook" if quote else "historical", "market": quote,
+                                       "line_source": "sportsbook" if quote else pick.get("line_source", "historical"), "market": quote,
+                                       "rationale": pick.get("rationale", ""),
                                        "historical_reference": {"line": line, "chance": chance}, "research_only": True,
                                        "injury_note": "Injury status not independently verified outside supported league feeds" if sport == "soccer" else "Fresh injury check"})
             except Exception as exc:
@@ -366,6 +377,8 @@ def render(report):
         for p in report["props"][sport]:
             quote = p.get("market")
             source = f'{e(quote["bookmaker"])}: {quote["decimal_odds"]:.2f} decimal odds; updated {when(quote["updated_at"])}' if quote else 'Historical target; no verified sportsbook quote'
+            if not quote and p.get("line_source") == "model_target":
+                source = 'Model target; no verified sportsbook quote. ' + e(p.get("rationale", ""))
             picks.append(f'<li><b>{e(p["name"])}</b> ({e(p["team"])}): {e(str(p["side"]).title())} {e(p["line"]) if p["line"] is not None else ""} {e(p["label"])} — {p["chance"] * 100:.1f}% experimental model estimate at this target. {source}. {when(p["kickoff"])}. {e(p["injury_note"])}.</li>')
         sections.append(f'<h2>{sport.upper()}</h2>{table}<h3>Player props — experimental</h3><ol>{"".join(picks)}</ol>' if picks else f'<h2>{sport.upper()}</h2>{table}<p>Player props unavailable after source, roster and injury checks.</p>')
     notes = ''.join(f'<li>{e(note)}</li>' for note in report["notes"])

@@ -11,13 +11,13 @@ from datetime import UTC, datetime, timedelta
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / ".tmp/local-app"
-SOURCES = ("app.py", "services/prediction_service.py", "services/cache_service.py", "services/decision_store.py",
+SOURCES = ("app.py", "api_client.py", "services/props_email.py", "services/nfl_service.py", "services/prediction_service.py", "services/cache_service.py", "services/decision_store.py",
            "services/data_freshness.py", "services/prediction_lifecycle.py", "services/nba_matchup_context.py", "nba_routes.py", "nba_live_client.py",
            "services/nba_pregame_model.py", "services/nba_game_projection.py", "services/nba_early_season.py",
-           "nfl_routes.py", "services/nfl_props.py", "services/soccer_props.py", "services/injury_impact.py",
+           "nfl_routes.py", "services/nfl_props.py", "services/soccer_props.py", "services/soccer_props_loader.py", "services/soccer_model_picks.py", "services/injury_impact.py",
            "services/injury_reports.py", "services/nfl_player_value.py", "services/soccer_player_value.py",
            "services/espn_box_scores.py", "services/prop_model.py", "services/nba_props.py", "services/fpl_props.py",
-           "services/prop_markets.py", "services/best_props.py", "services/daily_digest.py", "services/scheduler.py", "services/soccer_model.py", "decision_ui.py", "scripts/run_local.py")
+           "services/prop_markets.py", "services/prop_calibration.py", "services/soccer_player_model.py", "services/best_props.py", "services/current_rosters.py", "services/daily_digest.py", "services/scheduler.py", "services/soccer_model.py", "decision_ui.py", "scripts/run_local.py")
 
 
 def source_fingerprint():

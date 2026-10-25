@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Target } from 'lucide-react';
 import { useFetch } from '../hooks/useFetch';
 import { calendarFormat } from '../navigation';
+import { useNow } from '../hooks/useNow';
+import EmailProps from './EmailProps';
 
 type Sport = 'soccer' | 'nba' | 'nfl';
 
 interface BoardPick {
+  roster_verification?: { expires_at: string };
   sport: Sport;
   validation: string;
   match_id: string;
@@ -55,19 +58,32 @@ export default function BestProps({ date }: { date: string }) {
   const [tab, setTab] = useState<'overall' | Sport>('overall');
   const { data, loading, error, retry } = useFetch<{ result: Board }>(`/api/props/best?date=${encodeURIComponent(date)}`);
   const board = data?.result;
-  const picks = board ? (tab === 'overall' ? board.overall : board.by_sport[tab] ?? []) : [];
+  const now = useNow();
+  const renewed = useRef('');
+  const allPicks = board ? [...board.overall, ...Object.values(board.by_sport).flat()] : [];
+  const expired = allPicks.map(p => p.roster_verification?.expires_at).filter((value): value is string =>
+    Boolean(value && (!Number.isFinite(Date.parse(value)) || Date.parse(value) <= now))).sort().join('|');
+  useEffect(() => {
+    if (expired && !loading && renewed.current !== expired) {
+      renewed.current = expired;
+      retry();
+    }
+  }, [expired, loading, retry]);
+  const picks = (board ? (tab === 'overall' ? board.overall : board.by_sport[tab] ?? []) : []).filter(p =>
+    !p.roster_verification || Date.parse(p.roster_verification.expires_at) > now);
   const slate = board && tab !== 'overall' ? board.slates[tab] : null;
   return <section className="section" aria-label="Best player props">
     <div className="section-heading-row"><div><h2 className="section-title"><Target size={18} />Best player props</h2>
-      <p className="quiet-label">Ranked by edge over each player’s recent hit rate · at least 60% likely · one pick per player</p></div></div>
+      <p className="quiet-label">Ranked by model comparison · at least 60% estimated chance · one pick per player</p></div></div>
     <div className="prop-board-tabs" role="tablist" aria-label="Props by sport">
       {TABS.map(item => <button key={item.key} type="button" role="tab" aria-selected={tab === item.key} onClick={() => setTab(item.key)}
         className={tab === item.key ? 'prop-board-tab-active' : ''}>{item.label}</button>)}
     </div>
+    <EmailProps key={`${date}-${tab}`} date={date} sport={tab} />
     {loading && <div className="card"><p className="quiet-label" role="status">Collecting props from every game on the slate…</p></div>}
     {error && <p className="coverage-note">Player props are unavailable right now. <button type="button" className="text-button" onClick={retry}>Reload props</button></p>}
     {board && <div className="card evaluation-table-card">
-      {tab === 'overall' && <p className="quiet-label">Soccer and NBA, backtested at these lines. NFL props are experimental and listed on their own tab.</p>}
+      {tab === 'overall' && <p className="quiet-label">Experimental soccer and NBA estimates. Historical model tests do not establish sportsbook returns. NFL props have a separate tab.</p>}
       {slate && slate.date && slate.date !== board.date && <p className="coverage-note">No {tab.toUpperCase()} games on this date; showing the next slate ({calendarFormat(`${slate.date}T12:00:00Z`, { month: 'short', day: 'numeric' })}).</p>}
       {picks.length === 0 ? <p className="quiet-label">No pregame props for this selection.</p>
         : <div className="table-scroll"><table className="evaluation-table"><caption className="sr-only">Best player props</caption>

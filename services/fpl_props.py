@@ -20,6 +20,7 @@ SUMMARY_URL = "https://fantasy.premierleague.com/api/element-summary/{id}/"
 PRIOR_MINUTES = 900      # last season counts as at most this many minutes of evidence
 RECENT_MATCHES = 5       # expected minutes: average over the latest team matches
 STARTER_MINUTES = 60     # picks only for players averaging this much
+MIN_PICK_GAMES = 8       # A four-game discrepancy is not enough evidence to rank a tackle prop.
 HOME_EDGE = 1.12         # home side's goals multiplier (away divides by it)
 FACTOR_LIMITS = (0.6, 1.6)
 # scripts/backtest_fpl_props.py, 2026-27 rounds 3-7 (small sample):
@@ -44,9 +45,10 @@ def _float(value):
 
 def per_90(history, past, field):
     """Season rate per 90 with last season blended in as up to ``PRIOR_MINUTES`` of evidence."""
-    minutes = sum(_float(row.get("minutes")) for row in history)
-    total = sum(_float(row.get(field)) for row in history)
-    if past and _float(past.get("minutes")) > 0:
+    known = [row for row in history if row.get(field) is not None]
+    minutes = sum(_float(row.get("minutes")) for row in known)
+    total = sum(_float(row.get(field)) for row in known)
+    if past and past.get(field) is not None and _float(past.get("minutes")) > 0:
         weight = min(1.0, PRIOR_MINUTES / _float(past["minutes"]))
         minutes += weight * _float(past["minutes"])
         total += weight * _float(past.get(field))
@@ -89,16 +91,17 @@ def player_markets(element_type, history, past, team_rate, team_season_rate, opp
     count_markets = [("saves", "saves", _factor(opponent_rate, opponent_season_rate))] if element_type == GOALKEEPER \
         else [("tackles", "tackles", 1.0)]
     for key, field, factor in count_markets:
-        if len(started) < 3:
+        observed = [row for row in started if row.get(field) is not None]
+        if len(observed) < 3:
             continue
         rate = per_90(history, past, field) * share * factor
-        line = math.floor(median(_float(row.get(field)) for row in started)) + 0.5
+        line = math.floor(median(_float(row.get(field)) for row in observed)) + 0.5
         over = float(poisson.sf(math.floor(line), rate))
-        record = (sum(_float(row.get(field)) > line for row in started) + 1) / (len(started) + 2)
+        record = (sum(_float(row.get(field)) > line for row in observed) + 1) / (len(observed) + 2)
         side = "over" if over >= record else "under"
         markets.append({"market": key, "label": LABELS[key], "projection": round(rate, 2), "side": side, "line": line,
                         "probability": round(over if side == "over" else 1 - over, 4),
-                        "record": round(record if side == "over" else 1 - record, 4), "games": len(started),
+                        "record": round(record if side == "over" else 1 - record, 4), "games": len(observed),
                         "ladder": {"start": 0, "over": [round(float(poisson.sf(k, rate)), 4) for k in range(int(rate * 3) + 6)]}})
     return markets
 
@@ -108,11 +111,13 @@ def best_picks(candidates, limit=5):
     picks = []
     for player in candidates:
         options = [m for m in player["markets"] if m["market"] in PICK_MARKETS
+                   and m.get("games", 0) >= MIN_PICK_GAMES
                    and (PICK_MARKETS[m["market"]] is None or m["line"] >= PICK_MARKETS[m["market"]])
                    and m["probability"] > max(m["record"], 0.5)]  # beats the record and is the likelier side
         if options:
             best = max(options, key=lambda m: m["probability"] - m["record"])
             picks.append({**best, "edge": best["probability"] - best["record"], "name": player["name"],
+                          "player_id": player.get("player_id"), "full_name": player.get("full_name"),
                           "team": player["team"], "position": player["position"],
                           "chance": round(0.5 + PICK_SHRINK * (best["probability"] - 0.5), 4) if best["side"] != "yes"
                           else round(best["probability"], 4)})
@@ -138,7 +143,7 @@ def _summary(player_id):
     return payload
 
 
-def project(payload, home_name, away_name):
+def project(payload, home_name, away_name, kickoff=None):
     """Five best picks for a fixture between two Premier League clubs, plus the match rates."""
     from services.injury_impact import ImpactUnavailable, fpl_team
     elements, teams = payload["elements"], payload["teams"]
@@ -152,8 +157,34 @@ def project(payload, home_name, away_name):
     rates = {home: (home_rate, away_rate, away), away: (away_rate, home_rate, home)}
     eligible = [p for p in elements if p.get("team") in rates and p.get("status") == "a"
                 and _float(p.get("starts")) >= 2 and _float(p.get("minutes")) / max(1, matches) >= STARTER_MINUTES * 0.6]
+    from services import soccer_player_model as learned
+    fitted = learned.artifact().get("markets", {}).get("tackles")
+    if fitted and fitted.get("enabled") is False: fitted = None
+    members = [p for p in elements if p.get("team") in rates and _float(p.get("minutes")) > 0] if fitted else eligible
     with ThreadPoolExecutor(max_workers=8) as pool:
-        summaries = dict(zip((p["id"] for p in eligible), pool.map(lambda p: _summary(p["id"]), eligible)))
+        summaries = dict(zip((p["id"] for p in members), pool.map(lambda p: _summary(p["id"]), members)))
+    context = {}
+    if fitted and kickoff:
+        from collections import defaultdict
+        try:
+            fixtures, _observed, _stale = injury_reports._fetch("fpl-current-fixtures", "https://fantasy.premierleague.com/api/fixtures/", fresh_seconds=3600)
+            fixtures = {r["id"]: r for r in fixtures}
+            groups = defaultdict(list)
+            for summary in summaries.values():
+                for row in summary.get("history") or []:
+                    fixture = fixtures.get(row["fixture"])
+                    if not fixture or row.get("tackles") is None or not row.get("kickoff_time") or row["kickoff_time"][:10] >= kickoff.date().isoformat(): continue
+                    # Match fixture identity and date, never today's membership, establish the historical team.
+                    if row["kickoff_time"][:10] != str(fixture.get("kickoff_time"))[:10]: continue
+                    team_id = fixture["team_h"] if row["was_home"] else fixture["team_a"]
+                    groups[(row["fixture"], team_id)].append(row)
+            ordered = sorted(groups, key=lambda key: fixtures[key[0]]["kickoff_time"])
+            for key in ordered:
+                rows = groups[key]
+                if sum(_float(r.get("minutes")) for r in rows) >= 990:
+                    context.setdefault(key[1], []).append(sum(_float(r["tackles"]) for r in rows))
+        except (injury_reports.InjuryFeedUnavailable, KeyError, TypeError):
+            context = {}  # Missing team context cannot authorize the learned tackle model.
     candidates = []
     for player in eligible:
         summary = summaries[player["id"]]
@@ -166,8 +197,18 @@ def project(payload, home_name, away_name):
         if expected_minutes(history) < STARTER_MINUTES:
             continue
         markets = player_markets(player["element_type"], history, past, own, team_avg, opponent_rate, opponent_avg)
+        if fitted and kickoff and len(context.get(team, [])) >= 3 and len(context.get(opponent, [])) >= 3:
+            normalized = [{**row, "date": row["kickoff_time"], "starter": bool(row.get("starts", _float(row.get("minutes")) >= 60))}
+                          for row in history if row.get("kickoff_time")]
+            features = learned.inputs(normalized, "tackles", {1: "G", 2: "D", 3: "M", 4: "F"}[player["element_type"]],
+                                      context[opponent], context[team], team == home, kickoff.isoformat())
+            if features:
+                markets = [learned.reprice(m, features, fitted) if m["market"] == "tackles" else m for m in markets]
         name = next(t["name"] for t in teams if t["id"] == team)
-        candidates.append({"name": player.get("web_name") or "", "team": name,
+        candidates.append({"name": player.get("web_name") or "", "team": name, "player_id": str(player["id"]),
+                           "match_side": "home" if team == home else "away",
+                           "full_name": f"{player.get('first_name', '')} {player.get('second_name', '')}".strip(),
                            "position": {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}.get(player["element_type"], ""),
                            "markets": markets})
-    return {"picks": best_picks(candidates), "expected_goals": {"home": round(home_rate, 2), "away": round(away_rate, 2)}}
+    return {"picks": best_picks(candidates), "candidates": candidates,
+            "expected_goals": {"home": round(home_rate, 2), "away": round(away_rate, 2)}}

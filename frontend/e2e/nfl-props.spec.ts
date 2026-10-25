@@ -27,6 +27,25 @@ async function setup(page: Page, result: unknown = { picks, data_through_week: 6
 
 const matchURL = '/match-analysis?sport=nfl&match_id=props-fixture&date=2026-10-25';
 
+test('soccer polls a pending cold calculation until picks arrive', async ({ page }) => {
+  await setup(page, {}, 200, 'soccer');
+  let requests = 0;
+  await page.route('**/api/soccer/matches/props-fixture/props?**', route => {
+    requests++;
+    return requests === 1
+      ? route.fulfill({ status: 202, json: { refresh_pending: true } })
+      : route.fulfill({ json: { result: { picks: [{ ...pick, name: 'Ready Player', line_source: 'model_target',
+          rationale: 'Team produces 12 shots per game; opponent allows 15 across 8 games.' }] } } });
+  });
+  await page.goto(matchURL.replace('sport=nfl', 'sport=soccer'));
+  await expect.poll(() => requests).toBe(1);
+  await page.clock.fastForward(5000);
+  await expect(page.locator('.pick-row').filter({ hasText: 'Ready Player' })).toBeVisible();
+  await expect(page.getByText('Model target · verify the offered line before betting')).toBeVisible();
+  await expect(page.getByText('Team produces 12 shots per game; opponent allows 15 across 8 games.')).toBeVisible();
+  expect(requests).toBe(2);
+});
+
 test('historical targets require no manual line editing and are not presented as sportsbook prices', async ({ page }) => {
   await setup(page);
   await page.goto(matchURL);
@@ -36,17 +55,52 @@ test('historical targets require no manual line editing and are not presented as
   const first = props.locator('.pick-row').first();
   await expect(first).toContainText('First Receiver');
   await expect(first).toContainText('Over 4.5 Receptions');
-  await expect(first).toContainText('Season record at this line: 40%');
+  await expect(first).toContainText('Historical hit rate at this target: 40%');
   await expect(first.locator('.pick-chance')).toHaveText('65%');
   await expect(first).toContainText('Historical target · no sportsbook quote');
   await expect(first).toContainText('Model estimate');
   await expect(props.getByRole('spinbutton')).toHaveCount(0);
 });
 
+for (const sport of ['nfl', 'nba', 'soccer']) test(`${sport} withdraws cached picks when current roster verification expires`, async ({ page }) => {
+  await setup(page, { picks: [pick], roster_verification: { status: 'verified',
+    expires_at: '2026-10-24T12:00:30Z' } }, 200, sport);
+  await page.goto(matchURL.replace('sport=nfl', `sport=${sport}`));
+  const props = page.getByRole('region', { name: 'Player props', exact: true });
+  await expect(props.locator('.pick-row')).toHaveCount(1);
+  await page.clock.fastForward(31_000);
+  await expect(props.locator('.pick-row')).toHaveCount(0);
+  await expect(props).toContainText('Refreshing current player availability');
+});
+
 const quote = { bookmaker: 'DraftKings', bookmaker_key: 'draftkings', side: 'over', line: 5.5,
   decimal_odds: 1.91, implied_probability: .5236, fair_probability: .5, model_chance: .424,
   updated_at: '2026-10-24T12:00:00Z', expires_at: '2026-10-24T12:05:00Z', source: 'The Odds API' };
 const sportsbook = { status: 'available', reason: '1 of 1 props matched to fresh sportsbook lines.', matched_picks: 1, total_picks: 1 };
+
+test('soccer shows picks only and omits the raw forecast table', async ({ page }) => {
+  await setup(page, { picks: [], sportsbook: { status: 'no_match', reason: 'No verified sportsbook opportunity.', matched_picks: 0, total_picks: 0 },
+    forecasts: [{ player_id: 'current-1', name: 'Current Forward', team: 'Home team', label: 'Shots', projection: 2.12,
+      minutes: 75, games: 15, model: 'soccer-player-counts-v2' }] }, 200, 'soccer');
+  await page.goto(matchURL.replace('sport=nfl', 'sport=soccer'));
+  const props = page.getByRole('region', { name: 'Player props', exact: true });
+  await expect(props.locator('.pick-row')).toHaveCount(0);
+  await expect(props).toContainText('No verified sportsbook opportunity.');
+  await expect(page.getByText('Player forecasts · research estimates', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Current Forward', { exact: true })).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test('an expired verified sportsbook pick does not fall back to an invented historical target', async ({ page }) => {
+  await setup(page, { picks: [{ ...pick, line_source: 'sportsbook', record: null, sportsbook_quotes: [quote] }], sportsbook }, 200, 'soccer');
+  await page.goto(matchURL.replace('sport=nfl', 'sport=soccer'));
+  const props = page.getByRole('region', { name: 'Player props', exact: true });
+  await expect(props.locator('.pick-row')).toHaveCount(1);
+  await page.clock.fastForward(301_000);
+  await expect(props.locator('.pick-row')).toHaveCount(0);
+  await expect(props.getByText('Historical target · no sportsbook quote')).toHaveCount(0);
+});
 
 for (const sport of ['nfl', 'nba', 'soccer']) test(`${sport} automatically shows the sportsbook target and model at that target`, async ({ page }) => {
   await setup(page, { picks: [{ ...pick, sportsbook_quotes: [quote] }], sportsbook }, 200, sport);

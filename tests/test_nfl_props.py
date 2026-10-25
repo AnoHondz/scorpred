@@ -53,6 +53,9 @@ def seeded(tmp_path, monkeypatch):
     nfl_props._week_inputs.cache_clear()
 
     def seed(rows, injuries=()):
+        rosters = {team: {row["player_id"]: {"displayName": row["player_display_name"]}
+                          for row in rows if row.get("team") == team} for team in ("AA", "BB")}
+        monkeypatch.setattr(nfl_props, "current_eligibility", lambda *args: (rosters, fresh()))
         store.replace_dataset("player_stats", SEASON, rows, path=path)
         if injuries:
             store.replace_dataset("injuries", SEASON, list(injuries), path=path)

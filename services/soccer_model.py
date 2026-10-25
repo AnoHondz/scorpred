@@ -23,6 +23,7 @@ import numpy as np
 
 from runtime_paths import model_dir
 from services import soccer_ratings as sr
+from utils.parsing import normalize_team_name
 
 _log = logging.getLogger(__name__)
 
@@ -57,11 +58,26 @@ def _fetch_results(api_client, league_id: int, seasons: list[int]) -> tuple[list
     clubs: dict[int, set[str]] = {}
     jobs = []
     for season in seasons:
-        teams = api_client.get_teams(league_id, season) or []
+        # These IDs are passed to ESPN schedules. The preferred public team
+        # lookup may return football-data IDs, which belong to another namespace.
+        if hasattr(api_client, "_espn_league_teams"):
+            teams = api_client._espn_league_teams(league_id) or []
+        else:
+            teams = api_client.get_teams(league_id, season) or []
         clubs[season] = {str((t.get("team") or t).get("name")) for t in teams}
         jobs += [((t.get("team") or t).get("id"), season) for t in teams if (t.get("team") or t).get("id")]
+    def schedule(job):
+        # One club's schedule failing (ESPN returns persistent 500s for some
+        # club-seasons) must not discard the league; its matches still arrive
+        # through each opponent's schedule and are deduplicated by fixture id.
+        try:
+            return api_client._espn_schedule(job[0], league_id, job[1])
+        except Exception as exc:
+            _log.warning("Skipping schedule team=%s season=%s league=%s: %s", job[0], job[1], league_id, exc)
+            return []
+
     with ThreadPoolExecutor(max_workers=8) as pool:
-        schedules = list(pool.map(lambda job: api_client._espn_schedule(job[0], league_id, job[1]), jobs))
+        schedules = list(pool.map(schedule, jobs))
     seen: dict[str, dict] = {}
     for fixtures in schedules:
         for fixture in fixtures or []:
@@ -143,7 +159,7 @@ def _refresh_league_ratings(api_client, league_id, model):
     with _lock:
         if built is not None:
             _ratings[league_id] = built
-        return _ratings.get(league_id)
+        return built
 
 
 def _features(elo: sr.Elo, dixon_coles: sr.DixonColes, home: str, away: str) -> np.ndarray:
@@ -167,10 +183,20 @@ def predict(api_client, league_id: int, home: str, away: str) -> dict[str, Any] 
     ratings = _league_ratings(api_client, league_id) if model else None
     if not ratings:
         return None
-    clubs = ratings["clubs"]
-    if clubs and (home not in clubs or away not in clubs):
-        return None
     elo, dixon_coles = ratings["elo"], ratings["dixon_coles"]
+    # Fixtures and history can use different provider spellings. Resolve only
+    # unambiguous normalized names that actually have fitted team parameters;
+    # unknown teams must never silently receive generic league probabilities.
+    def fitted_name(name):
+        if name in dixon_coles.attack:
+            return name
+        matches = [team for team in dixon_coles.attack
+                   if normalize_team_name(team) == normalize_team_name(name)]
+        return matches[0] if len(matches) == 1 else None
+
+    home, away = fitted_name(home), fitted_name(away)
+    if home is None or away is None or home == away:
+        return None
     raw = combine(_features(elo, dixon_coles, home, away), model["layer"])
     from services import recalibration
     probabilities = recalibration.adjust("soccer", *map(float, raw))

@@ -68,8 +68,8 @@ def _nba_rows(summary):
             row = {"id": str(athlete["athlete"]["id"]), "name": athlete["athlete"].get("displayName") or "",
                    "position": (athlete["athlete"].get("position") or {}).get("abbreviation") or "",
                    "starter": bool(athlete.get("starter")), "minutes": minutes}
-            row.update({name: _number(values.get(key)) or 0.0 for key, name in NBA_FIELDS.items()})
-            row["threes"] = _number(values.get("threePointFieldGoalsMade-threePointFieldGoalsAttempted")) or 0.0
+            row.update({name: _number(values.get(key)) for key, name in NBA_FIELDS.items()})
+            row["threes"] = _number(values.get("threePointFieldGoalsMade-threePointFieldGoalsAttempted"))
             players.append(row)
         teams[team_id] = {"home": sides.get(team_id, False), "players": players}
     return teams
@@ -102,7 +102,7 @@ def _soccer_rows(summary):
             row = {"id": athlete_id, "name": entry["athlete"].get("displayName") or "",
                    "position": (entry.get("position") or {}).get("abbreviation") or "",
                    "starter": bool(entry.get("starter")), "minutes": max(minutes, 1.0)}
-            row.update({name: float(values.get(key) or 0.0) for key, name in SOCCER_FIELDS.items()})
+            row.update({name: _number(values.get(key)) for key, name in SOCCER_FIELDS.items()})
             players.append(row)
         teams[team_id] = {"home": sides.get(team_id, False), "players": players}
     return teams

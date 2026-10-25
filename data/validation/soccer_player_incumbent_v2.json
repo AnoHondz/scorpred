@@ -1,0 +1,63 @@
+{
+  "policy": "Fixed every-fourth held-out ESPN fixture; common participating current-role players; original calibration kept",
+  "selection": "Frozen count models; no tuning against this audit",
+  "markets": {
+    "shots": {
+      "n": 1275,
+      "incumbent_brier": 0.12387915483029342,
+      "candidate_brier": 0.1222689720041961,
+      "incumbent_mae": 0.829262745098039,
+      "candidate_mae": 0.8225254901960776,
+      "enabled": true
+    },
+    "shots_on_target": {
+      "n": 1275,
+      "incumbent_brier": 0.08108003829542489,
+      "candidate_brier": 0.08073049509605228,
+      "incumbent_mae": 0.4401254901960785,
+      "candidate_mae": 0.4382431372549019,
+      "enabled": true
+    },
+    "goals": {
+      "n": 1275,
+      "incumbent_brier": 0.048424983007842905,
+      "candidate_brier": 0.04815481683627458,
+      "incumbent_mae": 0.18672156862745207,
+      "candidate_mae": 0.18668235294117672,
+      "enabled": true
+    },
+    "assists": {
+      "n": 1275,
+      "incumbent_brier": 0.037876013733728335,
+      "candidate_brier": 0.03758205940262746,
+      "incumbent_mae": 0.15166274509804,
+      "candidate_mae": 0.14122352941176491,
+      "enabled": true
+    },
+    "fouls": {
+      "n": 1275,
+      "incumbent_brier": 0.1579232026926054,
+      "candidate_brier": 0.158303826490144,
+      "incumbent_mae": 0.7968784313725467,
+      "candidate_mae": 0.7884941176470591,
+      "enabled": false
+    },
+    "saves": {
+      "n": 144,
+      "incumbent_brier": 0.1932136735763889,
+      "candidate_brier": 0.19050656935364585,
+      "incumbent_mae": 1.4534722222222218,
+      "candidate_mae": 1.4288888888888895,
+      "enabled": true
+    },
+    "tackles": {
+      "n": 209,
+      "incumbent_brier": 0.16347602313717824,
+      "candidate_brier": 0.16071129513763546,
+      "incumbent_mae": 1.0571259843580478,
+      "candidate_mae": 1.06097070358645,
+      "enabled": true,
+      "policy": "Fixed every-fourth held-out FPL fixture; common participating regulars; no current roster leakage"
+    }
+  }
+}

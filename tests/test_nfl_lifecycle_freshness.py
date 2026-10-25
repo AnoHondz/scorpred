@@ -48,6 +48,25 @@ def history():
     return result
 
 
+def test_live_slate_checks_receipts_after_download_but_keeps_explicit_as_of_clock(monkeypatch):
+    records = history() + [game(days=1)]
+    moments = iter([NOW - timedelta(seconds=10), NOW])
+    class ReceiptClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(moments)
+    monkeypatch.setenv("NFL_DATA_SOURCE", "nflverse")
+    monkeypatch.setattr(nfl_service, "datetime", ReceiptClock)
+    monkeypatch.setattr(nflverse_provider, "load_records", lambda *args: (
+        records, {"source": "nflverse", "warning": None, "coverage": []}))
+    monkeypatch.setattr(nfl_odds, "fetch_snapshot", lambda now: {"status": "unavailable"})
+    monkeypatch.setattr(nfl_odds, "match_quote", lambda *args: None)
+    payload, _ = nfl_service.load_slate(selected=(NOW + timedelta(days=1)).date())
+    assert payload["dataFreshness"]["state"] == "fresh"
+    payload, _ = nfl_service.load_slate(selected=(NOW + timedelta(days=1)).date(), now=NOW - timedelta(seconds=10))
+    assert payload["dataFreshness"]["state"] == "unavailable"
+
+
 @pytest.mark.parametrize("change", [{"kickoff": NOW.isoformat()}, {"kickoff": (NOW - timedelta(seconds=1)).isoformat()},
                                    {"state": "in"}, {"completed": True}, {"status_name": "STATUS_POSTPONED"}])
 def test_kickoff_and_status_stop_nfl_predictions_before_engine_evaluation(monkeypatch, change):

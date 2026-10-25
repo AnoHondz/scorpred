@@ -8,10 +8,12 @@ coverage of the 20th-80th percentile range (ideal 60%).
 Usage: python scripts/backtest_nfl_props.py 2024 2025
 """
 import sys
+import os
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ["SCORPRED_PROPS_TRAINING"] = "1"
 
 from services import nfl_props  # noqa: E402
 

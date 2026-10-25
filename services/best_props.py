@@ -98,14 +98,14 @@ def build(slates: dict[str, tuple[str | None, list[dict]]], props_for: Callable[
                 continue
             picks[sport].append({
                 "sport": sport, "match_id": decision.get("matchId"),
-                "validation": "backtested, small sample" if (sport, pick.get("market")) in SMALL_SAMPLE_MARKETS
+                "validation": "experimental model target" if pick.get("line_source") == "model_target" else "experimental sportsbook comparison" if pick.get("line_source") == "sportsbook" else "backtested, small sample" if (sport, pick.get("market")) in SMALL_SAMPLE_MARKETS
                 else VALIDATION[sport],
                 "matchup": decision.get("matchup"), "kickoff": decision.get("matchDate"),
                 "league": decision.get("support") if sport == "soccer" else sport.upper(),
                 **{key: pick.get(key) for key in ("name", "player_id", "team", "position", "label", "market", "side", "line",
                                                   "line_source", "projection", "chance", "record", "edge", "games",
                                                   "sportsbook_quotes")},
-                **({"roster_verification": result["roster_verification"]} if sport == "nba" and result.get("roster_verification") else {}),
+                **({"roster_verification": result["roster_verification"]} if result.get("roster_verification") else {}),
             })
     by_sport = {sport: rank(rows, PER_SPORT) for sport, rows in picks.items()}
     overall = rank([p for sport in ("soccer", "nba") for p in picks.get(sport, [])], OVERALL)

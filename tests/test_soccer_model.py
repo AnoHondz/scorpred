@@ -77,6 +77,39 @@ def test_apply_leaves_the_prediction_alone_without_ratings():
     assert sm.apply(dict(rules), None, "A", "B") == rules
 
 
+def test_history_uses_espn_team_ids_instead_of_other_provider_ids(client, monkeypatch):
+    from unittest.mock import Mock
+    monkeypatch.setattr(client, "_espn_league_teams", lambda league: [
+        {"team": {"id": "Strong", "name": "Strong"}}, {"team": {"id": "B", "name": "B"}}
+    ], raising=False)
+    monkeypatch.setattr(client, "get_teams", Mock(side_effect=AssertionError("Foreign provider IDs")))
+    schedule = Mock(return_value=[])
+    monkeypatch.setattr(client, "_espn_schedule", schedule)
+    sm._fetch_results(client, 39, [2025])
+    assert {call.args[0] for call in schedule.call_args_list} == {"Strong", "B"}
+
+
+def test_provider_name_suffixes_resolve_to_actual_fitted_ratings(client):
+    original = sm.predict(client, 39, "Strong", "B")
+    resolved = sm.predict(client, 39, "Strong FC", "B AFC")
+    assert resolved is not None
+    assert resolved["elo"] == original["elo"]
+    assert resolved["expected_goals"] == original["expected_goals"]
+
+
+def test_roster_membership_without_fitted_history_cannot_publish_generic_forecast(client):
+    sm.predict(client, 39, "Strong", "B")
+    sm._ratings[39]["clubs"].add("Unobserved FC")
+    assert sm.predict(client, 39, "Unobserved FC", "B") is None
+
+
+def test_failed_rebuild_does_not_return_expired_ratings(client, monkeypatch):
+    sm.predict(client, 39, "Strong", "B")
+    sm._ratings[39]["built_at"] = 0
+    monkeypatch.setattr(sm, "_fetch_results", lambda *args: ([], {}))
+    assert sm.predict(client, 39, "Strong", "B") is None
+
+
 def test_published_artifact_matches_the_research_report():
     import json
     from runtime_paths import model_dir, repo_root
