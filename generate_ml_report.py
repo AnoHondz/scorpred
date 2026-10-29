@@ -86,6 +86,8 @@ def _top_logistic_features(model: Any, feature_keys: list[str], limit: int = 5) 
     coef = model.coef_
     if not len(coef):
         return []
+    if any(len(row) != len(feature_keys) for row in coef):
+        raise ValueError("Feature names must match the fitted logistic coefficient width after preprocessing.")
     ranked: list[tuple[str, float]] = []
     for idx, feature in enumerate(feature_keys):
         max_abs = max(abs(float(row[idx])) for row in coef)
@@ -195,6 +197,9 @@ def generate_clean_soccer_report(
     )
     logistic.fit(x_train, y_train)
     log_model = logistic.named_steps["model"]
+    # Median imputation drops all-empty training columns. Keep transformed
+    # names in coefficient order, including missing columns in the middle.
+    logistic_features = list(logistic[:-1].get_feature_names_out(FEATURE_COLUMNS))
     logistic_predictions = logistic.predict(x_test)
     logistic_accuracy = float(accuracy_score(y_test, logistic_predictions))
 
@@ -264,13 +269,13 @@ def generate_clean_soccer_report(
         ranking.append({
             "model": "logistic_regression",
             "accuracy": round(logistic_accuracy, 4),
-            "top_features": _top_logistic_features(log_model, FEATURE_COLUMNS),
+            "top_features": _top_logistic_features(log_model, logistic_features),
         })
     else:
         # Update the LR entry with feature info from our fresh evaluation
         for r in ranking:
             if r["model"] == "logistic_regression" and not r["top_features"]:
-                r["top_features"] = _top_logistic_features(log_model, FEATURE_COLUMNS)
+                r["top_features"] = _top_logistic_features(log_model, logistic_features)
 
     # Combined entry
     ranking.append({
