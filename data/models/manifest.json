@@ -1,12 +1,12 @@
 {
-  "version": "models-41296639925-1",
+  "version": "models-42469480788-1",
   "sklearn_version": "1.8.0",
   "files": {
     "soccer_random_forest_clean.pkl": {
-      "sha256": "952d14a22d4d72c38bbe7dde99675120d540724f8ee3297c0bf5b4b7ebcc25e7",
+      "sha256": "86124b0f71e7708dc9aed06c910653ed5d5ea1347ee9fe108bd03ab09b61d996",
       "feature_count": 60,
       "schema_version": "f4960fa835e3d20b01fda002f6edd0bff87e51a8b7257ce6ea5d85e7e9430378",
-      "url": "https://github.com/AnoHondz/scorpred/releases/download/models-41296639925-1/soccer_random_forest_clean.pkl"
+      "url": "https://github.com/AnoHondz/scorpred/releases/download/models-42469480788-1/soccer_random_forest_clean.pkl"
     }
   }
 }
