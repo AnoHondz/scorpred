@@ -5623,6 +5623,7 @@ def props_generate():
     include_all_comps = str(payload.get("include_all_comps", "false")).lower() in ("true", "1", "yes", "on")
     league_ids_raw = str(payload.get("league_ids", ""))
     league_ids = [int(value) for value in league_ids_raw.split(",") if value.strip().isdigit()]
+    max_legs = _safe_int(payload.get("max_legs", 0), 0)
 
     if not player_id or not player_team_id or not opponent_id:
         return jsonify({"error": "Required: player_id, player_team_id, opponent_id"}), 400
@@ -5645,6 +5646,7 @@ def props_generate():
             league            = league,
             include_all_comps = include_all_comps,
             league_ids        = league_ids or None,
+            max_legs          = max_legs,
         )
         result["data_source"] = _football_data_source()
         result["last_updated"] = _now_stamp()

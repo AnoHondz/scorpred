@@ -151,10 +151,25 @@
     {% endfor %}
   </div>
 
-  <div style="display:flex; align-items:center; gap:.5rem; flex-wrap:wrap">
-    <button class="sp-btn-gen" id="btn-generate" onclick="buildProps()">Generate Props</button>
-    <div class="sp-spinner" id="spinner"></div>
-    <span id="gen-status" style="font-size:.78rem; color:var(--text-3)"></span>
+  <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; margin-bottom:.5rem">
+    <div>
+      <label style="font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); display:block; margin-bottom:.2rem">Parlay Legs</label>
+      <select id="max-legs-select" class="sp-props-select" style="width:auto;min-width:7rem">
+        <option value="0">Best available</option>
+        <option value="2">2 legs (~2–3×)</option>
+        <option value="3">3 legs (~4–6×)</option>
+        <option value="4">4 legs (~8–12×)</option>
+        <option value="5">5 legs (~15–25×)</option>
+        <option value="6">6 legs (~30–50×)</option>
+        <option value="7">7 legs (~60–100×)</option>
+        <option value="8">8 legs (~100–200×)</option>
+      </select>
+    </div>
+    <div style="align-self:flex-end">
+      <button class="sp-btn-gen" id="btn-generate" onclick="buildProps()">Generate Props</button>
+    </div>
+    <div class="sp-spinner" id="spinner" style="align-self:flex-end"></div>
+    <span id="gen-status" style="font-size:.78rem; color:var(--text-3); align-self:flex-end"></span>
   </div>
   <div class="sp-progress"><div id="loading-progress-bar" class="sp-progress__bar"></div></div>
 </div>
@@ -218,6 +233,8 @@ async function buildProps() {
 
   if (!markets) { alert("Select at least one market."); return; }
 
+  const maxLegs = document.getElementById("max-legs-select")?.value || "0";
+
   const endpoint = SPORT === "nba" ? "/nba/props/generate" : "/props/generate";
   const params = new URLSearchParams({
     player_id:       playerId,
@@ -229,6 +246,7 @@ async function buildProps() {
     markets:         markets,
     league:          LEAGUE,
     player_position: playerPos,
+    max_legs:        maxLegs,
   });
 
   const btn = document.getElementById("btn-generate");
@@ -276,7 +294,7 @@ function renderProps(data) {
     cards.appendChild(buildCard(prop, data.player, data.opponent));
   });
 
-  if (data.bet_slip && (data.bet_slip.picks || []).length) {
+  if (data.bet_slip) {
     slip.appendChild(buildSlip(data.bet_slip));
   }
 
@@ -393,20 +411,44 @@ function buildSlip(slip) {
   const el = document.createElement("div");
   el.className = "sp-bet-slip";
 
-  const pickRows = (slip.picks || []).map(p => {
+  const picks = slip.picks || [];
+  const alternates = slip.alternates || [];
+
+  const pickRows = picks.map((p, i) => {
     const cls = slipConfClass(p.confidence);
+    const leanIcon = p.lean === "OVER" ? "⬆" : p.lean === "UNDER" ? "⬇" : "↔";
     return `<div class="sp-slip-pick">
       <div>
-        ${p.label} <strong>${p.player}</strong> — ${p.market}
-        <strong>${p.lean} ${p.line != null ? p.line : ""}</strong>
+        <span style="color:var(--text-3);font-size:.72rem">${i + 1}.</span>
+        ${p.label ? `<span class="slip-conf-${(p.label||'').toLowerCase()}">${p.label}</span>` : ""}
+        <strong>${p.player}</strong> —
+        ${p.market} <strong style="color:${p.lean==='OVER'?'var(--c-strong)':p.lean==='UNDER'?'var(--c-active)':'var(--c-caution)'}">${leanIcon} ${p.lean}${p.line != null ? ' ' + p.line : ''}</strong>
       </div>
-      <span class="${cls}">${p.confidence}%</span>
+      <span class="${cls}" style="font-weight:700">${p.confidence}%</span>
     </div>`;
   }).join('<hr class="sp-slip-divider">');
+
+  const altRows = alternates.length ? `
+    <details style="margin-top:.5rem">
+      <summary style="font-size:.78rem;color:var(--text-3);cursor:pointer">
+        ${alternates.length} alternate pick${alternates.length > 1 ? 's' : ''}
+      </summary>
+      ${alternates.map(p => {
+        const leanIcon = p.lean === "OVER" ? "⬆" : p.lean === "UNDER" ? "⬇" : "↔";
+        return `<div class="sp-slip-pick" style="opacity:.7">
+          <div><strong>${p.player}</strong> — ${p.market} ${leanIcon} ${p.lean}${p.line != null ? ' ' + p.line : ''}</div>
+          <span>${p.confidence}%</span>
+        </div>`;
+      }).join('<hr class="sp-slip-divider">')}
+    </details>` : "";
 
   const riskValue = String(slip.parlay_risk || "").toLowerCase();
   const riskCls = riskValue === "low" ? "sp-parlay-low" :
                   riskValue === "medium" ? "sp-parlay-medium" : "sp-parlay-high";
+
+  const oddsDisplay = slip.estimated_odds && slip.estimated_odds > 1
+    ? `<div><div class="key">Est. Parlay Odds</div><div style="font-weight:700;color:var(--c-strong)">${slip.estimated_odds}×</div></div>`
+    : "";
 
   el.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
@@ -414,13 +456,15 @@ function buildSlip(slip) {
       <button class="sp-btn-gen" data-copy-slip style="padding:.2rem .5rem;font-size:.72rem">Copy</button>
     </div>
     <hr class="sp-slip-divider">
-    ${pickRows}
+    ${picks.length ? pickRows : '<div style="color:var(--text-3);font-size:.85rem;padding:.5rem 0">No picks — generate props above first.</div>'}
     <hr class="sp-slip-divider">
     <div class="sp-slip-footer">
       <div><div class="key">Slip Confidence</div><div>${slip.slip_confidence}% ${slip.stars || ""}</div></div>
-      <div><div class="key">Best Single Bet</div><div style="font-size:.8rem">${slip.best_single || "—"}</div></div>
+      ${oddsDisplay}
+      <div><div class="key">Best Single</div><div style="font-size:.8rem">${slip.best_single || "—"}</div></div>
     </div>
-    <div class="${riskCls}">${slip.parlay_advice || ""}</div>`;
+    <div class="${riskCls}">${slip.parlay_advice || ""}</div>
+    ${altRows}`;
   el.querySelector("[data-copy-slip]")?.addEventListener("click", () => copySlipText(el.innerText));
   return el;
 }

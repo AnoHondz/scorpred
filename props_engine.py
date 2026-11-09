@@ -1427,11 +1427,24 @@ def _motm_composite(stats: dict) -> float:
 
 # ── Bet slip builder ────────────────────────────────────────────────────────────
 
-def _build_bet_slip(prop_cards: list[dict]) -> dict:
+def _estimated_parlay_odds(n_legs: int, avg_confidence: float) -> float:
+    """Return estimated decimal parlay odds for n_legs at avg_confidence %."""
+    # Each leg roughly 100/avg_confidence implied odds, compounded with 5% vig
+    if avg_confidence <= 0:
+        return 1.0
+    leg_odds = (100.0 / avg_confidence) * 0.95
+    return round(leg_odds ** n_legs, 2)
+
+
+def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0) -> dict:
     """
     Summarise the prop cards into a bet slip with parlay advisor.
+
+    max_legs — if > 0, cap the slip to this many top-confidence picks.
+               Remaining picks are shown as alternates rather than discarded.
     """
-    picks = [
+    # Prefer directional picks; fall back to PUSH picks if nothing else
+    directional = [
         {
             "player":     p.get("player_name", ""),
             "market":     p.get("market_label", ""),
@@ -1441,14 +1454,37 @@ def _build_bet_slip(prop_cards: list[dict]) -> dict:
             "label":      p.get("confidence", {}).get("label", ""),
         }
         for p in prop_cards
-        if p.get("projection", {}).get("lean") != "PUSH"
+        if p.get("projection", {}).get("lean") not in ("PUSH", None)
     ]
-    picks.sort(key=lambda x: x["confidence"], reverse=True)
+    directional.sort(key=lambda x: x["confidence"], reverse=True)
 
-    if not picks:
-        return {"picks": [], "slip_confidence": 0, "best_single": None,
-                "parlay_risk": "N/A", "parlay_advice": "No confident picks found",
-                "parlay_confidence": 0}
+    # If nothing directional, include PUSH picks so slip always has content
+    if not directional:
+        directional = [
+            {
+                "player":     p.get("player_name", ""),
+                "market":     p.get("market_label", ""),
+                "lean":       p.get("projection", {}).get("lean", "PUSH"),
+                "line":       p.get("projection", {}).get("suggested_line"),
+                "confidence": p.get("confidence", {}).get("score", 0),
+                "label":      p.get("confidence", {}).get("label", ""),
+            }
+            for p in prop_cards
+        ]
+        directional.sort(key=lambda x: x["confidence"], reverse=True)
+
+    if not directional:
+        return {"picks": [], "alternates": [], "slip_confidence": 0, "best_single": None,
+                "parlay_risk": "N/A", "parlay_advice": "Generate props first to see picks",
+                "parlay_confidence": 0, "estimated_odds": 1.0, "max_legs": max_legs}
+
+    # Apply leg cap
+    if max_legs and max_legs > 0:
+        picks = directional[:max_legs]
+        alternates = directional[max_legs:]
+    else:
+        picks = directional
+        alternates = []
 
     # Average confidence
     slip_conf = round(sum(p["confidence"] for p in picks) / len(picks), 1)
@@ -1465,16 +1501,17 @@ def _build_bet_slip(prop_cards: list[dict]) -> dict:
             parlay_conf *= 0.95  # -5% correlation penalty per additional pick
 
     parlay_conf = round(parlay_conf * 100, 1)
+    estimated_odds = _estimated_parlay_odds(len(picks), slip_conf)
 
     if has_weak:
         parlay_risk = "HIGH"
-        parlay_advice = "Parlay not recommended — remove weak picks first"
+        parlay_advice = f"{len(picks)}-leg parlay — remove weak picks for better value"
     elif len(picks) > 4:
         parlay_risk = "MEDIUM"
-        parlay_advice = f"Parlay viable but long — combined confidence {parlay_conf}%"
+        parlay_advice = f"{len(picks)}-leg parlay ~{estimated_odds}x — combined confidence {parlay_conf}%"
     else:
         parlay_risk = "LOW"
-        parlay_advice = f"Parlay viable — combined confidence {parlay_conf}%"
+        parlay_advice = f"{len(picks)}-leg parlay ~{estimated_odds}x — combined confidence {parlay_conf}%"
 
     # Star rating
     stars = "⭐⭐⭐⭐⭐" if slip_conf >= 80 else \
@@ -1484,12 +1521,15 @@ def _build_bet_slip(prop_cards: list[dict]) -> dict:
 
     return {
         "picks":             picks,
+        "alternates":        alternates,
         "slip_confidence":   slip_conf,
         "stars":             stars,
         "best_single":       best_single,
         "parlay_risk":       parlay_risk,
         "parlay_advice":     parlay_advice,
         "parlay_confidence": parlay_conf,
+        "estimated_odds":    estimated_odds,
+        "max_legs":          max_legs or len(picks),
     }
 
 
@@ -1749,6 +1789,7 @@ def generate_props(
     league:            int = DEFAULT_LEAGUE_ID,
     include_all_comps: bool = False,
     league_ids:        list[int] | None = None,
+    max_legs:          int = 0,
 ) -> dict:
     """
     Main public API.  Returns a complete prop analysis JSON for the player vs opponent.
@@ -1833,7 +1874,7 @@ def generate_props(
             errors.append(f"Failed to build prop for {market_key}: {e}")
 
     # ── Bet slip ───────────────────────────────────────────────────────────────
-    bet_slip = _build_bet_slip(prop_cards)
+    bet_slip = _build_bet_slip(prop_cards, max_legs=max_legs)
 
     return {
         "player": {

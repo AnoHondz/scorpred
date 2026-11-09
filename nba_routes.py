@@ -2447,6 +2447,7 @@ def nba_props_generate():
     markets_str = str(payload.get("markets", "points,rebounds,assists,pra"))
     season = int(payload.get("season", 2024) or 2024)
     position = payload.get("position", "")
+    max_legs = int(payload.get("max_legs", 0) or 0)
 
     if not player_id or not player_team_id or not opponent_id:
         return jsonify({"error": "Required: player_id, player_team_id, opponent_id"}), 400
@@ -2466,6 +2467,7 @@ def nba_props_generate():
             markets           = markets,
             player_position   = position,
             season            = season,
+            max_legs          = max_legs,
         )
         result["data_source"] = "ESPN live roster + configured NBA prop model"
         result["last_updated"] = _now_stamp()
