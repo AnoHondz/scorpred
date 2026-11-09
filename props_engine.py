@@ -1434,27 +1434,114 @@ def _motm_composite(stats: dict) -> float:
 
 # ── Blowout & line-safety helpers ─────────────────────────────────────────────
 
-def _blowout_risk(moneyline_fav: float | None = None, expected_margin: float | None = None) -> str:
-    """Return 'HIGH', 'MEDIUM', or 'NONE' blowout risk.
-    moneyline_fav: American odds of the favourite (negative number, e.g. -380)
-    expected_margin: projected point differential (positive float)
+def _blowout_probability(moneyline_fav: float | None, expected_margin: float | None) -> float:
+    """Return 0.0–1.0 probability that this game ends as a blowout (margin > 15pts).
+
+    Combines moneyline implied probability with model's expected margin.
     """
-    risk_score = 0
+    prob = 0.0
+
+    # Moneyline signal: convert American odds to implied win prob, then
+    # estimate blowout probability as excess above 50/50.
     if moneyline_fav is not None and moneyline_fav < 0:
-        if moneyline_fav <= -400:
-            risk_score += 2
-        elif moneyline_fav <= -300:
-            risk_score += 1
-    if expected_margin is not None:
-        if expected_margin >= 15:
-            risk_score += 2
-        elif expected_margin >= 10:
-            risk_score += 1
-    if risk_score >= 3:
-        return "HIGH"
-    if risk_score >= 1:
-        return "MEDIUM"
-    return "NONE"
+        # Implied win prob from American odds: abs(ml) / (abs(ml) + 100)
+        implied_win = abs(moneyline_fav) / (abs(moneyline_fav) + 100)
+        # Blowout prob scales with how dominant the favourite is.
+        # A -500 team (83% win prob) blows out ~40% of the time historically.
+        # A -200 team (67%) blows out ~20% of the time.
+        # Linear scale: (implied_win - 0.5) * 0.8 capped at 0.55
+        prob = max(0.0, min(0.55, (implied_win - 0.5) * 0.8))
+
+    # Expected margin signal: >15pt margin historically = ~45% chance of blowout
+    if expected_margin is not None and expected_margin > 0:
+        margin_prob = min(0.55, expected_margin / 33.0)  # 33pt margin ≈ certainty
+        prob = max(prob, margin_prob)
+
+    return round(prob, 3)
+
+
+def _player_blowout_sensitivity(game_log: list[dict], market_key: str) -> tuple[float, float]:
+    """Split game log into blowout games (margin > 15) vs close games (margin <= 10).
+
+    Returns (avg_in_blowout, avg_in_close). Falls back to (None, None) if no margin data.
+    Each game dict is expected to have market_key stat and optionally 'margin' or 'point_diff'.
+    """
+    blowout_vals, close_vals = [], []
+    for g in (game_log or []):
+        val = g.get(market_key)
+        if not isinstance(val, (int, float)):
+            continue
+        margin = g.get("margin") or g.get("point_diff") or g.get("score_diff")
+        if margin is None:
+            continue
+        margin = abs(float(margin))
+        if margin > 15:
+            blowout_vals.append(float(val))
+        elif margin <= 10:
+            close_vals.append(float(val))
+
+    avg_blowout = sum(blowout_vals) / len(blowout_vals) if blowout_vals else None
+    avg_close   = sum(close_vals)   / len(close_vals)   if close_vals   else None
+    return avg_blowout, avg_close
+
+
+def _blowout_risk(
+    moneyline_fav:   float | None = None,
+    expected_margin: float | None = None,
+    game_log:        list[dict] | None = None,
+    market_key:      str = "points",
+    suggested_line:  float | None = None,
+) -> dict:
+    """Smart garbage-time risk assessment.
+
+    Returns a dict with:
+      risk          — 'HIGH' | 'MEDIUM' | 'NONE'
+      blowout_prob  — 0.0–1.0 probability the game is a blowout
+      player_drops  — True if player's blowout-game average is below the line
+      blowout_avg   — player's average stat in past blowout games (or None)
+      close_avg     — player's average stat in past close games (or None)
+      reason        — human-readable explanation
+    """
+    blowout_prob = _blowout_probability(moneyline_fav, expected_margin)
+    blowout_avg, close_avg = _player_blowout_sensitivity(game_log or [], market_key)
+
+    player_drops = False
+    reason_parts = []
+
+    if blowout_prob >= 0.35:
+        ml_str = f"ML {moneyline_fav:+.0f}" if moneyline_fav else ""
+        margin_str = f"{expected_margin:.1f}pt margin" if expected_margin else ""
+        reason_parts.append(f"~{blowout_prob:.0%} blowout probability ({', '.join(x for x in [ml_str, margin_str] if x)})")
+
+    if blowout_avg is not None and suggested_line is not None:
+        if blowout_avg < suggested_line:
+            player_drops = True
+            drop_pct = round((1 - blowout_avg / max(close_avg or blowout_avg, 1)) * 100)
+            reason_parts.append(
+                f"averages {blowout_avg:.1f} in blowout games vs line {suggested_line} "
+                f"({drop_pct}% drop from close-game avg {close_avg:.1f})" if close_avg else
+                f"averages only {blowout_avg:.1f} in blowout games vs line {suggested_line}"
+            )
+
+    # Risk level: HIGH if blowout likely AND player historically underperforms the line
+    # MEDIUM if either signal alone
+    if blowout_prob >= 0.35 and player_drops:
+        risk = "HIGH"
+    elif blowout_prob >= 0.50:
+        risk = "HIGH"
+    elif blowout_prob >= 0.25 or player_drops:
+        risk = "MEDIUM"
+    else:
+        risk = "NONE"
+
+    return {
+        "risk":         risk,
+        "blowout_prob": blowout_prob,
+        "player_drops": player_drops,
+        "blowout_avg":  blowout_avg,
+        "close_avg":    close_avg,
+        "reason":       "; ".join(reason_parts) if reason_parts else "No blowout risk detected",
+    }
 
 
 def _find_safe_line(game_log: list[dict], market_key: str, base_line: float,
@@ -1500,7 +1587,7 @@ def _estimated_parlay_odds(n_legs: int, avg_confidence: float) -> float:
     return round(leg_odds ** n_legs, 2)
 
 
-def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: float = 0.0, blowout_risk: str = "NONE") -> dict:
+def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: float = 0.0, blowout_risk: str = "NONE", blowout_info: dict | None = None) -> dict:
     """
     Summarise the prop cards into a bet slip with parlay advisor.
 
@@ -1580,10 +1667,15 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
     # Blowout and minutes warnings prepended to advice
     if avg_minutes > 0 and avg_minutes < 20:
         parlay_advice = f"⚠ Low minutes ({avg_minutes:.0f} MPG) — pick unreliable. " + parlay_advice
-    if blowout_risk == "HIGH":
-        parlay_advice = "🚨 HIGH blowout risk — starter may sit in 4th quarter. " + parlay_advice
-    elif blowout_risk == "MEDIUM":
-        parlay_advice = "⚠ Moderate blowout risk — monitor minutes closely. " + parlay_advice
+
+    _bi = blowout_info or {}
+    _brisk = _bi.get("risk", blowout_risk)
+    if _brisk == "HIGH":
+        _reason = _bi.get("reason", "starter may sit in 4th quarter")
+        parlay_advice = f"🚨 HIGH blowout risk — {_reason}. " + parlay_advice
+    elif _brisk == "MEDIUM":
+        _reason = _bi.get("reason", "monitor minutes closely")
+        parlay_advice = f"⚠ Blowout risk — {_reason}. " + parlay_advice
 
     # Star rating
     stars = "⭐⭐⭐⭐⭐" if slip_conf >= 80 else \
@@ -1602,8 +1694,9 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
         "parlay_confidence": parlay_conf,
         "estimated_odds":    estimated_odds,
         "max_legs":          max_legs or len(picks),
-        "blowout_flagged":   blowout_risk in ("HIGH", "MEDIUM"),
-        "blowout_risk":      blowout_risk,
+        "blowout_flagged":   _brisk in ("HIGH", "MEDIUM"),
+        "blowout_risk":      _brisk,
+        "blowout_detail":    _bi,
         "low_minutes":       avg_minutes > 0 and avg_minutes < 20,
         "avg_minutes":       avg_minutes,
     }
@@ -1951,10 +2044,31 @@ def generate_props(
         except Exception as e:
             errors.append(f"Failed to build prop for {market_key}: {e}")
 
-    # ── Bet slip ───────────────────────────────────────────────────────────────
-    blowout = _blowout_risk(game_moneyline_fav, expected_margin)
+    # ── Blowout risk — smart garbage-time sensitivity ─────────────────────────
+    # Use the first directional prop card's market + game log to check if
+    # the player historically underperforms their line in blowout games.
+    _primary_market = markets[0] if markets else "points"
+    _primary_log = (samples or {}).get("full_season_log") or []
+    blowout = _blowout_risk(
+        moneyline_fav   = game_moneyline_fav,
+        expected_margin = expected_margin,
+        game_log        = _primary_log,
+        market_key      = _primary_market,
+        suggested_line  = next(
+            (c.get("projection", {}).get("suggested_line") for c in prop_cards
+             if c.get("projection", {}).get("lean") in ("OVER", "UNDER")),
+            None
+        ),
+    )
+
     avg_minutes = float((samples or {}).get("avg_minutes", 0.0))
-    bet_slip = _build_bet_slip(prop_cards, max_legs=max_legs, avg_minutes=avg_minutes, blowout_risk=blowout)
+    bet_slip = _build_bet_slip(
+        prop_cards,
+        max_legs     = max_legs,
+        avg_minutes  = avg_minutes,
+        blowout_risk = blowout.get("risk", "NONE"),
+        blowout_info = blowout,
+    )
 
     return {
         "player": {

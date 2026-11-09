@@ -154,16 +154,9 @@
   <div style="display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; margin-bottom:.5rem">
     <div>
       <label style="font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3); display:block; margin-bottom:.2rem">Parlay Legs</label>
-      <select id="max-legs-select" class="sp-props-select" style="width:auto;min-width:7rem">
-        <option value="0">Best available</option>
-        <option value="2">2 legs (~2–3×)</option>
-        <option value="3">3 legs (~4–6×)</option>
-        <option value="4">4 legs (~8–12×)</option>
-        <option value="5">5 legs (~15–25×)</option>
-        <option value="6">6 legs (~30–50×)</option>
-        <option value="7">7 legs (~60–100×)</option>
-        <option value="8">8 legs (~100–200×)</option>
-      </select>
+      <input id="max-legs-select" type="number" min="0" max="20" placeholder="All"
+        class="sp-props-select" style="width:6rem"
+        title="Number of legs to include (leave blank or 0 for all picks)">
     </div>
     <div style="align-self:flex-end">
       <button class="sp-btn-gen" id="btn-generate" onclick="buildProps()">Generate Props</button>
@@ -233,7 +226,7 @@ async function buildProps() {
 
   if (!markets) { alert("Select at least one market."); return; }
 
-  const maxLegs = document.getElementById("max-legs-select")?.value || "0";
+  const maxLegs = parseInt(document.getElementById("max-legs-select")?.value || "0", 10) || 0;
 
   const endpoint = SPORT === "nba" ? "/nba/props/generate" : "/props/generate";
   const params = new URLSearchParams({
