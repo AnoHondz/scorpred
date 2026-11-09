@@ -2455,22 +2455,76 @@ def nba_props_generate():
     is_home = is_home_str not in ("false", "0", "no")
     markets = [m.strip() for m in markets_str.split(",") if m.strip()]
 
+    # Fetch live game moneyline odds for blowout detection
+    game_moneyline_fav = None
+    expected_margin_val = None
+    try:
+        import nba_live_client as _nlc
+        today_games = _nlc.get_today_games() or []
+        for g in today_games:
+            teams = g.get("teams", {})
+            home_id = str((teams.get("home") or {}).get("id", ""))
+            away_id = str((teams.get("away") or {}).get("id", ""))
+            if str(player_team_id) in (home_id, away_id) and str(opponent_id) in (home_id, away_id):
+                odds = g.get("odds") or {}
+                home_ml = (odds.get("homeTeamOdds") or {}).get("moneyLine")
+                away_ml = (odds.get("awayTeamOdds") or {}).get("moneyLine")
+                if home_ml and away_ml:
+                    try:
+                        h, a = int(home_ml), int(away_ml)
+                        game_moneyline_fav = h if h < a else a
+                    except (ValueError, TypeError):
+                        pass
+                break
+    except Exception:
+        pass
+
     try:
         result = pe.generate_props(
-            sport             = "nba",
-            player_id         = player_id,
-            player_name       = player_name,
-            player_team_id    = player_team_id,
-            opponent_team_id  = opponent_id,
-            opponent_name     = opponent_name,
-            is_home           = is_home,
-            markets           = markets,
-            player_position   = position,
-            season            = season,
-            max_legs          = max_legs,
+            sport              = "nba",
+            player_id          = player_id,
+            player_name        = player_name,
+            player_team_id     = player_team_id,
+            opponent_team_id   = opponent_id,
+            opponent_name      = opponent_name,
+            is_home            = is_home,
+            markets            = markets,
+            player_position    = position,
+            season             = season,
+            max_legs           = max_legs,
+            game_moneyline_fav = game_moneyline_fav,
+            expected_margin    = expected_margin_val,
         )
         result["data_source"] = "ESPN live roster + configured NBA prop model"
         result["last_updated"] = _now_stamp()
+        result["blowout_risk"] = result.get("blowout_risk", "NONE")
+        result["avg_minutes"]  = result.get("avg_minutes", 0)
+
+        # Save top picks to DB for retrospective loss analysis
+        try:
+            from db_models import PropPick, db
+            from datetime import date
+            slip = result.get("bet_slip", {})
+            for pick in (slip.get("picks") or []):
+                pp = PropPick(
+                    sport         = "nba",
+                    player_name   = pick.get("player", ""),
+                    team_id       = str(player_team_id),
+                    opponent_id   = str(opponent_id),
+                    opponent_name = opponent_name,
+                    market        = pick.get("market", ""),
+                    lean          = pick.get("lean", ""),
+                    line          = pick.get("line"),
+                    confidence    = pick.get("confidence"),
+                    avg_minutes   = result.get("avg_minutes", 0),
+                    blowout_risk  = result.get("blowout_risk", "NONE"),
+                    game_date     = str(date.today()),
+                )
+                db.session.add(pp)
+            db.session.commit()
+        except Exception as _save_e:
+            current_app.logger.warning("PropPick save failed: %s", _save_e)
+
         return jsonify(result)
     except Exception as e:
         current_app.logger.error("NBA props generation failed: %s", e)

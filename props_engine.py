@@ -306,6 +306,13 @@ def _collect_nba_samples(
     except Exception:
         pass
 
+    # Fetch season-average minutes to filter out low-minute players
+    try:
+        avgs = nc.get_player_season_averages(str(player_id), str(player_team_id), season)
+        result["avg_minutes"] = float(avgs.get("min") or avgs.get("minutes") or 0)
+    except Exception:
+        result["avg_minutes"] = 0.0
+
     _cache_save(cpath, result)
     return result
 
@@ -1425,6 +1432,63 @@ def _motm_composite(stats: dict) -> float:
     )
 
 
+# ── Blowout & line-safety helpers ─────────────────────────────────────────────
+
+def _blowout_risk(moneyline_fav: float | None = None, expected_margin: float | None = None) -> str:
+    """Return 'HIGH', 'MEDIUM', or 'NONE' blowout risk.
+    moneyline_fav: American odds of the favourite (negative number, e.g. -380)
+    expected_margin: projected point differential (positive float)
+    """
+    risk_score = 0
+    if moneyline_fav is not None and moneyline_fav < 0:
+        if moneyline_fav <= -400:
+            risk_score += 2
+        elif moneyline_fav <= -300:
+            risk_score += 1
+    if expected_margin is not None:
+        if expected_margin >= 15:
+            risk_score += 2
+        elif expected_margin >= 10:
+            risk_score += 1
+    if risk_score >= 3:
+        return "HIGH"
+    if risk_score >= 1:
+        return "MEDIUM"
+    return "NONE"
+
+
+def _find_safe_line(game_log: list[dict], market_key: str, base_line: float,
+                    target_hit_rate: float = 0.85, min_floor_pct: float = 0.60) -> tuple[float, float]:
+    """Find highest line where player hits it >= target_hit_rate of recent games.
+    Steps down from base_line in 0.5 increments.
+    Returns (safe_line, actual_hit_rate). Falls back to base_line if nothing clears floor.
+    """
+    if not game_log:
+        return base_line, 0.0
+
+    def _hit_rate(line: float) -> float:
+        hits = sum(1 for g in game_log if isinstance(g.get(market_key), (int, float)) and g[market_key] > line)
+        return hits / len(game_log) if game_log else 0.0
+
+    candidate = base_line
+    for _ in range(7):
+        rate = _hit_rate(candidate)
+        if rate >= target_hit_rate:
+            return candidate, rate
+        candidate = round(candidate - 0.5, 1)
+
+    # Nothing cleared target — return whichever had highest rate
+    best_line, best_rate = base_line, _hit_rate(base_line)
+    candidate = base_line
+    for _ in range(7):
+        rate = _hit_rate(candidate)
+        if rate > best_rate:
+            best_line, best_rate = candidate, rate
+        candidate = round(candidate - 0.5, 1)
+
+    return best_line, best_rate
+
+
 # ── Bet slip builder ────────────────────────────────────────────────────────────
 
 def _estimated_parlay_odds(n_legs: int, avg_confidence: float) -> float:
@@ -1436,7 +1500,7 @@ def _estimated_parlay_odds(n_legs: int, avg_confidence: float) -> float:
     return round(leg_odds ** n_legs, 2)
 
 
-def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0) -> dict:
+def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: float = 0.0, blowout_risk: str = "NONE") -> dict:
     """
     Summarise the prop cards into a bet slip with parlay advisor.
 
@@ -1513,6 +1577,14 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0) -> dict:
         parlay_risk = "LOW"
         parlay_advice = f"{len(picks)}-leg parlay ~{estimated_odds}x — combined confidence {parlay_conf}%"
 
+    # Blowout and minutes warnings prepended to advice
+    if avg_minutes > 0 and avg_minutes < 20:
+        parlay_advice = f"⚠ Low minutes ({avg_minutes:.0f} MPG) — pick unreliable. " + parlay_advice
+    if blowout_risk == "HIGH":
+        parlay_advice = "🚨 HIGH blowout risk — starter may sit in 4th quarter. " + parlay_advice
+    elif blowout_risk == "MEDIUM":
+        parlay_advice = "⚠ Moderate blowout risk — monitor minutes closely. " + parlay_advice
+
     # Star rating
     stars = "⭐⭐⭐⭐⭐" if slip_conf >= 80 else \
             "⭐⭐⭐⭐"  if slip_conf >= 65 else \
@@ -1530,6 +1602,10 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0) -> dict:
         "parlay_confidence": parlay_conf,
         "estimated_odds":    estimated_odds,
         "max_legs":          max_legs or len(picks),
+        "blowout_flagged":   blowout_risk in ("HIGH", "MEDIUM"),
+        "blowout_risk":      blowout_risk,
+        "low_minutes":       avg_minutes > 0 and avg_minutes < 20,
+        "avg_minutes":       avg_minutes,
     }
 
 
@@ -1790,6 +1866,8 @@ def generate_props(
     include_all_comps: bool = False,
     league_ids:        list[int] | None = None,
     max_legs:          int = 0,
+    game_moneyline_fav: float | None = None,
+    expected_margin:    float | None = None,
 ) -> dict:
     """
     Main public API.  Returns a complete prop analysis JSON for the player vs opponent.
@@ -1874,7 +1952,9 @@ def generate_props(
             errors.append(f"Failed to build prop for {market_key}: {e}")
 
     # ── Bet slip ───────────────────────────────────────────────────────────────
-    bet_slip = _build_bet_slip(prop_cards, max_legs=max_legs)
+    blowout = _blowout_risk(game_moneyline_fav, expected_margin)
+    avg_minutes = float((samples or {}).get("avg_minutes", 0.0))
+    bet_slip = _build_bet_slip(prop_cards, max_legs=max_legs, avg_minutes=avg_minutes, blowout_risk=blowout)
 
     return {
         "player": {
@@ -1887,11 +1967,14 @@ def generate_props(
             "id":   opponent_team_id,
             "name": opponent_name,
         },
-        "sport":       sport,
-        "season":      season,
-        "is_home":     is_home,
-        "props":       prop_cards,
-        "bet_slip":    bet_slip,
+        "sport":        sport,
+        "season":       season,
+        "is_home":      is_home,
+        "props":        prop_cards,
+        "bet_slip":     bet_slip,
+        "blowout_risk": blowout,
+        "avg_minutes":  avg_minutes,
+        "game_moneyline": game_moneyline_fav,
         "data_notes": {
             "nba":    "Per-game statistics from API-NBA (RapidAPI). Career vs opponent built from multi-season H2H game logs.",
             "soccer": "Season aggregates from API-Football. Per-game stats fetched from fixture/players endpoint and cached.",
