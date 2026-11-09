@@ -174,7 +174,7 @@
 
 {% macro empty_state(title, body='') -%}
   <div class="sp-empty-state">
-    <div class="sp-empty-state__mark"><img src="{{ url_for('static', filename='media/scorpred-player-logo.png') }}" alt="" loading="lazy"></div>
+    <div class="sp-empty-state__mark"><svg viewBox="0 0 48 48" width="48" height="48" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="12" fill="#FF5A1F"/><text x="24" y="32" text-anchor="middle" font-family="system-ui,sans-serif" font-weight="700" font-size="22" fill="white">SP</text></svg></div>
     <h3>{{ title }}</h3>
     {% if body %}<p>{{ body }}</p>{% endif %}
   </div>
