@@ -224,6 +224,162 @@ def _unavailable(reason: str = "") -> dict[str, Any]:
     }
 
 
+# ── Player prop odds ──────────────────────────────────────────────────────────
+
+# Maps props_engine market_key → Odds API market key(s) to try in order
+_PROP_MARKET_MAP: dict[str, list[str]] = {
+    "points":    ["player_points", "player_points_alternate"],
+    "rebounds":  ["player_rebounds", "player_rebounds_alternate"],
+    "assists":   ["player_assists", "player_assists_alternate"],
+    "tpm":       ["player_threes"],
+    "steals":    ["player_steals"],
+    "blocks":    ["player_blocks"],
+    "turnovers": ["player_turnovers"],
+    "pra":       ["player_points_rebounds_assists"],
+}
+
+_PROP_ODDS_TTL = 300   # 5 minutes — odds move fast
+
+
+def fetch_player_prop_odds(
+    player_name: str,
+    market_key: str,
+    home_team: str,
+    away_team: str,
+) -> dict[str, Any]:
+    """
+    Fetch player prop odds from The Odds API for over/under on a specific market.
+
+    Returns:
+        {
+            "available": bool,
+            "over_odds": int | None,     # American odds e.g. -120
+            "under_odds": int | None,
+            "line": float | None,        # e.g. 24.5
+            "bookmaker": str | None,
+            "source": "live" | "cache" | "unavailable",
+        }
+    """
+    if not _ODDS_API_KEY:
+        return _prop_unavailable("No ODDS_API_KEY set")
+
+    markets_to_try = _PROP_MARKET_MAP.get(market_key, [])
+    if not markets_to_try:
+        return _prop_unavailable(f"No Odds API market mapping for {market_key}")
+
+    cache_key = f"prop_{player_name}_{market_key}_{home_team}_{away_team}"
+    cached = _load_cached(cache_key)
+    if cached is not None:
+        cached["source"] = "cache"
+        return cached
+
+    # First get the event ID matching home/away teams
+    try:
+        events_url = f"{_ODDS_API_BASE}/sports/basketball_nba/events"
+        events_resp = requests.get(events_url, params={"apiKey": _ODDS_API_KEY}, timeout=8)
+        events_resp.raise_for_status()
+        events = events_resp.json()
+    except Exception as exc:
+        logger.warning("odds_fetcher player props: events fetch failed — %s", exc)
+        return _prop_unavailable(str(exc))
+
+    event_id = None
+    h_norm = _norm(home_team)
+    a_norm = _norm(away_team)
+    for ev in events:
+        if _teams_match(_norm(ev.get("home_team", "")), h_norm) and \
+           _teams_match(_norm(ev.get("away_team", "")), a_norm):
+            event_id = ev.get("id")
+            break
+
+    if not event_id:
+        return _prop_unavailable(f"Event not found: {away_team} @ {home_team}")
+
+    # Try each market variant until we find the player
+    p_norm = _norm(player_name)
+    for market in markets_to_try:
+        try:
+            url = f"{_ODDS_API_BASE}/sports/basketball_nba/events/{event_id}/odds"
+            params = {
+                "apiKey": _ODDS_API_KEY,
+                "regions": "us",
+                "markets": market,
+                "oddsFormat": "american",
+            }
+            resp = requests.get(url, params=params, timeout=8)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            logger.warning("odds_fetcher player props: market=%s failed — %s", market, exc)
+            continue
+
+        result = _extract_player_prop(data, p_norm)
+        if result["available"]:
+            _save_cached(cache_key, result)
+            result["source"] = "live"
+            return result
+
+    result = _prop_unavailable(f"Player prop not found for {player_name} / {market_key}")
+    _save_cached(cache_key, result)
+    return result
+
+
+def _extract_player_prop(event_data: dict, player_norm: str) -> dict[str, Any]:
+    """Scan event odds response for a specific player's over/under line."""
+    best_over: int | None = None
+    best_under: int | None = None
+    best_line: float | None = None
+    best_book: str | None = None
+
+    for bm in event_data.get("bookmakers", []):
+        bm_name = bm.get("title", "")
+        for market in bm.get("markets", []):
+            for outcome in market.get("outcomes", []):
+                desc = _norm(outcome.get("description", ""))
+                name = _norm(outcome.get("name", ""))
+                if player_norm not in desc and player_norm not in name:
+                    continue
+
+                point = outcome.get("point")
+                price = outcome.get("price")
+                if point is None or price is None:
+                    continue
+
+                price = int(price)
+                point = float(point)
+
+                if "over" in name:
+                    if best_over is None or abs(price) < abs(best_over):
+                        best_over = price
+                        best_line = point
+                        best_book = bm_name
+                elif "under" in name:
+                    if best_under is None or abs(price) < abs(best_under):
+                        best_under = price
+
+    if best_over is not None or best_under is not None:
+        return {
+            "available": True,
+            "over_odds":  best_over,
+            "under_odds": best_under,
+            "line":       best_line,
+            "bookmaker":  best_book,
+        }
+    return _prop_unavailable("Player not found in bookmaker data")
+
+
+def _prop_unavailable(reason: str = "") -> dict[str, Any]:
+    return {
+        "available": False,
+        "over_odds":  None,
+        "under_odds": None,
+        "line":       None,
+        "bookmaker":  None,
+        "source": "unavailable",
+        "reason": reason,
+    }
+
+
 def _norm(s: str) -> str:
     return s.lower().strip()
 

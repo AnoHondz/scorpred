@@ -2480,6 +2480,39 @@ def nba_props_generate():
     except Exception:
         pass
 
+    # Fetch sportsbook player prop odds for each market (best available line + American odds)
+    prop_odds_map: dict[str, dict] = {}  # market_key -> {line, over_odds, under_odds, bookmaker}
+    try:
+        import odds_fetcher as _of
+        # Resolve team names for Odds API matching
+        _home_name = opponent_name if is_home else player_name
+        _away_name = player_name if is_home else opponent_name
+        try:
+            import nba_live_client as _nlc2
+            today_g = _nlc2.get_today_games() or []
+            for _g in today_g:
+                _teams = _g.get("teams", {})
+                _hid = str((_teams.get("home") or {}).get("id", ""))
+                _aid = str((_teams.get("away") or {}).get("id", ""))
+                if str(player_team_id) in (_hid, _aid):
+                    _home_name = (_teams.get("home") or {}).get("name", opponent_name)
+                    _away_name = (_teams.get("away") or {}).get("name", opponent_name)
+                    break
+        except Exception:
+            pass
+
+        for _mk in markets:
+            _odds = _of.fetch_player_prop_odds(
+                player_name  = player_name,
+                market_key   = _mk,
+                home_team    = _home_name,
+                away_team    = _away_name,
+            )
+            if _odds.get("available"):
+                prop_odds_map[_mk] = _odds
+    except Exception:
+        pass
+
     try:
         result = pe.generate_props(
             sport              = "nba",
@@ -2497,6 +2530,24 @@ def nba_props_generate():
             game_moneyline_fav = game_moneyline_fav,
             expected_margin    = expected_margin_val,
         )
+        # Attach sportsbook odds to each slip pick and research card
+        for _pick in (result.get("bet_slip", {}).get("picks") or []):
+            _mk = _pick.get("market_key", "")
+            if _mk in prop_odds_map:
+                _o = prop_odds_map[_mk]
+                _pick["sportsbook_line"]  = _o.get("line")
+                _pick["over_odds"]        = _o.get("over_odds")
+                _pick["under_odds"]       = _o.get("under_odds")
+                _pick["odds_bookmaker"]   = _o.get("bookmaker")
+        for _rc in (result.get("research") or []):
+            _mk = _rc.get("market", "")
+            if _mk in prop_odds_map:
+                _o = prop_odds_map[_mk]
+                _rc["sportsbook_line"] = _o.get("line")
+                _rc["odds"]            = _o.get("over_odds") if _rc.get("lean") != "UNDER" else _o.get("under_odds")
+                _rc["odds_str"]        = (f"({'+' if (_rc['odds'] or 0) > 0 else ''}{_rc['odds']})"
+                                          if _rc.get("odds") is not None else "")
+                _rc["odds_bookmaker"]  = _o.get("bookmaker")
         result["data_source"] = "ESPN live roster + configured NBA prop model"
         result["last_updated"] = _now_stamp()
         result["blowout_risk"] = result.get("blowout_risk", "NONE")
@@ -2508,18 +2559,21 @@ def nba_props_generate():
             from datetime import date
             slip = result.get("bet_slip", {})
             for pick in (slip.get("picks") or []):
+                # Use sportsbook line if available, fall back to model line
+                _pick_line = pick.get("sportsbook_line") or pick.get("line")
                 pp = PropPick(
                     sport         = "nba",
                     player_name   = pick.get("player", ""),
+                    player_id     = str(player_id),
                     team_id       = str(player_team_id),
                     opponent_id   = str(opponent_id),
                     opponent_name = opponent_name,
-                    market        = pick.get("market", ""),
+                    market        = pick.get("market_key") or pick.get("market", ""),
                     lean          = pick.get("lean", ""),
-                    line          = pick.get("line"),
+                    line          = _pick_line,
                     confidence    = pick.get("confidence"),
                     avg_minutes   = result.get("avg_minutes", 0),
-                    blowout_risk  = result.get("blowout_risk", "NONE"),
+                    blowout_risk  = str(result.get("blowout_risk", {}).get("risk", "NONE") if isinstance(result.get("blowout_risk"), dict) else result.get("blowout_risk", "NONE")),
                     game_date     = str(date.today()),
                 )
                 db.session.add(pp)
