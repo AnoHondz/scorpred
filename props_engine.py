@@ -1610,7 +1610,26 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
     ]
     directional.sort(key=lambda x: x["confidence"], reverse=True)
 
-    # If nothing directional, include PUSH picks so slip always has content
+    overs_only_fallback = False
+
+    # If overs_only filtered everything out, fall back to best available picks
+    if not directional and overs_only:
+        overs_only_fallback = True
+        directional = [
+            {
+                "player":     p.get("player_name", ""),
+                "market":     p.get("market_label", ""),
+                "lean":       p.get("projection", {}).get("lean", "PUSH"),
+                "line":       p.get("projection", {}).get("suggested_line"),
+                "confidence": p.get("confidence", {}).get("score", 0),
+                "label":      p.get("confidence", {}).get("label", ""),
+            }
+            for p in prop_cards
+            if p.get("projection", {}).get("lean") not in ("PUSH", None)
+        ]
+        directional.sort(key=lambda x: x["confidence"], reverse=True)
+
+    # Last resort — include PUSH picks so slip always has content
     if not directional:
         directional = [
             {
@@ -1627,8 +1646,9 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
 
     if not directional:
         return {"picks": [], "alternates": [], "slip_confidence": 0, "best_single": None,
-                "parlay_risk": "N/A", "parlay_advice": "Generate props first to see picks",
-                "parlay_confidence": 0, "estimated_odds": 1.0, "max_legs": max_legs}
+                "parlay_risk": "N/A", "parlay_advice": "No prop data — select a player and generate props first",
+                "parlay_confidence": 0, "estimated_odds": 1.0, "max_legs": max_legs,
+                "overs_only_fallback": False}
 
     # Apply leg cap
     if max_legs and max_legs > 0:
@@ -1665,6 +1685,9 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
         parlay_risk = "LOW"
         parlay_advice = f"{len(picks)}-leg parlay ~{estimated_odds}x — combined confidence {parlay_conf}%"
 
+    if overs_only_fallback:
+        parlay_advice = "⚠ No strong OVER found — showing best available picks instead. Try a different player for cleaner OVERs."
+
     # Blowout and minutes warnings prepended to advice
     if avg_minutes > 0 and avg_minutes < 20:
         parlay_advice = f"⚠ Low minutes ({avg_minutes:.0f} MPG) — pick unreliable. " + parlay_advice
@@ -1695,11 +1718,12 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
         "parlay_confidence": parlay_conf,
         "estimated_odds":    estimated_odds,
         "max_legs":          max_legs or len(picks),
-        "blowout_flagged":   _brisk in ("HIGH", "MEDIUM"),
-        "blowout_risk":      _brisk,
-        "blowout_detail":    _bi,
-        "low_minutes":       avg_minutes > 0 and avg_minutes < 20,
-        "avg_minutes":       avg_minutes,
+        "blowout_flagged":     _brisk in ("HIGH", "MEDIUM"),
+        "blowout_risk":        _brisk,
+        "blowout_detail":      _bi,
+        "low_minutes":         avg_minutes > 0 and avg_minutes < 20,
+        "avg_minutes":         avg_minutes,
+        "overs_only_fallback": overs_only_fallback,
     }
 
 
