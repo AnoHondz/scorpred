@@ -1587,12 +1587,12 @@ def _estimated_parlay_odds(n_legs: int, avg_confidence: float) -> float:
     return round(leg_odds ** n_legs, 2)
 
 
-def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: float = 0.0, blowout_risk: str = "NONE", blowout_info: dict | None = None) -> dict:
+def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: float = 0.0, blowout_risk: str = "NONE", blowout_info: dict | None = None, overs_only: bool = False) -> dict:
     """
     Summarise the prop cards into a bet slip with parlay advisor.
 
-    max_legs — if > 0, cap the slip to this many top-confidence picks.
-               Remaining picks are shown as alternates rather than discarded.
+    max_legs   — if > 0, cap the slip to this many top-confidence picks.
+    overs_only — if True, exclude any UNDER picks from the slip entirely.
     """
     # Prefer directional picks; fall back to PUSH picks if nothing else
     directional = [
@@ -1606,6 +1606,7 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
         }
         for p in prop_cards
         if p.get("projection", {}).get("lean") not in ("PUSH", None)
+        and (not overs_only or p.get("projection", {}).get("lean") == "OVER")
     ]
     directional.sort(key=lambda x: x["confidence"], reverse=True)
 
@@ -1958,7 +1959,8 @@ def generate_props(
     league:            int = DEFAULT_LEAGUE_ID,
     include_all_comps: bool = False,
     league_ids:        list[int] | None = None,
-    max_legs:          int = 0,
+    max_legs:           int = 0,
+    overs_only:         bool = False,
     game_moneyline_fav: float | None = None,
     expected_margin:    float | None = None,
 ) -> dict:
@@ -2065,6 +2067,7 @@ def generate_props(
     bet_slip = _build_bet_slip(
         prop_cards,
         max_legs     = max_legs,
+        overs_only   = overs_only,
         avg_minutes  = avg_minutes,
         blowout_risk = blowout.get("risk", "NONE"),
         blowout_info = blowout,

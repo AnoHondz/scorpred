@@ -2448,6 +2448,7 @@ def nba_props_generate():
     season = int(payload.get("season", 2024) or 2024)
     position = payload.get("position", "")
     max_legs = int(payload.get("max_legs", 0) or 0)
+    overs_only = str(payload.get("overs_only", "true")).lower() not in ("false", "0", "no")
 
     if not player_id or not player_team_id or not opponent_id:
         return jsonify({"error": "Required: player_id, player_team_id, opponent_id"}), 400
@@ -2492,6 +2493,7 @@ def nba_props_generate():
             player_position    = position,
             season             = season,
             max_legs           = max_legs,
+            overs_only         = overs_only,
             game_moneyline_fav = game_moneyline_fav,
             expected_margin    = expected_margin_val,
         )

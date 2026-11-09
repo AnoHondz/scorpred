@@ -158,6 +158,13 @@
         class="sp-props-select" style="width:6rem"
         title="Number of legs to include (leave blank or 0 for all picks)">
     </div>
+    <div style="align-self:flex-end;display:flex;flex-direction:column;gap:.2rem">
+      <label style="font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--text-3)">Direction</label>
+      <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.82rem">
+        <input type="checkbox" id="overs-only-toggle" checked style="width:14px;height:14px">
+        <span>Overs only</span>
+      </label>
+    </div>
     <div style="align-self:flex-end">
       <button class="sp-btn-gen" id="btn-generate" onclick="buildProps()">Generate Props</button>
     </div>
@@ -227,6 +234,7 @@ async function buildProps() {
   if (!markets) { alert("Select at least one market."); return; }
 
   const maxLegs = parseInt(document.getElementById("max-legs-select")?.value || "0", 10) || 0;
+  const oversOnly = document.getElementById("overs-only-toggle")?.checked !== false;
 
   const endpoint = SPORT === "nba" ? "/nba/props/generate" : "/props/generate";
   const params = new URLSearchParams({
@@ -240,6 +248,7 @@ async function buildProps() {
     league:          LEAGUE,
     player_position: playerPos,
     max_legs:        maxLegs,
+    overs_only:      oversOnly ? "true" : "false",
   });
 
   const btn = document.getElementById("btn-generate");
