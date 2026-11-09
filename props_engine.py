@@ -1599,6 +1599,7 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
         {
             "player":     p.get("player_name", ""),
             "market":     p.get("market_label", ""),
+            "market_key": p.get("market_key", ""),
             "lean":       p.get("projection", {}).get("lean", "PUSH"),
             "line":       p.get("projection", {}).get("suggested_line"),
             "confidence": p.get("confidence", {}).get("score", 0),
@@ -1619,6 +1620,7 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
             {
                 "player":     p.get("player_name", ""),
                 "market":     p.get("market_label", ""),
+                "market_key": p.get("market_key", ""),
                 "lean":       p.get("projection", {}).get("lean", "PUSH"),
                 "line":       p.get("projection", {}).get("suggested_line"),
                 "confidence": p.get("confidence", {}).get("score", 0),
@@ -1635,6 +1637,7 @@ def _build_bet_slip(prop_cards: list[dict], max_legs: int = 0, avg_minutes: floa
             {
                 "player":     p.get("player_name", ""),
                 "market":     p.get("market_label", ""),
+                "market_key": p.get("market_key", ""),
                 "lean":       p.get("projection", {}).get("lean", "PUSH"),
                 "line":       p.get("projection", {}).get("suggested_line"),
                 "confidence": p.get("confidence", {}).get("score", 0),
@@ -2097,6 +2100,63 @@ def generate_props(
         blowout_info = blowout,
     )
 
+    # ── Deep research analysis (NBA only) ─────────────────────────────────────
+    research = []
+    if sport == "nba":
+        try:
+            import prop_researcher as pr
+            from datetime import date as _today_date
+            today_str = _today_date.today().isoformat()
+
+            # Resolve player/opponent tricodes from player index
+            player_idx = {str(p.get("PERSON_ID")): p for p in pr._get_player_index()}
+            player_info = player_idx.get(str(player_id), {})
+            player_tricode   = player_info.get("TEAM_ABBREVIATION", "")
+            # Opponent tricode — look up by team_id
+            opp_info = next(
+                (p for p in player_idx.values()
+                 if str(p.get("TEAM_ID")) == str(opponent_team_id)),
+                {}
+            )
+            opponent_tricode = opp_info.get("TEAM_ABBREVIATION", opponent_name[:3].upper())
+
+            # Build research per bet_slip pick
+            slip_picks = bet_slip.get("picks", [])
+            full_log   = (samples or {}).get("full_season_log", [])
+            vs_opp     = (samples or {}).get("vs_opponent", {})
+            team_inj   = (samples or {}).get("team_injuries", [])
+            opp_stats  = _fetch_nba_opponent_stats(opponent_team_id, season)
+
+            for pick in slip_picks:
+                mk = pick.get("market_key") or pick.get("market", "")
+                # Reverse-map label to key if market_key not set
+                if not mk or mk not in NBA_MARKETS:
+                    label_to_key = {v[0]: k for k, v in NBA_MARKETS.items()}
+                    mk = label_to_key.get(mk, mk.lower().replace(" ", "_"))
+                line = float(pick.get("line") or pick.get("projection", {}).get("suggested_line") or 0)
+                odds_val = pick.get("american_odds")
+                card = pr.research_prop(
+                    player_name      = player_name,
+                    player_tricode   = player_tricode,
+                    opponent_tricode = opponent_tricode,
+                    market_key       = mk,
+                    line             = line,
+                    odds             = int(odds_val) if odds_val is not None else None,
+                    game_log         = full_log,
+                    vs_opponent      = vs_opp,
+                    opponent_stats   = opp_stats,
+                    team_injuries    = team_inj,
+                    player_position  = player_position,
+                    blowout_risk     = blowout.get("risk", "NONE"),
+                    blowout_info     = blowout,
+                    today_str        = today_str,
+                )
+                research.append(card)
+
+            research = pr.rank_props(research)
+        except Exception as exc:
+            logger.warning("prop_researcher failed: %s", exc)
+
     return {
         "player": {
             "id":         player_id,
@@ -2116,6 +2176,7 @@ def generate_props(
         "blowout_risk": blowout,
         "avg_minutes":  avg_minutes,
         "game_moneyline": game_moneyline_fav,
+        "research":     research,
         "data_notes": {
             "nba":    "Per-game statistics from API-NBA (RapidAPI). Career vs opponent built from multi-season H2H game logs.",
             "soccer": "Season aggregates from API-Football. Per-game stats fetched from fixture/players endpoint and cached.",

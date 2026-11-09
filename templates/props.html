@@ -53,6 +53,22 @@
   .sp-props-error{background:rgba(248,113,113,.08);color:var(--c-danger);border-radius:var(--radius);padding:.4rem .6rem;font-size:.82rem;margin-bottom:.4rem}
   #props-output:not(.visible){display:none}
   .sp-pos-badge{font-size:.72rem;color:var(--c-active);background:rgba(96,165,250,.1);padding:.1rem .35rem;border-radius:var(--radius);margin-left:.3rem}
+  /* Research section */
+  .sp-research-section{margin-top:1rem}
+  .sp-research-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);margin-bottom:.5rem}
+  .sp-research-card{border:1px solid var(--border);border-radius:var(--radius);padding:.75rem;background:var(--bg-2);margin-bottom:.5rem}
+  .sp-research-card.grade-A{border-left:3px solid var(--c-strong)}
+  .sp-research-card.grade-B{border-left:3px solid var(--c-caution)}
+  .sp-research-card.grade-C{border-left:3px solid var(--c-active)}
+  .sp-research-card.grade-D{border-left:3px solid var(--c-danger)}
+  .sp-grade-badge{font-weight:800;font-size:1.1rem;padding:.15rem .5rem;border-radius:var(--radius);display:inline-block}
+  .grade-badge-A{background:rgba(60,242,164,.15);color:var(--c-strong)}
+  .grade-badge-B{background:rgba(245,158,11,.15);color:var(--c-caution)}
+  .grade-badge-C{background:rgba(96,165,250,.15);color:var(--c-active)}
+  .grade-badge-D{background:rgba(248,113,113,.15);color:var(--c-danger)}
+  .sp-research-bullet{font-size:.82rem;color:var(--text-2);padding:.15rem 0;display:flex;gap:.4rem}
+  .sp-research-bullet::before{content:"•";color:var(--text-3);flex-shrink:0}
+  .sp-rank-chip{font-size:.72rem;font-weight:700;background:var(--bg-3);border-radius:50%;width:1.3rem;height:1.3rem;display:inline-flex;align-items:center;justify-content:center;margin-right:.3rem}
 </style>
 {% endblock %}
 
@@ -179,6 +195,7 @@
   <div id="props-errors"></div>
   <div id="props-cards" class="sp-props-grid"></div>
   <div id="bet-slip-container"></div>
+  <div id="research-container"></div>
   <div id="persistent-slip-container"></div>
 </div>
 
@@ -300,6 +317,13 @@ function renderProps(data) {
     slip.appendChild(buildSlip(data.bet_slip));
   }
 
+  // Research analysis section
+  const researchEl = document.getElementById("research-container");
+  researchEl.innerHTML = "";
+  if (data.research && data.research.length) {
+    researchEl.appendChild(buildResearchSection(data.research));
+  }
+
   renderPersistentSlip();
   output.classList.add("visible");
   output.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -407,6 +431,43 @@ function buildCard(prop, player, opp) {
   }
   el.querySelector("[data-copy-slip]")?.addEventListener("click", () => copySlipText(el.innerText));
   return el;
+}
+
+function buildResearchSection(cards) {
+  const wrap = document.createElement("div");
+  wrap.className = "sp-research-section";
+  wrap.innerHTML = `<div class="sp-research-title">Research Ranking</div>`;
+
+  cards.forEach(card => {
+    const grade = card.grade || "C";
+    const gradeLetter = grade[0];  // A, B, C, D
+    const el = document.createElement("div");
+    el.className = `sp-research-card grade-${gradeLetter}`;
+
+    const badgeCls = `grade-badge-${gradeLetter}`;
+    const bullets = (card.bullets || []).map(b =>
+      `<div class="sp-research-bullet">${b}</div>`
+    ).join("");
+
+    const h2hVal = card.h2h && card.h2h.total > 0
+      ? `${card.h2h.hits}/${card.h2h.total} H2H` : "";
+    const b2b = card.back_to_back ? `<span style="color:var(--c-danger);font-size:.75rem"> ⚠ B2B</span>` : "";
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.4rem">
+        <div>
+          <span class="sp-rank-chip">${card.rank || "?"}</span>
+          <strong>${card.headline || card.player}</strong>${b2b}
+        </div>
+        <span class="sp-grade-badge ${badgeCls}">${grade}</span>
+      </div>
+      ${bullets}
+      ${card.grade_reason ? `<div style="font-size:.75rem;color:var(--text-3);margin-top:.35rem;font-style:italic">${card.grade_reason}</div>` : ""}
+    `;
+    wrap.appendChild(el);
+  });
+
+  return wrap;
 }
 
 function buildSlip(slip) {
