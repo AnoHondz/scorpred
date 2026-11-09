@@ -131,6 +131,9 @@ _MARKET_KEY_MAP = {
     "blocks":    "blocks",
     "turnovers": "turnovers",
     "pra":       "pra",
+    "pa":        "pa",
+    "ra":        "ra",
+    "pr":        "pr",
 }
 
 _STAT_API_KEY = {
@@ -147,13 +150,26 @@ _STAT_API_KEY = {
 def _extract_stat(game_record: dict, market_key: str) -> float | None:
     """Pull stat value from an nba_client game record."""
     stats = (game_record.get("statistics") or [{}])[0]
-    if market_key == "pra":
+    if market_key in ("pra", "pa", "ra", "pr"):
         p = stats.get("points")
         r = stats.get("rebounds")
         a = stats.get("assists")
-        if p is None and r is None and a is None:
-            return None
-        return float(p or 0) + float(r or 0) + float(a or 0)
+        if market_key == "pra":
+            if p is None and r is None and a is None:
+                return None
+            return float(p or 0) + float(r or 0) + float(a or 0)
+        if market_key == "pa":
+            if p is None and a is None:
+                return None
+            return float(p or 0) + float(a or 0)
+        if market_key == "ra":
+            if r is None and a is None:
+                return None
+            return float(r or 0) + float(a or 0)
+        if market_key == "pr":
+            if p is None and r is None:
+                return None
+            return float(p or 0) + float(r or 0)
     api_key = _STAT_API_KEY.get(market_key, market_key)
     val = stats.get(api_key)
     return float(val) if val is not None else None
@@ -428,6 +444,7 @@ def research_prop(
         "points": "PTS", "rebounds": "REB", "assists": "AST",
         "tpm": "3PM", "steals": "STL", "blocks": "BLK",
         "turnovers": "TOV", "pra": "PRA",
+        "pa": "P+A", "ra": "R+A", "pr": "P+R",
     }
     mabbr = market_label_map.get(market_key, market_key.upper())
 

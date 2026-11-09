@@ -236,6 +236,9 @@ _PROP_MARKET_MAP: dict[str, list[str]] = {
     "blocks":    ["player_blocks"],
     "turnovers": ["player_turnovers"],
     "pra":       ["player_points_rebounds_assists"],
+    "pa":        ["player_points_assists"],
+    "ra":        ["player_rebounds_assists"],
+    "pr":        ["player_points_rebounds"],
 }
 
 _PROP_ODDS_TTL = 300   # 5 minutes — odds move fast

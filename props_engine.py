@@ -76,6 +76,9 @@ NBA_MARKETS: dict[str, tuple[str, str]] = {
     "blocks":       ("Blocks",           "BLK"),
     "turnovers":    ("Turnovers",        "TOV"),
     "pra":          ("PRA (Pts+Reb+Ast)","PRA"),
+    "pa":           ("Pts+Ast",          "P+A"),
+    "ra":           ("Reb+Ast",          "R+A"),
+    "pr":           ("Pts+Reb",          "P+R"),
     "double_double":("Double-Double Prob","DD%"),
     "triple_double":("Triple-Double Prob","TD%"),
 }
@@ -229,12 +232,18 @@ def _nba_game_value(record: dict, market_key: str) -> float | None:
         return None
     stats = record.get("statistics", [{}])
     s = stats[0] if stats else {}
-    if market_key in ("pra", "double_double", "triple_double"):
+    if market_key in ("pra", "pa", "ra", "pr", "double_double", "triple_double"):
         pts = _sf(s.get("points"))
         reb = _sf(s.get("rebounds"))
         ast = _sf(s.get("assists"))
         if market_key == "pra":
             return pts + reb + ast if (pts or reb or ast) else None
+        if market_key == "pa":
+            return pts + ast if (pts is not None or ast is not None) else None
+        if market_key == "ra":
+            return reb + ast if (reb is not None or ast is not None) else None
+        if market_key == "pr":
+            return pts + reb if (pts is not None or reb is not None) else None
         return None   # probability markets handled separately
     return _sf(s.get(market_key)) if s.get(market_key) is not None else None
 
