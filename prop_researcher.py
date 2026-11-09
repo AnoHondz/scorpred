@@ -257,18 +257,12 @@ def _injury_context(team_injuries: list[dict], player_position: str) -> str | No
 
 # ── Matchup grade (defense vs position) ───────────────────────────────────────
 
-def _matchup_label(opponent_stats: dict, market_key: str) -> str | None:
-    """
-    Pull opponent's defensive rank for this stat from props_engine opponent_stats.
-    Returns a human label like 'favorable' / 'tough' / 'neutral'.
-    """
+def _matchup_label_legacy(opponent_stats: dict, market_key: str) -> str | None:
+    """Fallback: team-level opp stats from props_engine._fetch_nba_opponent_stats."""
     if not opponent_stats:
         return None
-
-    # opponent_stats from props_engine._fetch_nba_opponent_stats
-    # Keys vary; look for per-game allowed stats
     stat_map = {
-        "points":   ["points_allowed_pg", "opp_pts"],
+        "points":   ["points_allowed_pg", "opp_pts", "opp_ppg"],
         "rebounds": ["reb_allowed_pg", "opp_reb"],
         "assists":  ["ast_allowed_pg", "opp_ast"],
     }
@@ -278,21 +272,43 @@ def _matchup_label(opponent_stats: dict, market_key: str) -> str | None:
         if k in opponent_stats:
             val = opponent_stats[k]
             break
-
     if val is None:
         return None
-
-    # Simple thresholds — could be refined with league average
-    # For points: league avg ~112, rebounds ~44, assists ~25
     thresholds = {"points": (115, 108), "rebounds": (46, 42), "assists": (27, 23)}
     hi, lo = thresholds.get(market_key, (999, 0))
-
     if val >= hi:
         return f"favorable ({val:.1f} allowed/g)"
     elif val <= lo:
         return f"tough ({val:.1f} allowed/g)"
     else:
         return f"neutral ({val:.1f} allowed/g)"
+
+
+def _matchup_label(opponent_team_id, player_position: str, market_key: str) -> str | None:
+    """
+    Defense-by-position: calls nba_client.get_defense_vs_position().
+    Returns rank label string or None.
+    """
+    if not opponent_team_id:
+        return None
+    pos_map = {
+        "PG": "G", "SG": "G", "G": "G",
+        "SF": "F", "PF": "F", "F": "F",
+        "C": "C",
+    }
+    pos = pos_map.get(str(player_position or "").upper().split("-")[0], "F")
+    try:
+        import nba_client as nc
+        result = nc.get_defense_vs_position(
+            opponent_team_id=int(opponent_team_id),
+            position_filter=pos,
+            market_key=market_key,
+        )
+        if result:
+            return result["rank_label"]
+    except Exception:
+        pass
+    return None
 
 
 # ── Grade formula ──────────────────────────────────────────────────────────────
@@ -393,8 +409,9 @@ def research_prop(
     odds: int | None,        # American odds e.g. -380
     game_log: list[dict],    # from nba_client
     vs_opponent: dict,       # from nba_client
-    opponent_stats: dict,    # from props_engine
-    team_injuries: list[dict],
+    opponent_team_id=None,
+    opponent_stats: dict | None = None,    # from props_engine (legacy fallback)
+    team_injuries: list[dict] | None = None,
     player_position: str = "",
     blowout_risk: str = "NONE",
     blowout_info: dict | None = None,
@@ -432,11 +449,15 @@ def research_prop(
     if hr["last5_minutes"]:
         min_avg = round(sum(hr["last5_minutes"]) / len(hr["last5_minutes"]), 1)
 
+    team_injuries = team_injuries or []
+
     # Injury context
     inj_note = _injury_context(team_injuries, player_position)
 
-    # Matchup label
-    matchup_note = _matchup_label(opponent_stats, market_key)
+    # Matchup label — try new positional method first, fall back to legacy
+    matchup_note = _matchup_label(opponent_team_id, player_position, market_key)
+    if not matchup_note and opponent_stats:
+        matchup_note = _matchup_label_legacy(opponent_stats, market_key)
 
     # Grade
     grade, grade_reason = _compute_grade(

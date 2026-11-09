@@ -316,6 +316,89 @@ def get_team_season_stats(team_id: int, season: int = NBA_SEASON) -> dict | None
     }
 
 
+def get_defense_vs_position(
+    opponent_team_id: int,
+    position_filter: str,
+    market_key: str = "rebounds",
+    season: int = NBA_SEASON,
+    min_games: int = 3,
+) -> dict | None:
+    """
+    Approximate positional defense: average stat that players of a given
+    position produced when facing opponent_team_id this season.
+
+    Returns: {avg, sample_size, rank_label} or None if insufficient data.
+    """
+    cpath = _cache_path(f"def_vs_pos_{opponent_team_id}_{position_filter}_{market_key}_{season}", {})
+    if _cache_valid(cpath, ttl_seconds=NBA_CACHE_HOURS * 3600):
+        return _load_cache(cpath)
+
+    opp_games = get_schedule(opponent_team_id, season)
+    finished = [g for g in opp_games if g.get("status", {}).get("long") == "Finished"]
+    if not finished:
+        return None
+
+    opp_matchup_teams: list[int] = []
+    for g in finished:
+        home_id  = g.get("teams", {}).get("home", {}).get("id")
+        visit_id = g.get("teams", {}).get("visitors", {}).get("id")
+        other_id = visit_id if home_id == opponent_team_id else home_id
+        if other_id and other_id not in opp_matchup_teams:
+            opp_matchup_teams.append(other_id)
+
+    stat_key_map = {
+        "points": "points", "rebounds": "rebounds", "assists": "assists",
+        "tpm": "tpm", "steals": "steals", "blocks": "blocks",
+    }
+    skey = stat_key_map.get(market_key, "points")
+
+    all_values: list[float] = []
+    for team_id in opp_matchup_teams[:20]:
+        try:
+            roster = get_team_roster(team_id, season)
+            for player in roster[:15]:
+                pos = str(player.get("leagues", {}).get("standard", {}).get("pos") or "").upper()
+                if not pos or position_filter.upper() not in pos:
+                    continue
+                pid = player.get("id")
+                if not pid:
+                    continue
+                try:
+                    avgs = get_player_season_averages(int(pid), season)
+                    if avgs and avgs.get("games", 0) >= min_games:
+                        val = _safe_float(avgs.get(skey))
+                        if val is not None and val > 0:
+                            all_values.append(val)
+                except Exception:
+                    continue
+        except Exception:
+            continue
+
+    if not all_values or len(all_values) < 3:
+        return None
+
+    avg = round(sum(all_values) / len(all_values), 1)
+
+    league_avgs = {
+        ("points",   "G"): 14.0, ("points",   "F"): 13.0, ("points",   "C"): 11.0,
+        ("rebounds", "G"):  3.5, ("rebounds", "F"):  6.5, ("rebounds", "C"):  8.5,
+        ("assists",  "G"):  4.0, ("assists",  "F"):  2.5, ("assists",  "C"):  1.5,
+        ("tpm",      "G"):  1.4, ("tpm",      "F"):  1.0, ("tpm",      "C"):  0.3,
+    }
+    league_avg = league_avgs.get((market_key, position_filter.upper()[0]), avg)
+
+    if avg >= league_avg * 1.08:
+        rank_label = f"favorable ({avg:.1f} avg/g allowed)"
+    elif avg <= league_avg * 0.92:
+        rank_label = f"tough ({avg:.1f} avg/g allowed)"
+    else:
+        rank_label = f"neutral ({avg:.1f} avg/g allowed)"
+
+    result = {"avg": avg, "sample_size": len(all_values), "rank_label": rank_label}
+    _save_cache(cpath, result)
+    return result
+
+
 # ── Utility helpers ────────────────────────────────────────────────────────────
 
 def _has_played(game_stat: dict) -> bool:

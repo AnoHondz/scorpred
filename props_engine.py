@@ -302,7 +302,7 @@ def _collect_nba_samples(
         pass
 
     try:
-        result["team_injuries"] = nc.get_team_injuries(int(player_team_id))
+        result["team_injuries"] = nc.get_team_injuries(int(opponent_team_id))
     except Exception:
         pass
 
@@ -2144,6 +2144,7 @@ def generate_props(
                     odds             = int(odds_val) if odds_val is not None else None,
                     game_log         = full_log,
                     vs_opponent      = vs_opp,
+                    opponent_team_id = opponent_team_id,
                     opponent_stats   = opp_stats,
                     team_injuries    = team_inj,
                     player_position  = player_position,

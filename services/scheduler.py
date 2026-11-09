@@ -74,6 +74,16 @@ def start(app, prediction_service, ac, nba_live_client, monitor) -> BackgroundSc
         with app.app_context():
             monitor.check_staleness()
 
+    @sched.scheduled_job("cron", hour=10, minute=30, id="prop_pick_grader")
+    def grade_prop_picks():
+        with app.app_context():
+            try:
+                from services.prop_grader import grade_pending_picks
+                graded, failed = grade_pending_picks()
+                _log.info("prop_pick_grader: graded=%d failed=%d", graded, failed)
+            except Exception as exc:
+                _log.warning("prop_pick_grader error: %s", exc)
+
     sched.start()
-    _log.info("APScheduler started with jobs: soccer_fixtures, nba_games, ml_predictions, staleness_check")
+    _log.info("APScheduler started with jobs: soccer_fixtures, nba_games, ml_predictions, staleness_check, prop_pick_grader")
     return sched
