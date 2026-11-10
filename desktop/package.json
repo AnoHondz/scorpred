@@ -1,0 +1,66 @@
+{
+  "name": "scorpred-desktop",
+  "version": "1.0.0",
+  "description": "ScorPred — Decision Intelligence Desktop App",
+  "main": "electron/main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build-ui": "cd ../frontend && npm run build",
+    "launch": "npm run build-ui && electron .",
+    "dist": "npm run build-ui && electron-builder --win --x64",
+    "dist:dir": "npm run build-ui && electron-builder --win --x64 --dir"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.scorpred.app",
+    "productName": "ScorPred",
+    "copyright": "Copyright © 2025 ScorPred",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ScorPred"
+    },
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "scorpred",
+        "filter": [
+          "**/*.py",
+          "app.py",
+          "frontend/dist/**/*",
+          "static/**/*",
+          "templates/**/*",
+          "services/**/*",
+          "utils/**/*",
+          "*.txt",
+          "*.cfg",
+          "*.toml",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/node_modules/**",
+          "!desktop/**",
+          "!.git/**",
+          "!tests/**",
+          "!.env"
+        ]
+      }
+    ]
+  }
+}
